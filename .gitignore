@@ -148,11 +148,8 @@ cython_debug/
 # Docker
 .dockerignore
 
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# Documentation and Plan Files
+doc.xml
+*.docx
+AI-News-RAG-System-Checklist.md
+athena_data_acquisition_plan.docx
