@@ -1,0 +1,12 @@
+httpx
+asyncio
+feedparser
+playwright
+pydantic
+sqlalchemy
+psycopg2-binary
+celery
+redis
+python-dotenv
+loguru
+sqlmodel
