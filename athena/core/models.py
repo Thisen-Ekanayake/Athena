@@ -52,7 +52,7 @@ class ContentItem(Base):
     full_text_path = Column(String, nullable=True)
     citation_count = Column(Integer, default=0)
     category = Column(SQLEnum(ContentCategory), nullable=False)
-    content_hash = Column(String, index=True)
+    content_hash = Column(String, index=True, unique=True)
     score = Column(Float, default=0.0)
     cluster_id = Column(PG_UUID(as_uuid=True), nullable=True)
     extra_data = Column(JSONB, default={})

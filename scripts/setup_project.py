@@ -41,6 +41,46 @@ def setup():
         category=SourceCategory.COMPANY
     ))
 
+    # Meta AI RSS
+    upsert_source(SourceCreate(
+        name="Meta AI Blog",
+        url="https://ai.meta.com/blog/rss/",
+        type=SourceType.RSS,
+        category=SourceCategory.COMPANY
+    ))
+
+    # Microsoft Research
+    upsert_source(SourceCreate(
+        name="Microsoft Research Blog",
+        url="https://www.microsoft.com/en-us/research/feed/",
+        type=SourceType.RSS,
+        category=SourceCategory.COMPANY
+    ))
+
+    # Hugging Face Blog
+    upsert_source(SourceCreate(
+        name="Hugging Face Blog",
+        url="https://huggingface.co/blog/feed.xml",
+        type=SourceType.RSS,
+        category=SourceCategory.COMPANY
+    ))
+
+    # Anthropic News
+    upsert_source(SourceCreate(
+        name="Anthropic News",
+        url="https://www.anthropic.com/feed.xml",
+        type=SourceType.RSS,
+        category=SourceCategory.COMPANY
+    ))
+
+    # NVIDIA Blog
+    upsert_source(SourceCreate(
+        name="NVIDIA Blog",
+        url="https://blogs.nvidia.com/feed/",
+        type=SourceType.RSS,
+        category=SourceCategory.COMPANY
+    ))
+
     print("Setup Complete.")
 
 if __name__ == "__main__":

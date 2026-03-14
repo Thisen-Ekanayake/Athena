@@ -19,7 +19,8 @@ def upsert_source(source_data: SourceCreate) -> Source:
         session.commit()
         return session.execute(select(Source).where(Source.url == data['url'])).scalar_one()
 
-def save_content_items(items: list[ContentItemCreate]):
+def save_content_items(items: list[ContentItemCreate]) -> list[str]:
+    new_urls = []
     with SessionLocal() as session:
         success_count = 0
         for item in items:
@@ -30,7 +31,9 @@ def save_content_items(items: list[ContentItemCreate]):
                 stmt = insert(ContentItem).values(**data)
                 stmt = stmt.on_conflict_do_nothing(index_elements=['url'])
                 result = session.execute(stmt)
-                success_count += 1
+                if result.rowcount > 0:
+                    success_count += 1
+                    new_urls.append(data['url'])
             except Exception as e:
                 # Silently skip duplicates if they weren't caught by on_conflict
                 if "unique constraint" in str(e).lower():
@@ -39,6 +42,17 @@ def save_content_items(items: list[ContentItemCreate]):
                 continue
         session.commit()
         logger.info(f"Successfully processed {len(items)} items. New items added: {success_count}")
+        return new_urls
+
+def update_content_item_metrics(url: str, citation_count: int, extra_data: dict):
+    with SessionLocal() as session:
+        from sqlalchemy import update
+        stmt = update(ContentItem).where(ContentItem.url == url).values(
+            citation_count=citation_count,
+            extra_data=extra_data
+        )
+        session.execute(stmt)
+        session.commit()
 
 def get_active_sources():
     with SessionLocal() as session:

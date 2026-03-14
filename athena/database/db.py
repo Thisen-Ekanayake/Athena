@@ -20,3 +20,4 @@ def get_db():
 def init_db():
     from athena.core.models import Base
     Base.metadata.create_all(bind=engine)
+
