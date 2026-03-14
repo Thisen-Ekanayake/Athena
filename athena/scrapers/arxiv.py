@@ -26,7 +26,7 @@ class ArXivScraper(BaseScraper):
                 return self.parse_response(response.text)
             except Exception as e:
                 logger.error(f"Error fetching from ArXiv: {e}")
-                return []
+                raise e
 
     def parse_response(self, xml_content: str) -> List[ContentItemCreate]:
         root = ET.fromstring(xml_content)

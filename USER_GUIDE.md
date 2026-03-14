@@ -46,7 +46,7 @@ docker-compose ps
 
 ## 3. Initialize and Seed
 
-Run the setup script to initialize the database schema and seed the initial sources (ArXiv, OpenAI, Google DeepMind):
+Run the setup script to initialize the database schema and seed all 11 sources (8 RSS/API + 3 headless-scraped):
 
 ```bash
 python3 scripts/setup_project.py
@@ -54,20 +54,22 @@ python3 scripts/setup_project.py
 
 ## 4. Run Ingestion Pass
 
-Trigger a manual crawl for all 8 active sources. This will fetch new data, deduplicate using SHA-256 hashes, and save it to the database:
+Trigger a manual crawl for all active sources. This will fetch new data, deduplicate using SHA-256 hashes, save it to the database, and  automatically stage content to `/tmp/athena/staging/` and push item IDs to the Redis embedding queue:
 
 ```bash
 python3 scripts/run_crawl.py
 ```
 
-### 4.1. Run Enrichment Workers (Phase 1/2)
+### 4.1. Run Enrichment Workers (All Phases)
 
-To process Semantic Scholar metrics (rate-limited to 1 req/sec) and Papers With Code benchmarks, you need to start the Celery worker. *Note: The crawler scripts add tasks to the Redis queue, which this worker executes.*
+Start the Celery worker to process enrichment tasks (Semantic Scholar, Papers With Code) and staging tasks (Phase 5). In a **new terminal**:
 
-In a new terminal window, activate your python environment and run:
 ```bash
+source venv/bin/activate
 celery -A athena.pipeline.tasks worker -l info --pool=threads
 ```
+
+> **Note**: The Celery worker must be running for arXiv enrichment and content staging to work. The `run_crawl.py` script dispatches tasks to work queue; the worker processes them.
 
 ## 5. Verify Results
 
@@ -78,37 +80,58 @@ python3 scripts/verify_db.py
 ```
 
 ### Expected Output
-Because the feeds update dynamically, your exact item counts will vary, but you should see 8 total sources configured:
+You should see **11 total sources** (8 RSS/API + 3 headless-scraped blogs):
 ```text
-Total Sources: 8
-Total Content Items: ~1770
+Total Sources: 11
+Total Content Items: ~1800+
 
 Sources and Item Counts:
-  Anthropic News: X
-  ArXiv AI: X
-  Google DeepMind Blog: X
-  Hugging Face Blog: X
-  Meta AI Blog: X
-  Microsoft Research Blog: X
-  NVIDIA Blog: X
-  OpenAI News: X
+  [API]   ArXiv AI: ~10+
+  [RSS]   OpenAI News: ~884
+  [RSS]   Google DeepMind Blog: ~100
+  [RSS]   Meta AI Blog: ~X
+  [RSS]   Microsoft Research Blog: ~X
+  [RSS]   Hugging Face Blog: ~748
+  [RSS]   Anthropic News: 0 (404 - feed discontinued)
+  [RSS]   NVIDIA Blog: ~18
+  [SCRAPE] The Gradient: ~10
+  [SCRAPE] Towards Data Science: ~10
+  [SCRAPE] LessWrong: ~10
 ```
 
-### Verifying Enrichment Data
-You can use the database viewer to check if arXiv papers were successfully enriched with citation counts.
+### Verifying Enrichment Data (Phase 1)
+Check if arXiv papers were enriched with citation counts from Semantic Scholar:
 ```bash
 python3 scripts/view_db.py -s "ArXiv" -n 5
 ```
-Look for the `extra_data` or `citation_count` fields in the output to confirm Semantic Scholar data was appended by the Celery worker.
+Look for the `extra_data.semantic_scholar` or non-zero `citation_count` fields.
 
+### Verifying Fetch Logs (Phase 3)
+Fetch logs are written to the `fetch_logs` table after every run. Check them with:
+```bash
+# In psql:
+docker exec -it athena-db-1 psql -U athena_user -d athena_db -c "SELECT s.name, fl.status, fl.duration_ms FROM fetch_logs fl LEFT JOIN sources s ON fl.source_id = s.id ORDER BY fl.created_at DESC LIMIT 11;"
+```
 
-## 6. What's Next? (Phases 3-5)
+### Verifying Staging & Embedding Queue (Phase 5)
+After running with the Celery worker, new items should be staged to disk and queued for embedding:
+```bash
+# Check staging directory
+ls /tmp/athena/staging/ | wc -l
 
-Once you have verified the RSS and API ingest pipelines are working (Phases 1 & 2), the next architectural milestones in the `AI-News-RAG-System-Checklist.md` are:
+# Check Redis embedding queue
+docker exec -it athena-redis-1 redis-cli llen athena:embedding_queue
+```
 
-- **Phase 3**: Implement robust retry logic, dead-letter queues, fetch logs, and rate-limiting trackers to handle production load.
-- **Phase 4**: Setup Playwright headless scraping for Javascript-heavy community blogs (e.g., The Gradient).
-- **Phase 5**: Complete LLM enrichment (summaries, tags) and vector database handoffs.
+## 6. Architecture Overview (Phases 1-5)
+
+| Phase | Component | Status |
+|-------|-----------|--------|
+| **Phase 1** | ArXiv + Semantic Scholar + Papers With Code Connectors | ✅ Done |
+| **Phase 2** | 7 Company RSS feeds + Celery Beat 6h polling | ✅ Done |
+| **Phase 3** | Retry logic (3x backoff), FetchLog table, Auto-disable on 5 failures | ✅ Done |
+| **Phase 4** | Playwright headless scraper (The Gradient, TDS, LessWrong) | ✅ Done |
+| **Phase 5** | Full-text staging to disk + Redis embedding queue handoff | ✅ Done |
 
 You should stop the active Celery worker (`Ctrl+C`) when you are done verifying.
 

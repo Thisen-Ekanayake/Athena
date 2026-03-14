@@ -5,8 +5,10 @@ playwright
 pydantic
 sqlalchemy
 psycopg2-binary
-celery
+celery[redis]
 redis
 python-dotenv
 loguru
-sqlmodel
+newspaper3k
+lxml_html_clean
+arxiv

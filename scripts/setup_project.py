@@ -81,6 +81,31 @@ def setup():
         category=SourceCategory.COMPANY
     ))
 
+    # Community Blogs (Playwright Headless Scraping)
+    upsert_source(SourceCreate(
+        name="The Gradient",
+        url="https://thegradient.pub/rss/",
+        type=SourceType.SCRAPE,
+        category=SourceCategory.BLOG,
+        fetch_config={"use_playwright": True}
+    ))
+
+    upsert_source(SourceCreate(
+        name="Towards Data Science",
+        url="https://towardsdatascience.com/feed",
+        type=SourceType.SCRAPE,
+        category=SourceCategory.BLOG,
+        fetch_config={"use_playwright": True}
+    ))
+
+    upsert_source(SourceCreate(
+        name="LessWrong",
+        url="https://www.lesswrong.com/feed.xml",
+        type=SourceType.SCRAPE,
+        category=SourceCategory.BLOG,
+        fetch_config={"use_playwright": True}
+    ))
+
     print("Setup Complete.")
 
 if __name__ == "__main__":

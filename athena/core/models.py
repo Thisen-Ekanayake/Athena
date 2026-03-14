@@ -35,8 +35,10 @@ class Source(Base):
     last_fetched_at = Column(DateTime(timezone=True), nullable=True)
     is_active = Column(Boolean, default=True)
     added_by = Column(String, default="system")
+    consecutive_failures = Column(Integer, default=0)
 
     content_items = relationship("ContentItem", back_populates="source")
+    fetch_logs = relationship("FetchLog", back_populates="source")
 
 class ContentItem(Base):
     __tablename__ = "content_items"
@@ -58,3 +60,15 @@ class ContentItem(Base):
     extra_data = Column(JSONB, default={})
 
     source = relationship("Source", back_populates="content_items")
+
+class FetchLog(Base):
+    __tablename__ = "fetch_logs"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    source_id = Column(PG_UUID(as_uuid=True), ForeignKey("sources.id"), nullable=False)
+    status = Column(String, nullable=False) # 'success' or 'error'
+    error_message = Column(String, nullable=True)
+    duration_ms = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    source = relationship("Source", back_populates="fetch_logs")
