@@ -10,9 +10,11 @@ This guide provides instructions on how to set up, run, and verify the Athena Da
 
 ## 1. Environment Setup
 
-First, install the required Python dependencies:
+First, create and activate a virtual environment, then install the required Python dependencies:
 
 ```bash
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -79,17 +81,17 @@ python3 scripts/verify_db.py
 Because the feeds update dynamically, your exact item counts will vary, but you should see 8 total sources configured:
 ```text
 Total Sources: 8
-Total Content Items: ~1500
+Total Content Items: ~880
 
 Sources and Item Counts:
-  Anthropic News: X
-  ArXiv AI: X
-  Google DeepMind Blog: X
-  Hugging Face Blog: X
-  Meta AI Blog: X
-  Microsoft Research Blog: X
-  NVIDIA Blog: X
-  OpenAI News: X
+  ArXiv AI: 10
+  OpenAI News: 0
+  Google DeepMind Blog: 100
+  Meta AI Blog: 0
+  Microsoft Research Blog: 10
+  Hugging Face Blog: 748
+  Anthropic News: 0
+  NVIDIA Blog: 18
 ```
 
 ### Verifying Enrichment Data
