@@ -78,9 +78,55 @@ Sources and Item Counts:
   Google DeepMind Blog: 100
 ```
 
-## 6. Project Structure Overview
+## 7. Viewing Database Contents
 
-- `athena/scrapers/`: Individual source connectors.
-- `athena/database/`: Database logic (SQLAlchemy models).
-- `athena/pipeline/`: Celery task definitions.
-- `scripts/`: Utility scripts for management and verification.
+You can view the ingested items using the provided viewing script or by connecting directly to the database.
+
+### Using the Viewing Script
+
+A utility script `scripts/view_db.py` is provided to easily view the latest ingested items from the terminal.
+
+To view the 10 most recent items:
+```bash
+python3 scripts/view_db.py
+```
+
+To view more items (e.g., 20):
+```bash
+python3 scripts/view_db.py -n 20
+```
+
+To filter by a specific source (e.g., "ArXiv"):
+```bash
+python3 scripts/view_db.py -s "ArXiv"
+```
+
+To filter by category (e.g., "PAPER" or "COMMUNITY_BLOG"):
+```bash
+python3 scripts/view_db.py -c "PAPER"
+```
+
+### Accessing PostgreSQL Directly
+
+The PostgreSQL database is exposed on `localhost:5432`. You can connect to it using any SQL client (like DBeaver, DataGrip, or `psql`).
+
+**Connection Details:**
+- **Host**: `localhost`
+- **Port**: `5432`
+- **Database Name**: `athena_db`
+- **Username**: `athena_user`
+- **Password**: `athena_password`
+
+**Using `psql` from terminal:**
+```bash
+docker exec -it athena-db-1 psql -U athena_user -d athena_db
+```
+
+Once inside, you can run standard SQL queries:
+```sql
+-- View all sources
+SELECT id, name, type, category FROM sources;
+
+-- View recent content titles
+SELECT title, published_at FROM content_items ORDER BY published_at DESC LIMIT 5;
+```
