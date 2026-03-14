@@ -21,26 +21,36 @@ def upsert_source(source_data: SourceCreate) -> Source:
 
 def save_content_items(items: list[ContentItemCreate]) -> list[str]:
     new_urls = []
+    success_count = 0
     with SessionLocal() as session:
-        success_count = 0
         for item in items:
             try:
                 data = item.dict()
                 data['url'] = str(data['url'])
-                # We use content_hash as the primary deduplicator if it exists
+                
+                # Check for existing content_hash first to avoid transaction rollback loop
+                from sqlalchemy import select
+                existing = session.execute(
+                    select(ContentItem).where(ContentItem.content_hash == data['content_hash'])
+                ).scalar_one_or_none()
+                
+                if existing:
+                    continue
+
                 stmt = insert(ContentItem).values(**data)
                 stmt = stmt.on_conflict_do_nothing(index_elements=['url'])
                 result = session.execute(stmt)
+                
                 if result.rowcount > 0:
                     success_count += 1
                     new_urls.append(data['url'])
+                session.commit()
             except Exception as e:
-                # Silently skip duplicates if they weren't caught by on_conflict
-                if "unique constraint" in str(e).lower():
-                    continue
-                logger.error(f"Error saving item {item.url}: {e}")
+                session.rollback()
+                if "unique constraint" not in str(e).lower():
+                    logger.error(f"Error saving item {item.url}: {e}")
                 continue
-        session.commit()
+                
         logger.info(f"Successfully processed {len(items)} items. New items added: {success_count}")
         return new_urls
 

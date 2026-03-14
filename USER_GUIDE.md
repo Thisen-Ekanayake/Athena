@@ -81,17 +81,17 @@ python3 scripts/verify_db.py
 Because the feeds update dynamically, your exact item counts will vary, but you should see 8 total sources configured:
 ```text
 Total Sources: 8
-Total Content Items: ~880
+Total Content Items: ~1770
 
 Sources and Item Counts:
-  ArXiv AI: 10
-  OpenAI News: 0
-  Google DeepMind Blog: 100
-  Meta AI Blog: 0
-  Microsoft Research Blog: 10
-  Hugging Face Blog: 748
-  Anthropic News: 0
-  NVIDIA Blog: 18
+  Anthropic News: X
+  ArXiv AI: X
+  Google DeepMind Blog: X
+  Hugging Face Blog: X
+  Meta AI Blog: X
+  Microsoft Research Blog: X
+  NVIDIA Blog: X
+  OpenAI News: X
 ```
 
 ### Verifying Enrichment Data
@@ -101,6 +101,16 @@ python3 scripts/view_db.py -s "ArXiv" -n 5
 ```
 Look for the `extra_data` or `citation_count` fields in the output to confirm Semantic Scholar data was appended by the Celery worker.
 
+
+## 6. What's Next? (Phases 3-5)
+
+Once you have verified the RSS and API ingest pipelines are working (Phases 1 & 2), the next architectural milestones in the `AI-News-RAG-System-Checklist.md` are:
+
+- **Phase 3**: Implement robust retry logic, dead-letter queues, fetch logs, and rate-limiting trackers to handle production load.
+- **Phase 4**: Setup Playwright headless scraping for Javascript-heavy community blogs (e.g., The Gradient).
+- **Phase 5**: Complete LLM enrichment (summaries, tags) and vector database handoffs.
+
+You should stop the active Celery worker (`Ctrl+C`) when you are done verifying.
 
 ## 7. Viewing Database Contents
 
