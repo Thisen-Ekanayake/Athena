@@ -52,10 +52,19 @@ python3 scripts/setup_project.py
 
 ## 4. Run Ingestion Pass
 
-Trigger a manual crawl for all active sources. This will fetch data and save it to the database:
+Trigger a manual crawl for all 8 active sources. This will fetch new data, deduplicate using SHA-256 hashes, and save it to the database:
 
 ```bash
 python3 scripts/run_crawl.py
+```
+
+### 4.1. Run Enrichment Workers (Phase 1/2)
+
+To process Semantic Scholar metrics (rate-limited to 1 req/sec) and Papers With Code benchmarks, you need to start the Celery worker. *Note: The crawler scripts add tasks to the Redis queue, which this worker executes.*
+
+In a new terminal window, activate your python environment and run:
+```bash
+celery -A athena.pipeline.tasks worker -l info --pool=threads
 ```
 
 ## 5. Verify Results
@@ -67,16 +76,29 @@ python3 scripts/verify_db.py
 ```
 
 ### Expected Output
-You should see a summary similar to this:
+Because the feeds update dynamically, your exact item counts will vary, but you should see 8 total sources configured:
 ```text
-Total Sources: 3
-Total Content Items: 985
+Total Sources: 8
+Total Content Items: ~1500
 
 Sources and Item Counts:
-  ArXiv AI: 10
-  OpenAI News: 875
-  Google DeepMind Blog: 100
+  Anthropic News: X
+  ArXiv AI: X
+  Google DeepMind Blog: X
+  Hugging Face Blog: X
+  Meta AI Blog: X
+  Microsoft Research Blog: X
+  NVIDIA Blog: X
+  OpenAI News: X
 ```
+
+### Verifying Enrichment Data
+You can use the database viewer to check if arXiv papers were successfully enriched with citation counts.
+```bash
+python3 scripts/view_db.py -s "ArXiv" -n 5
+```
+Look for the `extra_data` or `citation_count` fields in the output to confirm Semantic Scholar data was appended by the Celery worker.
+
 
 ## 7. Viewing Database Contents
 
