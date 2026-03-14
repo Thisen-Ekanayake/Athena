@@ -1,5 +1,5 @@
 import httpx
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from loguru import logger
 
 class PapersWithCodeEnricher:
@@ -9,42 +9,63 @@ class PapersWithCodeEnricher:
         """
         Fetch GitHub repos and benchmark scores for a given arXiv ID.
         """
-        url = f"{self.BASE_URL}/papers/"
-        params = {"arxiv_id": arxiv_id}
-        
         async with httpx.AsyncClient() as client:
             try:
                 # 1. Find the paper on PWC using arxiv_id
-                response = await client.get(url, params=params, timeout=10.0)
+                response = await client.get(f"{self.BASE_URL}/papers/", params={"arxiv_id": arxiv_id}, timeout=10.0)
                 response.raise_for_status()
                 data = response.json()
-                
+
                 if not data.get("results"):
                     logger.debug(f"PapersWithCode: No entry for arXiv:{arxiv_id}")
                     return None
-                
-                # We take the first result's ID
+
                 pwc_paper_id = data["results"][0]["id"]
-                
-                # 2. Get the repositories for this paper
-                repo_url = f"{self.BASE_URL}/papers/{pwc_paper_id}/repositories/"
-                repo_response = await client.get(repo_url, timeout=10.0)
-                repo_response.raise_for_status()
-                repo_data = repo_response.json()
-                
-                repos = []
-                if "results" in repo_data:
-                    for repo in repo_data["results"]:
-                        repos.append({
-                            "url": repo.get("url"),
-                            "stars": repo.get("stars"),
-                            "framework": repo.get("framework")
-                        })
-                
+
+                # 2. Fetch repositories
+                repos = await self._fetch_repos(client, pwc_paper_id)
+
+                # 3. Fetch benchmark results (new — per the acquisition plan)
+                benchmarks = await self._fetch_benchmarks(client, pwc_paper_id)
+
                 return {
                     "pwc_id": pwc_paper_id,
-                    "repositories": repos
+                    "repositories": repos,
+                    "benchmarks": benchmarks
                 }
             except Exception as e:
                 logger.error(f"Papers With Code Enrichment Error for {arxiv_id}: {e}")
                 return None
+
+    async def _fetch_repos(self, client: httpx.AsyncClient, pwc_paper_id: str) -> List[Dict]:
+        try:
+            resp = await client.get(f"{self.BASE_URL}/papers/{pwc_paper_id}/repositories/", timeout=10.0)
+            resp.raise_for_status()
+            data = resp.json()
+            return [
+                {"url": r.get("url"), "stars": r.get("stars"), "framework": r.get("framework")}
+                for r in data.get("results", [])
+            ]
+        except Exception as e:
+            logger.warning(f"Could not fetch repos for {pwc_paper_id}: {e}")
+            return []
+
+    async def _fetch_benchmarks(self, client: httpx.AsyncClient, pwc_paper_id: str) -> List[Dict]:
+        """Fetch benchmark results from /papers/{id}/results/."""
+        try:
+            resp = await client.get(f"{self.BASE_URL}/papers/{pwc_paper_id}/results/", timeout=10.0)
+            resp.raise_for_status()
+            data = resp.json()
+            benchmarks = []
+            for result in data.get("results", []):
+                benchmarks.append({
+                    "task": result.get("task", {}).get("name"),
+                    "dataset": result.get("dataset", {}).get("name"),
+                    "metric": result.get("metric"),
+                    "score": result.get("score"),
+                    "model": result.get("model"),
+                })
+            return benchmarks
+        except Exception as e:
+            logger.warning(f"Could not fetch benchmarks for {pwc_paper_id}: {e}")
+            return []

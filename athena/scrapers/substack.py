@@ -1,5 +1,10 @@
-import feedparser
+"""
+Generic Substack RSS Harvester.
+Substack blogs publish RSS feeds at: https://<blog>.substack.com/feed
+This scraper accepts any Substack URL and constructs the RSS feed URL automatically.
+"""
 import httpx
+import feedparser
 import html
 from typing import List, Any
 from datetime import datetime, timezone
@@ -9,33 +14,44 @@ from athena.core.schemas import ContentItemCreate
 from athena.core.models import ContentCategory
 from loguru import logger
 
-class RSSScraper(BaseScraper):
-    def __init__(self, source_id: str, source_category: str = "company"):
-        super().__init__(source_id)
-        self.source_category = source_category
+
+def detect_substack_feed(url: str) -> str:
+    """
+    Given a Substack URL (e.g. https://gradientflow.substack.com or 
+    https://gradientflow.substack.com/p/some-post), return the RSS feed URL.
+    """
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+    return f"{base}/feed"
+
+
+class SubstackScraper(BaseScraper):
+    """
+    Generic Substack RSS harvester.
+    `url` should be the base Substack URL (e.g. https://gradientflow.substack.com).
+    Feed URL is auto-constructed as <base>/feed.
+    """
 
     async def fetch(self, url: str) -> List[Any]:
-        """Fetch raw RSS feed entries via HTTP."""
+        feed_url = detect_substack_feed(url)
+        logger.info(f"Fetching Substack RSS: {feed_url}")
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.get(url, follow_redirects=True, timeout=30.0)
+                response = await client.get(feed_url, follow_redirects=True, timeout=30.0)
                 response.raise_for_status()
                 feed = feedparser.parse(response.text)
                 return [(entry, url) for entry in feed.entries]
             except Exception as e:
-                logger.error(f"Error fetching RSS from {url}: {e}")
+                logger.error(f"Error fetching Substack feed {feed_url}: {e}")
                 raise e
 
     def parse(self, raw: Any) -> ContentItemCreate:
-        """Normalise a single RSS entry to ContentItemCreate."""
         entry, source_url = raw
-        title = html.unescape((entry.get('title') or 'Unknown Title').strip())
-        link = (entry.get('link') or '').strip()
+        title = html.unescape(entry.get('title', 'Unknown').strip())
+        link = entry.get('link', '').strip()
 
-        if not link:
-            raise ValueError(f"RSS entry has no URL, cannot create ContentItemCreate: title='{title}'")
-
-        # Robust date parsing: try RFC 2822 first, then struct_time, then UTC now
+        # Robust date parsing
         published_at = self._parse_date(entry)
 
         authors = [a.get('name') for a in entry.get('authors', []) if a.get('name')]
@@ -44,13 +60,6 @@ class RSSScraper(BaseScraper):
 
         summary = html.unescape(entry.get('summary', entry.get('description', '')).strip())
 
-        # Determine category based on stored source category
-        category = (
-            ContentCategory.COMPANY_BLOG.value
-            if self.source_category == "company"
-            else ContentCategory.COMMUNITY_BLOG.value
-        )
-
         content_hash = self.generate_content_hash(f"{title}|{summary}")
         return ContentItemCreate(
             source_id=self.source_id,
@@ -58,15 +67,13 @@ class RSSScraper(BaseScraper):
             url=link,
             published_at=published_at,
             authors=authors,
-            abstract=summary[:500] if summary else None,
-            category=category,
+            abstract=summary[:800] if summary else None,
+            category=ContentCategory.COMMUNITY_BLOG.value,
             content_hash=content_hash,
-            extra_data={"feed_link": source_url}
+            extra_data={"feed_source": source_url, "platform": "substack"}
         )
 
     def _parse_date(self, entry) -> datetime:
-        """Robust date parser that handles RFC 2822 strings and time.struct_time."""
-        # 1. Try RFC 2822 string (most reliable, preserves timezone)
         for field in ('published', 'updated', 'created'):
             date_str = entry.get(field)
             if date_str:
@@ -74,16 +81,12 @@ class RSSScraper(BaseScraper):
                     return parsedate_to_datetime(date_str)
                 except Exception:
                     pass
-        # 2. Fall back to feedparser's struct_time (loses timezone info)
         for field in ('published_parsed', 'updated_parsed', 'created_parsed'):
             parsed = entry.get(field)
             if parsed:
                 try:
                     import calendar
-                    ts = calendar.timegm(parsed)  # interprets as UTC
-                    return datetime.fromtimestamp(ts, tz=timezone.utc)
+                    return datetime.fromtimestamp(calendar.timegm(parsed), tz=timezone.utc)
                 except Exception:
                     pass
-        # 3. Final fallback: current UTC time
         return datetime.now(tz=timezone.utc)
-

@@ -69,6 +69,17 @@ class FetchLog(Base):
     status = Column(String, nullable=False) # 'success' or 'error'
     error_message = Column(String, nullable=True)
     duration_ms = Column(Float, nullable=False)
+    items_fetched = Column(Integer, default=0)  # number of new items saved this run
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
     source = relationship("Source", back_populates="fetch_logs")
+
+class QuarantineItem(Base):
+    """Holds raw items that failed Pydantic schema validation for later inspection."""
+    __tablename__ = "quarantine_items"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    source_id = Column(PG_UUID(as_uuid=True), ForeignKey("sources.id"), nullable=False)
+    raw_data = Column(JSONB, nullable=True)  # serialized raw item that failed parsing
+    error_message = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
