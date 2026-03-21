@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import List, Optional, Any, Dict
 from uuid import UUID
-from pydantic import BaseModel, HttpUrl, Field
+from pydantic import BaseModel, HttpUrl
+
 
 class SourceBase(BaseModel):
     name: str
@@ -11,8 +12,10 @@ class SourceBase(BaseModel):
     fetch_config: Dict[str, Any] = {}
     is_active: bool = True
 
+
 class SourceCreate(SourceBase):
     pass
+
 
 class SourceRead(SourceBase):
     id: UUID
@@ -21,6 +24,7 @@ class SourceRead(SourceBase):
 
     class Config:
         from_attributes = True
+
 
 class ContentItemBase(BaseModel):
     title: str
@@ -31,9 +35,11 @@ class ContentItemBase(BaseModel):
     category: str
     extra_data: Dict[str, Any] = {}
 
+
 class ContentItemCreate(ContentItemBase):
     source_id: UUID
     content_hash: str
+
 
 class ContentItemRead(ContentItemBase):
     id: UUID
@@ -42,7 +48,7 @@ class ContentItemRead(ContentItemBase):
     citation_count: int
     score: float
     cluster_id: Optional[UUID] = None
-    
+
     summary: Optional[str] = None
     takeaways: Optional[List[str]] = None
     summary_status: str

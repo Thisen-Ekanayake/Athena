@@ -2,6 +2,7 @@ import httpx
 from typing import Dict, Any, Optional, List
 from loguru import logger
 
+
 class PapersWithCodeEnricher:
     BASE_URL = "https://paperswithcode.com/api/v1"
 

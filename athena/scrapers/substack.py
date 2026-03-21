@@ -17,7 +17,7 @@ from loguru import logger
 
 def detect_substack_feed(url: str) -> str:
     """
-    Given a Substack URL (e.g. https://gradientflow.substack.com or 
+    Given a Substack URL (e.g. https://gradientflow.substack.com or
     https://gradientflow.substack.com/p/some-post), return the RSS feed URL.
     """
     from urllib.parse import urlparse

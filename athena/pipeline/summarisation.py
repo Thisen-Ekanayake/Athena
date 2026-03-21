@@ -1,21 +1,20 @@
 """
 Athena Layer 4 — Summarisation Core Logic
 
-Contains utilities for Redis-based budget tracking, Pydantic validation of OpenAI 
+Contains utilities for Redis-based budget tracking, Pydantic validation of OpenAI
 responses, and core logic for formatting prompts and generating summaries.
 """
 import os
 import json
-from datetime import datetime, timezone, date
-from typing import List, Optional, Dict, Any
+from datetime import datetime, timezone
+from typing import List, Optional
 
 import redis as redis_lib
-from pydantic import BaseModel, root_validator, validator
+from pydantic import BaseModel, validator
 from loguru import logger
 from sqlalchemy import select
 
-from athena.database.db import SessionLocal
-from athena.core.models import PromptVersion, SummaryUsageLog, ContentItem, JobType
+from athena.core.models import PromptVersion, SummaryUsageLog, JobType
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 redis = redis_lib.from_url(REDIS_URL)
@@ -29,17 +28,17 @@ class SummaryOutput(BaseModel):
     @validator('summary')
     def summary_length(cls, v):
         words = len(v.split())
-        if words < 20: 
+        if words < 20:
             raise ValueError('Summary too short (< 20 words)')
-        if words > 120: 
+        if words > 120:
             raise ValueError('Summary too long (> 120 words)')
         return v
 
     @validator('takeaways')
     def takeaways_count(cls, v):
-        if len(v) < 3: 
+        if len(v) < 3:
             raise ValueError('Need at least 3 takeaways')
-        if len(v) > 5: 
+        if len(v) > 5:
             raise ValueError('No more than 5 takeaways')
         if any(len(t.split()) < 5 for t in v):
             raise ValueError('Takeaway too short')
@@ -83,12 +82,12 @@ def log_usage_and_update_spend(
     """Logs usage to the DB and increments daily spend in Redis."""
     # gpt-4o-mini pricing: $0.15 / 1M input, $0.60 / 1M output options
     cost = (input_tokens * 0.00015 + output_tokens * 0.0006) / 1000
-    
+
     key = 'summary_spend:' + today_date()
     redis.incrbyfloat(key, cost)
     # Give the budget key a 2-day TTL so old limits expire naturally
     redis.expire(key, 86400 * 2)
-    
+
     log_entry = SummaryUsageLog(
         item_id=item_id,
         cluster_id=cluster_id,
@@ -103,15 +102,15 @@ def log_usage_and_update_spend(
         error_message=error_message
     )
     session.add(log_entry)
-    
+
     return cost
+
 
 def get_active_prompt_version(job_type: JobType, session) -> Optional[PromptVersion]:
     """Fetch the currently active prompt version for a given job type."""
     return session.execute(
         select(PromptVersion)
         .where(PromptVersion.job_type == job_type)
-        .where(PromptVersion.is_active == True)
+        .where(PromptVersion.is_active .is_(True))
         .order_by(PromptVersion.version.desc())
     ).scalar_one_or_none()
-

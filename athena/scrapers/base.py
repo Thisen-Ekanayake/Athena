@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import List, Any
-from datetime import datetime
 import hashlib
 from athena.core.schemas import ContentItemCreate
+
 
 class BaseScraper(ABC):
     def __init__(self, source_id: str):
@@ -11,12 +11,10 @@ class BaseScraper(ABC):
     @abstractmethod
     async def fetch(self, *args, **kwargs) -> List[Any]:
         """Retrieve raw items from the source (raw JSON, XML, HTML)."""
-        pass
 
     @abstractmethod
     def parse(self, raw: Any) -> ContentItemCreate:
         """Normalise a single raw item to a ContentItemCreate schema object."""
-        pass
 
     async def run(self, *args, **kwargs) -> List[ContentItemCreate]:
         """Orchestrator: fetch raw items, then parse each into ContentItemCreate."""

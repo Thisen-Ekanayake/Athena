@@ -1,6 +1,6 @@
-import os
 from athena.database.db import SessionLocal
 from athena.core.models import PromptVersion, JobType
+
 
 def seed_prompts():
     session = SessionLocal()
@@ -113,6 +113,7 @@ Do not invent connections that are not there.'''
 
     finally:
         session.close()
+
 
 if __name__ == "__main__":
     seed_prompts()

@@ -9,6 +9,7 @@ from athena.core.schemas import ContentItemCreate
 from athena.core.models import ContentCategory
 from loguru import logger
 
+
 class RSSScraper(BaseScraper):
     def __init__(self, source_id: str, source_category: str = "company"):
         super().__init__(source_id)
@@ -86,4 +87,3 @@ class RSSScraper(BaseScraper):
                     pass
         # 3. Final fallback: current UTC time
         return datetime.now(tz=timezone.utc)
-

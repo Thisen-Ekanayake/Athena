@@ -5,7 +5,7 @@ from typing import Optional
 
 from celery import shared_task
 from loguru import logger
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem, SummaryStatus, JobType
@@ -16,6 +16,7 @@ from athena.pipeline.summarisation import (
     parse_and_validate,
 )
 
+
 def _get_openai_client():
     from openai import OpenAI
     api_key = os.getenv("OPENAI_API_KEY")
@@ -23,13 +24,13 @@ def _get_openai_client():
         raise ValueError("OPENAI_API_KEY is not set.")
     return OpenAI(api_key=api_key)
 
+
 def build_item_summary_prompt(item: ContentItem, text_content: str, prompt_tpl: str) -> str:
-    from athena.core.models import ContentCategory
     cat = item.category.value if hasattr(item.category, 'value') else str(item.category)
     source_name = item.source.name if item.source else "Unknown"
     authors = ", ".join(item.authors) if item.authors else "Unknown"
     pub_date = item.published_at.strftime("%Y-%m-%d") if item.published_at else "Unknown"
-    
+
     return prompt_tpl.format(
         title=item.title,
         authors=authors,
@@ -39,6 +40,7 @@ def build_item_summary_prompt(item: ContentItem, text_content: str, prompt_tpl: 
         preprocessed_text=text_content
     )
 
+
 def _does_item_need_resummary(item: ContentItem, active_version: int) -> bool:
     if not item.summary or item.summary_status != SummaryStatus.COMPLETE:
         return True
@@ -46,6 +48,7 @@ def _does_item_need_resummary(item: ContentItem, active_version: int) -> bool:
     if item.summary_version != active_version:
         return True
     return False
+
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def summarise_item_worker(self, item_id: str):
@@ -55,7 +58,7 @@ def summarise_item_worker(self, item_id: str):
     """
     if not check_budget_before_call(JobType.ITEM_SUMMARY.value):
         logger.warning(f"Budget exceeded. Skipping summarisation for {item_id}.")
-        # Let it fail so it might be retried or just ignored. If we raise self.retry, 
+        # Let it fail so it might be retried or just ignored. If we raise self.retry,
         # it pushes to a queue. For now, we abort. Tier 1 skips this budget check logic if needed,
         # but let's implement standard budget abort here.
         return
@@ -104,7 +107,7 @@ def summarise_item_worker(self, item_id: str):
             )
             raw_response = res.choices[0].message.content
             latency = int((time.time() - start_time) * 1000)
-            
+
             # Validate
             try:
                 parsed = parse_and_validate(raw_response)
@@ -141,32 +144,36 @@ def summarise_item_worker(self, item_id: str):
                 logger.error(f"Validation failed for item {item_id}: {err_msg}")
                 # Retry if JSON validation failed
                 raise self.retry(exc=Exception(f"Validation Error: {err_msg}"))
-                
+
         except Exception as e:
             session.rollback()
             logger.error(f"OpenAI or inner error for {item_id}: {e}")
             with SessionLocal() as err_session:
-                err_item = err_session.execute(select(ContentItem).where(ContentItem.id == item_id)).scalar_one_or_none()
+                err_item = err_session.execute(
+                    select(ContentItem).where(
+                        ContentItem.id == item_id)).scalar_one_or_none()
                 if err_item:
                     err_item.summary_status = SummaryStatus.FAILED
                     err_session.commit()
             raise self.retry(exc=e)
 
+
 def summarise_on_demand_sync(item_id: str) -> Optional[ContentItem]:
     """Synchronous on-demand summary for Tier 3 items, triggered by API."""
     import time
-    start = time.time()
+    time.time()
     logger.info(f"Triggering on-demand summarisation for {item_id}")
     task = summarise_item_worker.apply_async(args=[item_id], queue='summary_lazy')
-    
+
     # Wait for completion up to 8 seconds
     try:
         task.get(timeout=8.0)
     except Exception as e:
         logger.error(f"On-demand summary timed out or failed for {item_id}: {e}")
-    
+
     with SessionLocal() as session:
         return session.execute(select(ContentItem).where(ContentItem.id == item_id)).scalar_one_or_none()
+
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def label_cluster_worker(self, cluster_id: str):
@@ -175,7 +182,7 @@ def label_cluster_worker(self, cluster_id: str):
     """
     from athena.core.models import Cluster
     import json
-    
+
     if not check_budget_before_call(JobType.CLUSTER_LABEL.value):
         logger.warning(f"Budget exceeded. Skipping cluster label for {cluster_id}.")
         return
@@ -205,7 +212,7 @@ def label_cluster_worker(self, cluster_id: str):
         items_str_list = []
         for i, item in enumerate(top_items, 1):
             items_str_list.append(f"Item {i}:\n  Title: {item.title}\n  Abstract: {item.abstract or 'N/A'}")
-        
+
         user_msg = active_prompt.user_prompt_tpl.format(
             item_count=len(top_items),
             items_str="\n\n".join(items_str_list)
@@ -224,7 +231,7 @@ def label_cluster_worker(self, cluster_id: str):
             )
             raw_response = res.choices[0].message.content
             latency = int((time.time() - start_time) * 1000)
-            
+
             try:
                 clean = raw_response.strip().lstrip('```json').rstrip('```').strip()
                 data = json.loads(clean)
@@ -260,10 +267,11 @@ def label_cluster_worker(self, cluster_id: str):
                 session.commit()
                 logger.error(f"Validation failed for cluster {cluster_id}: {err_msg}")
                 raise self.retry(exc=Exception(f"Cluster Label Error: {err_msg}"))
-                
+
         except Exception as e:
             logger.error(f"OpenAI error for cluster {cluster_id}: {e}")
             raise self.retry(exc=e)
+
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def generate_trending_brief_worker(self, category: str):
@@ -272,7 +280,7 @@ def generate_trending_brief_worker(self, category: str):
     """
     from athena.core.models import ContentCategory, TrendingBrief
     import json
-    
+
     if not check_budget_before_call(JobType.TRENDING_BRIEF.value):
         logger.warning(f"Budget exceeded. Skipping trending brief for {category}.")
         return
@@ -284,12 +292,12 @@ def generate_trending_brief_worker(self, category: str):
             return
 
         cat_enum = ContentCategory(category)
-        
+
         # Get top 5 trending items
         top_items = session.execute(
             select(ContentItem)
             .where(ContentItem.category == cat_enum)
-            .where(ContentItem.is_trending == True)
+            .where(ContentItem.is_trending .is_(True))
             .order_by(ContentItem.score.desc())
             .limit(5)
         ).scalars().all()
@@ -301,7 +309,7 @@ def generate_trending_brief_worker(self, category: str):
         items_str_list = []
         for i, item in enumerate(top_items, 1):
             items_str_list.append(f"Title: {item.title}\nSummary: {item.summary or item.abstract or 'N/A'}")
-        
+
         user_msg = active_prompt.user_prompt_tpl.format(
             category=category,
             items_str="\n\n".join(items_str_list)
@@ -320,7 +328,7 @@ def generate_trending_brief_worker(self, category: str):
             )
             raw_response = res.choices[0].message.content
             latency = int((time.time() - start_time) * 1000)
-            
+
             try:
                 clean = raw_response.strip().lstrip('```json').rstrip('```').strip()
                 data = json.loads(clean)
@@ -359,7 +367,7 @@ def generate_trending_brief_worker(self, category: str):
                 session.commit()
                 logger.error(f"Validation failed for trending brief {category}: {err_msg}")
                 raise self.retry(exc=Exception(f"Trending Brief Error: {err_msg}"))
-                
+
         except Exception as e:
             logger.error(f"OpenAI error for trending brief in {category}: {e}")
             raise self.retry(exc=e)

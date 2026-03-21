@@ -5,7 +5,6 @@ Provides:
 - detect_source_type(url) -> SourceType
 - add_user_source(url, name) -> Source (test-fetches, confirms, saves, queues first crawl)
 """
-import re
 from typing import Optional
 from loguru import logger
 
@@ -13,8 +12,6 @@ import feedparser
 import httpx
 
 from athena.core.models import SourceType
-from athena.core.schemas import SourceCreate
-from athena.database.operations import upsert_source
 
 
 def detect_source_type(url: str) -> SourceType:
@@ -59,7 +56,6 @@ def preview_source(url: str) -> dict:
     Used to let users confirm before a source is added.
     """
     from athena.scrapers.rss import RSSScraper
-    from athena.scrapers.scraping import PlaywrightScraper
     import asyncio
 
     source_type = detect_source_type(url)
@@ -75,7 +71,7 @@ def preview_source(url: str) -> dict:
         elif source_type == SourceType.API:
             return {"type": "API", "message": "API sources are pre-configured. Cannot preview."}
         else:
-            return {"type": "SCRAPE", "message": "Headless scraping preview not available. Source will be added and queued."}
+            return {"type": "SCRAPE", "message": "Headless scraping preview not available. Source will be added and queued."}  # noqa: E501
 
         return {
             "type": source_type.value,
@@ -96,7 +92,6 @@ def add_user_source(url: str, name: Optional[str] = None, category: str = "blog"
     """
     from athena.core.schemas import SourceCreate
     from athena.core.models import SourceCategory
-    from athena.database.operations import upsert_source
     from athena.pipeline.tasks import crawl_source
 
     source_type = detect_source_type(url)

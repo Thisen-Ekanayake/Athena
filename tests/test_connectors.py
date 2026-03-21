@@ -7,10 +7,10 @@ Covers:
 - Failure tests: rate limit, timeout, bad HTML handling
 - Integration test: end-to-end fetch → normalise → store → queue flow
 """
-import pytest
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
+from datetime import datetime
+import pytest
+
 
 # ─────────────────────────────────────────────────────────────
 # UNIT TESTS: parse() per connector
@@ -21,8 +21,10 @@ class TestArXivScraper:
     DUMMY_SOURCE_ID = "11111111-1111-1111-1111-111111111111"
 
     def _make_entry(self, title="Test Paper", arxiv_id="2301.00001",
-                    abstract="Abstract text.", published="2023-01-01T00:00:00Z", authors=["Alice"]):
+                    abstract="Abstract text.", published="2023-01-01T00:00:00Z", authors=None):
         """Create a minimal mock arXiv Atom XML element."""
+        if authors is None:
+            authors = ["Alice"]
         import xml.etree.ElementTree as ET
         ns = "http://www.w3.org/2005/Atom"
         entry = ET.Element(f"{{{ns}}}entry")
@@ -48,7 +50,6 @@ class TestArXivScraper:
         assert str(item.extra_data.get("pdf_url", "")).endswith(".pdf")
 
     def test_parse_content_hash_is_sha256(self):
-        import hashlib
         from athena.scrapers.arxiv import ArXivScraper
         scraper = ArXivScraper(source_id=self.DUMMY_SOURCE_ID)
         entry = self._make_entry()
@@ -80,7 +81,7 @@ class TestRSSScraper:
     DUMMY_SOURCE_ID = "22222222-2222-2222-2222-222222222222"
 
     def _make_raw_entry(self, title="Blog Post", link="https://blog.example.com/post",
-                         published="Mon, 06 Mar 2023 10:00:00 +0000", summary="Post summary"):
+                        published="Mon, 06 Mar 2023 10:00:00 +0000", summary="Post summary"):
         entry = MagicMock()
         entry.get = lambda k, default=None: {
             'title': title, 'link': link, 'published': published,

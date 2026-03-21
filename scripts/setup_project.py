@@ -1,21 +1,21 @@
 import sys
 import os
-from uuid import uuid4
 
 # Add the project root to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from athena.database.db import init_db
-from athena.database.operations import upsert_source
-from athena.core.schemas import SourceCreate
-from athena.core.models import SourceType, SourceCategory
+from athena.database.db import init_db  # noqa: E402
+from athena.database.operations import upsert_source  # noqa: E402
+from athena.core.schemas import SourceCreate  # noqa: E402
+from athena.core.models import SourceType, SourceCategory  # noqa: E402
+
 
 def setup():
     print("Initializing Database...")
     init_db()
-    
+
     print("Seeding Initial Sources...")
-    
+
     # ArXiv Source
     upsert_source(SourceCreate(
         name="ArXiv AI",
@@ -24,7 +24,7 @@ def setup():
         category=SourceCategory.PAPER,
         fetch_config={"query": "cat:cs.AI OR cat:cs.LG", "max_results": 20}
     ))
-    
+
     # OpenAI Blog
     upsert_source(SourceCreate(
         name="OpenAI News",
@@ -32,7 +32,7 @@ def setup():
         type=SourceType.RSS,
         category=SourceCategory.COMPANY
     ))
-    
+
     # Google DeepMind Blog
     upsert_source(SourceCreate(
         name="Google DeepMind Blog",
@@ -107,6 +107,7 @@ def setup():
     ))
 
     print("Setup Complete.")
+
 
 if __name__ == "__main__":
     setup()

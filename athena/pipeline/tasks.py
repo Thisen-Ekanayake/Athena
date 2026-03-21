@@ -55,32 +55,46 @@ def setup_periodic_tasks(sender, **kwargs):
     # Poll all feeds every 6 hours (21600 seconds)
     sender.add_periodic_task(21600.0, crawl_all_sources.s(), name='crawl every 6 hours')
     # Run embedding worker every 1 minute
-    sender.add_periodic_task(60.0, athena.pipeline.embedding_worker.process_embedding_queue.s(), name='process embeddings every 1 minute')
+    sender.add_periodic_task(
+        60.0,
+        athena.pipeline.embedding_worker.process_embedding_queue.s(),
+        name='process embeddings every 1 minute')
     # Run clustering every 6 hours
-    sender.add_periodic_task(21600.0, athena.pipeline.clustering.run_clustering.s(), name='run clustering every 6 hours')
+    sender.add_periodic_task(
+        21600.0,
+        athena.pipeline.clustering.run_clustering.s(),
+        name='run clustering every 6 hours')
     # Run item linking every 6 hours (after clustering)
-    sender.add_periodic_task(21600.0, athena.pipeline.clustering.compute_item_links.s(), name='compute links every 6 hours')
+    sender.add_periodic_task(
+        21600.0,
+        athena.pipeline.clustering.compute_item_links.s(),
+        name='compute links every 6 hours')
     # Run scoring queue every 1 minute
-    sender.add_periodic_task(60.0, athena.pipeline.scoring.process_scoring_queue.s(), name='process scoring queue every 1 minute')
+    sender.add_periodic_task(60.0, athena.pipeline.scoring.process_scoring_queue.s(),
+                             name='process scoring queue every 1 minute')
     # Refresh recency scores every 6 hours
-    sender.add_periodic_task(21600.0, athena.pipeline.scoring.refresh_recency_scores.s(), name='refresh recency scores every 6 hours')
+    sender.add_periodic_task(21600.0,
+                             athena.pipeline.scoring.refresh_recency_scores.s(),
+                             name='refresh recency scores every 6 hours')
     # Take metric snapshot daily (86400 seconds)
     sender.add_periodic_task(86400.0, athena.pipeline.scoring.take_metric_snapshot.s(), name='daily metric snapshot')
-    # Tier 2 hourly summary 
+    # Tier 2 hourly summary
     sender.add_periodic_task(3600.0, enqueue_tier2_summaries.s(), name='hourly tier 2 summaries')
     # Daily trending briefs per category
     sender.add_periodic_task(86400.0, generate_all_trending_briefs.s(), name='daily trending briefs')
+
 
 @celery_app.task
 def generate_all_trending_briefs():
     """Trigger daily trending brief generation for all categories."""
     import athena.pipeline.summarisation_tasks
     from athena.core.models import ContentCategory
-    
+
     for cat in ContentCategory:
         athena.pipeline.summarisation_tasks.generate_trending_brief_worker.apply_async(
             args=[cat.value], queue='summary_trend'
         )
+
 
 @celery_app.task
 def enqueue_tier2_summaries():
@@ -88,7 +102,6 @@ def enqueue_tier2_summaries():
     from athena.database.db import SessionLocal
     from athena.core.models import ContentItem, SummaryStatus
     import athena.pipeline.summarisation_tasks
-    import redis as redis_lib
 
     # Only enqueue if we have budget
     from athena.pipeline.summarisation import check_budget_before_call
@@ -107,7 +120,8 @@ def enqueue_tier2_summaries():
 
         for item in items:
             item.summary_status = SummaryStatus.PENDING
-            athena.pipeline.summarisation_tasks.summarise_item_worker.apply_async(args=[str(item.id)], queue='summary_standard')
+            athena.pipeline.summarisation_tasks.summarise_item_worker.apply_async(
+                args=[str(item.id)], queue='summary_standard')
         session.commit()
     logger.info(f"Queued {len(items)} Tier 2 items for standard summarisation.")
 

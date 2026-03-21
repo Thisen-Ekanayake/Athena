@@ -3,10 +3,8 @@ Integration tests for Athena Layer 3 Scoring & Ranking.
 
 Tests scoring pipeline with mocked database sessions and the score API endpoint.
 """
-import pytest
 from datetime import datetime, timezone, timedelta
-from uuid import uuid4
-from unittest.mock import MagicMock, patch
+import pytest
 
 from athena.pipeline.signals import (
     compute_citation_score,

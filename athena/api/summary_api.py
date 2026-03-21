@@ -9,12 +9,14 @@ from athena.core.models import ContentItem, SummaryStatus, SummaryUsageLog
 
 app = FastAPI(title="Athena Summarisation API", version="1.0.0")
 
+
 def get_db():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
 
 @app.get("/items/{item_id}/summary")
 def get_item_summary(item_id: str, db: Session = Depends(get_db)):
@@ -43,6 +45,7 @@ def get_item_summary(item_id: str, db: Session = Depends(get_db)):
         "summarised_at": item.summarised_at.isoformat() if item.summarised_at else None
     }
 
+
 @app.get("/admin/summaries/cost")
 def get_summarisation_cost(db: Session = Depends(get_db)):
     """Daily and 7-day rolling spend in USD, and token breakdowns."""
@@ -66,6 +69,7 @@ def get_summarisation_cost(db: Session = Depends(get_db)):
         "7_day_spend_usd": round(weekly_spend, 4)
     }
 
+
 @app.get("/admin/summaries/sample")
 def get_summary_sample(db: Session = Depends(get_db)):
     """Returns 10 random summaries for manual spot-check."""
@@ -86,6 +90,7 @@ def get_summary_sample(db: Session = Depends(get_db)):
         }
         for item in items
     ]
+
 
 @app.post("/admin/items/{item_id}/regenerate-summary")
 def regenerate_summary(item_id: str, db: Session = Depends(get_db)):

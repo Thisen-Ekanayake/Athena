@@ -1,12 +1,12 @@
 from datetime import datetime
-from typing import List, Optional
-from uuid import UUID, uuid4
-from sqlalchemy import Column, String, DateTime, Integer, Float, Boolean, ARRAY, Enum as SQLEnum, ForeignKey, JSON
+from uuid import uuid4
+from sqlalchemy import Column, String, DateTime, Integer, Float, Boolean, ARRAY, Enum as SQLEnum, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import declarative_base, relationship
 import enum
 
 Base = declarative_base()
+
 
 class SummaryStatus(str, enum.Enum):
     PENDING = "pending"
@@ -14,25 +14,30 @@ class SummaryStatus(str, enum.Enum):
     FAILED = "failed"
     LAZY = "lazy"
 
+
 class JobType(str, enum.Enum):
     ITEM_SUMMARY = "item_summary"
     CLUSTER_LABEL = "cluster_label"
     TRENDING_BRIEF = "trending_brief"
+
 
 class SourceType(str, enum.Enum):
     API = "api"
     RSS = "rss"
     SCRAPE = "scrape"
 
+
 class SourceCategory(str, enum.Enum):
     PAPER = "paper"
     COMPANY = "company"
     BLOG = "blog"
 
+
 class ContentCategory(str, enum.Enum):
     PAPER = "paper"
     COMPANY_BLOG = "company_blog"
     COMMUNITY_BLOG = "community_blog"
+
 
 class Source(Base):
     __tablename__ = "sources"
@@ -51,6 +56,7 @@ class Source(Base):
 
     content_items = relationship("ContentItem", back_populates="source")
     fetch_logs = relationship("FetchLog", back_populates="source")
+
 
 class ContentItem(Base):
     __tablename__ = "content_items"
@@ -76,7 +82,7 @@ class ContentItem(Base):
     embedded_at = Column(DateTime(timezone=True), nullable=True)
     cluster_id = Column(PG_UUID(as_uuid=True), ForeignKey("clusters.id"), nullable=True)
     extra_data = Column(JSONB, default={})
-    
+
     # Summarisation fields
     summary = Column(String, nullable=True)
     takeaways = Column(JSONB, nullable=True)
@@ -87,18 +93,20 @@ class ContentItem(Base):
     source = relationship("Source", back_populates="content_items")
     cluster = relationship("Cluster", back_populates="content_items")
 
+
 class FetchLog(Base):
     __tablename__ = "fetch_logs"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     source_id = Column(PG_UUID(as_uuid=True), ForeignKey("sources.id"), nullable=False)
-    status = Column(String, nullable=False) # 'success' or 'error'
+    status = Column(String, nullable=False)  # 'success' or 'error'
     error_message = Column(String, nullable=True)
     duration_ms = Column(Float, nullable=False)
     items_fetched = Column(Integer, default=0)  # number of new items saved this run
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
     source = relationship("Source", back_populates="fetch_logs")
+
 
 class QuarantineItem(Base):
     """Holds raw items that failed Pydantic schema validation for later inspection."""
@@ -110,6 +118,7 @@ class QuarantineItem(Base):
     error_message = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
+
 class Cluster(Base):
     __tablename__ = "clusters"
 
@@ -120,9 +129,12 @@ class Cluster(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
-    metadata_ = Column("metadata", JSONB, default={}) # metadata is a reserved keyword in some contexts, but let's stick to metadata_ to be safe if needed, or just metadata
+    # metadata is a reserved keyword in some contexts, but let's stick to
+    # metadata_ to be safe if needed, or just metadata
+    metadata_ = Column("metadata", JSONB, default={})
 
     content_items = relationship("ContentItem", back_populates="cluster")
+
 
 class ItemLink(Base):
     __tablename__ = "item_links"
@@ -183,6 +195,7 @@ class MetricSnapshot(Base):
     snapshot_date = Column(DateTime(timezone=True), default=datetime.utcnow)
 
     content_item = relationship("ContentItem", backref="metric_snapshots")
+
 
 class PromptVersion(Base):
     """Versioning for LLM prompts used in summarisation."""

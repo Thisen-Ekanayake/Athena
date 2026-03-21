@@ -1,5 +1,5 @@
-import pytest
 from datetime import datetime, timezone
+import pytest
 
 from athena.core.models import ContentItem, JobType
 from athena.pipeline.summarisation import (
@@ -11,11 +11,16 @@ from athena.pipeline.summarisation import (
 )
 from athena.pipeline.summarisation_tasks import build_item_summary_prompt
 
+
 def test_summary_output_validation():
     # Valid
     valid_data = {
         "summary": "This is a valid summary " * 5,  # 25 words
-        "takeaways": ["Takeaway number one is good", "Takeaway number two is good", "Takeaway number three is good"]
+        "takeaways": [
+            "Takeaway number one is good",
+            "Takeaway number two is good",
+            "Takeaway number three is good"
+        ]
     }
     obj = SummaryOutput(**valid_data)
     assert obj.summary == valid_data["summary"]
@@ -30,7 +35,11 @@ def test_summary_output_validation():
 
     # Invalid takeaways string length
     with pytest.raises(ValueError, match="too short"):
-        SummaryOutput(summary=valid_data["summary"], takeaways=["Short", "Takeaway two is fine", "Takeaway three is fine"])
+        SummaryOutput(
+            summary=valid_data["summary"],
+            takeaways=["Short", "Takeaway two is fine", "Takeaway three is fine"]
+        )
+
 
 def test_parse_and_validate():
     raw_str = '''```json
@@ -42,14 +51,15 @@ def test_parse_and_validate():
     "The code is open source and available on GitHub."
   ]
 }
-```'''
+```'''  # noqa: E501
     res = parse_and_validate(raw_str)
     assert isinstance(res, SummaryOutput)
     assert len(res.takeaways) == 3
 
+
 def test_build_item_summary_prompt():
     from athena.core.models import Source, ContentCategory
-    
+
     item = ContentItem(
         title="Test Paper",
         authors=["Alice", "Bob"],
@@ -65,6 +75,7 @@ def test_build_item_summary_prompt():
     assert "Title: Test Paper" in result
     assert "Cat: paper" in result
     assert "Text: Some abstract text here." in result
+
 
 def test_redis_budgeting():
     # Clear the key first

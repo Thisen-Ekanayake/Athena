@@ -30,6 +30,7 @@ query RecentPosts($limit: Int!) {
 }
 """
 
+
 class LessWrongScraper(BaseScraper):
     """Fetches posts from LessWrong via their public GraphQL API."""
     API_URL = LESSWRONG_API

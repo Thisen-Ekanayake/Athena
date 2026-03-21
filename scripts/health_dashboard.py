@@ -10,14 +10,19 @@ import os
 import argparse
 from datetime import datetime, timedelta, timezone
 
+import redis
+from dotenv import load_dotenv
+from sqlalchemy import select
+
+# Ensure athena is in path before importing local modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from athena.database.db import SessionLocal
-from athena.core.models import Source, FetchLog
-from sqlalchemy import select, func
+from athena.database.db import SessionLocal  # noqa: E402
+from athena.core.models import Source, FetchLog  # noqa: E402
 
 
 def get_health_report(hours: int = 48):
+    load_dotenv()
     lookback = datetime.now(tz=timezone.utc) - timedelta(hours=hours)
 
     with SessionLocal() as session:
@@ -37,7 +42,7 @@ def get_health_report(hours: int = 48):
             ).scalars().all()
 
             total = len(logs)
-            successes = sum(1 for l in logs if l.status == "success")
+            successes = sum(1 for log in logs if log.status == "success")
             errors = total - successes
             rate = (successes / total * 100) if total > 0 else 0
             active_flag = "✅" if source.is_active else "❌"
@@ -45,9 +50,6 @@ def get_health_report(hours: int = 48):
             print(f"  {source.name:<30} {active_flag:<10} {total:>5}  {successes:>5}  {errors:>5}  {rate:>6.1f}%")
 
         # DLQ status
-        import redis
-        from dotenv import load_dotenv
-        load_dotenv()
         redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         r = redis.from_url(redis_url)
         dlq_len = r.llen("athena:dlq")

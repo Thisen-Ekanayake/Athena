@@ -9,11 +9,14 @@ Covers:
 - Weight application and score clipping
 - Trending boost logic
 - Composite score computation
+- Velocity score computation
+- Authority score pass-through
+- Cosine similarity
 """
 import math
-import pytest
 from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+import pytest
 import numpy as np
 
 from athena.pipeline.signals import (

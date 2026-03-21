@@ -1,8 +1,5 @@
 import os
-import json
-import time
 from typing import List
-from uuid import UUID
 from datetime import datetime
 from loguru import logger
 from qdrant_client import QdrantClient
@@ -27,11 +24,12 @@ BATCH_SIZE = 20
 qdrant = QdrantClient(url=QDRANT_URL)
 openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+
 def init_qdrant():
     """Ensure the Qdrant collection exists with correct config."""
     collections = qdrant.get_collections().collections
     exists = any(c.name == COLLECTION_NAME for c in collections)
-    
+
     if not exists:
         logger.info(f"Creating Qdrant collection: {COLLECTION_NAME}")
         qdrant.create_collection(
@@ -44,16 +42,17 @@ def init_qdrant():
     else:
         logger.info(f"Qdrant collection {COLLECTION_NAME} already exists.")
 
+
 @celery_app.task
 def process_embedding_queue():
     """
     Pull items from 'athena:embedding_queue' and process them in batches.
     """
     init_qdrant()
-    
+
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     r = redis_lib.from_url(redis_url)
-    
+
     item_ids = []
     # Pull up to BATCH_SIZE items
     for _ in range(BATCH_SIZE):
@@ -61,13 +60,14 @@ def process_embedding_queue():
         if not item_id:
             break
         item_ids.append(item_id.decode('utf-8'))
-        
+
     if not item_ids:
         return
-        
+
     logger.info(f"Processing batch of {len(item_ids)} items for embedding.")
-    
+
     process_batch(item_ids)
+
 
 def process_batch(item_ids: List[str]):
     with SessionLocal() as session:
@@ -75,19 +75,19 @@ def process_batch(item_ids: List[str]):
         items = session.execute(
             select(ContentItem).where(ContentItem.id.in_(item_ids))
         ).scalars().all()
-        
+
         batch_texts = []
         valid_items = []
-        
+
         for item in items:
             if not item.full_text_path or not os.path.exists(item.full_text_path):
                 logger.warning(f"Full text path missing or invalid for item {item.id}")
                 continue
-                
+
             try:
                 with open(item.full_text_path, 'r', encoding='utf-8') as f:
                     content = f.read()
-                    
+
                 processed_text = preprocess(
                     text=content,
                     title=item.title or "",
@@ -98,10 +98,10 @@ def process_batch(item_ids: List[str]):
                 valid_items.append(item)
             except Exception as e:
                 logger.error(f"Error preprocessing item {item.id}: {e}")
-                
+
         if not batch_texts:
             return
-            
+
         try:
             # 1. Generate Embeddings
             response = openai.embeddings.create(
@@ -109,7 +109,7 @@ def process_batch(item_ids: List[str]):
                 model=EMBEDDING_MODEL
             )
             embeddings = [data.embedding for data in response.data]
-            
+
             # 2. Upsert to Qdrant
             points = []
             for item, vector in zip(valid_items, embeddings):
@@ -124,17 +124,17 @@ def process_batch(item_ids: List[str]):
                         "category": item.category.value if hasattr(item.category, 'value') else str(item.category)
                     }
                 ))
-                
+
             qdrant.upsert(
                 collection_name=COLLECTION_NAME,
                 points=points
             )
-            
+
             # 3. Update PostgreSQL
             for item in valid_items:
                 session.execute(
                     update(ContentItem).where(ContentItem.id == item.id).values(
-                        embedding_id=str(item.id), # Using same UUID for simplicity
+                        embedding_id=str(item.id),  # Using same UUID for simplicity
                         embedded_at=datetime.utcnow()
                     )
                 )
@@ -146,7 +146,7 @@ def process_batch(item_ids: List[str]):
             for item in valid_items:
                 r.rpush("athena:scoring_queue", str(item.id))
             logger.info(f"Queued {len(valid_items)} items for scoring.")
-            
+
         except Exception as e:
             logger.error(f"Failed to process embedding batch: {e}")
             # Potentially re-queue items?

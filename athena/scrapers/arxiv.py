@@ -11,11 +11,13 @@ from loguru import logger
 ARXIV_DEFAULT_QUERY = "cat:cs.AI OR cat:cs.LG OR cat:cs.CL OR stat.ML"
 ARXIV_DEFAULT_MAX_RESULTS = 50
 
+
 class ArXivScraper(BaseScraper):
     BASE_URL = "https://export.arxiv.org/api/query"
     NAMESPACE = {'atom': 'http://www.w3.org/2005/Atom'}
 
-    async def fetch(self, search_query: str = ARXIV_DEFAULT_QUERY, max_results: int = ARXIV_DEFAULT_MAX_RESULTS) -> List[Any]:
+    async def fetch(self, search_query: str = ARXIV_DEFAULT_QUERY,
+                    max_results: int = ARXIV_DEFAULT_MAX_RESULTS) -> List[Any]:
         """Fetch raw arXiv Atom XML entries and return as parsed XML element list."""
         params = {
             "search_query": search_query,

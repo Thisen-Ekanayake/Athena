@@ -5,15 +5,13 @@ Celery tasks for computing, persisting, and updating content scores.
 Consumes items from the Redis scoring queue (emitted after Layer 2 embedding).
 """
 import os
-import math
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 
 import redis as redis_lib
 from celery import shared_task
 from loguru import logger
-from sqlalchemy import select, update, text, func
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import select, update, text
 
 from athena.database.db import SessionLocal
 from athena.core.models import (
@@ -83,7 +81,7 @@ def _get_weights(category: str, session) -> Dict[str, Any]:
     try:
         config = session.execute(
             select(ScoringConfig)
-            .where(ScoringConfig.is_active == True)
+            .where(ScoringConfig.is_active .is_(True))
             .where(ScoringConfig.category == category)
             .order_by(ScoringConfig.version.desc())
         ).scalar_one_or_none()
@@ -220,7 +218,7 @@ def score_item(item_id: str, session=None) -> Optional[float]:
             )
         )
         session.commit()
-        
+
         # Enqueue for summarisation
         enqueue_summary_tier(str(item.id), final_score, is_trending)
 
@@ -373,10 +371,11 @@ def score_new_item(item_id: str):
     score_item(item_id)
     update_category_ranks()
 
+
 def enqueue_summary_tier(item_id: str, score: float, is_trending: bool):
     """Emits the item to the correct Celery queue based on Layer 3 score."""
     from athena.pipeline.summarisation_tasks import summarise_item_worker
-    
+
     if is_trending or score >= 0.75:
         # Tier 1 - Urgent
         summarise_item_worker.apply_async(args=[item_id], queue='summary_urgent')

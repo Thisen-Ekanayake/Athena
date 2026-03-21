@@ -9,8 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from athena.database.db import SessionLocal
-from athena.core.models import ContentItem, ContentScore, Source
-from athena.pipeline.scoring import score_all_items, update_category_ranks
+from athena.core.models import ContentItem, ContentScore
+from athena.pipeline.scoring import score_all_items
 
 app = FastAPI(title="Athena Scoring API", version="1.0.0")
 
@@ -151,7 +151,7 @@ def get_trending_items(limit: int = 20, db: Session = Depends(get_db)):
     """Get currently trending items across all categories."""
     items = db.execute(
         select(ContentItem)
-        .where(ContentItem.is_trending == True)
+        .where(ContentItem.is_trending .is_(True))
         .order_by(ContentItem.score.desc())
         .limit(limit)
     ).scalars().all()
@@ -187,7 +187,7 @@ def scoring_health(db: Session = Depends(get_db)):
         select(func.count(ContentItem.id)).where(ContentItem.scored_at.isnot(None))
     ).scalar()
     trending_items = db.execute(
-        select(func.count(ContentItem.id)).where(ContentItem.is_trending == True)
+        select(func.count(ContentItem.id)).where(ContentItem.is_trending .is_(True))
     ).scalar()
     avg_score = db.execute(
         select(func.avg(ContentItem.score)).where(ContentItem.score > 0)
