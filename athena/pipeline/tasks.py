@@ -14,6 +14,8 @@ from athena.scrapers.lesswrong import LessWrongScraper, AIAlignmentForumScraper
 from athena.scrapers.substack import SubstackScraper
 from athena.core.models import SourceType
 from loguru import logger
+import athena.pipeline.embedding_worker
+import athena.pipeline.clustering
 
 load_dotenv()
 
@@ -46,6 +48,12 @@ def _push_to_dlq(source_id: str, exc: Exception):
 def setup_periodic_tasks(sender, **kwargs):
     # Poll all feeds every 6 hours (21600 seconds)
     sender.add_periodic_task(21600.0, crawl_all_sources.s(), name='crawl every 6 hours')
+    # Run embedding worker every 1 minute
+    sender.add_periodic_task(60.0, athena.pipeline.embedding_worker.process_embedding_queue.s(), name='process embeddings every 1 minute')
+    # Run clustering every 6 hours
+    sender.add_periodic_task(21600.0, athena.pipeline.clustering.run_clustering.s(), name='run clustering every 6 hours')
+    # Run item linking every 6 hours (after clustering)
+    sender.add_periodic_task(21600.0, athena.pipeline.clustering.compute_item_links.s(), name='compute links every 6 hours')
 
 
 @celery_app.task
