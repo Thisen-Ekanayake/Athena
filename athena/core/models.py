@@ -56,10 +56,13 @@ class ContentItem(Base):
     category = Column(SQLEnum(ContentCategory), nullable=False)
     content_hash = Column(String, index=True, unique=True)
     score = Column(Float, default=0.0)
-    cluster_id = Column(PG_UUID(as_uuid=True), nullable=True)
+    embedding_id = Column(String, nullable=True)
+    embedded_at = Column(DateTime(timezone=True), nullable=True)
+    cluster_id = Column(PG_UUID(as_uuid=True), ForeignKey("clusters.id"), nullable=True)
     extra_data = Column(JSONB, default={})
 
     source = relationship("Source", back_populates="content_items")
+    cluster = relationship("Cluster", back_populates="content_items")
 
 class FetchLog(Base):
     __tablename__ = "fetch_logs"
@@ -82,4 +85,28 @@ class QuarantineItem(Base):
     source_id = Column(PG_UUID(as_uuid=True), ForeignKey("sources.id"), nullable=False)
     raw_data = Column(JSONB, nullable=True)  # serialized raw item that failed parsing
     error_message = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+class Cluster(Base):
+    __tablename__ = "clusters"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    label = Column(String, nullable=True)
+    summary = Column(String, nullable=True)
+    centroid = Column(ARRAY(Float), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    metadata_ = Column("metadata", JSONB, default={}) # metadata is a reserved keyword in some contexts, but let's stick to metadata_ to be safe if needed, or just metadata
+
+    content_items = relationship("ContentItem", back_populates="cluster")
+
+class ItemLink(Base):
+    __tablename__ = "item_links"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    source_item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
+    target_item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
+    similarity_score = Column(Float, nullable=False)
+    link_type = Column(String, nullable=False)  # 'nearest_neighbour', 'cross_cluster'
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
