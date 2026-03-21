@@ -22,3 +22,4 @@ uvicorn
 pytest
 pytest-asyncio
 flake8
+tiktoken

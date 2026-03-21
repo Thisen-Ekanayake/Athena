@@ -8,12 +8,14 @@ on:
       - "*.docx"
       - ".gitignore"
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     name: Build Docker Image
     runs-on: ubuntu-latest
-    # Only run after CI passes
-    needs: []
     steps:
       - uses: actions/checkout@v4
 
