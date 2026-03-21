@@ -8,6 +8,17 @@ import enum
 
 Base = declarative_base()
 
+class SummaryStatus(str, enum.Enum):
+    PENDING = "pending"
+    COMPLETE = "complete"
+    FAILED = "failed"
+    LAZY = "lazy"
+
+class JobType(str, enum.Enum):
+    ITEM_SUMMARY = "item_summary"
+    CLUSTER_LABEL = "cluster_label"
+    TRENDING_BRIEF = "trending_brief"
+
 class SourceType(str, enum.Enum):
     API = "api"
     RSS = "rss"
@@ -65,6 +76,13 @@ class ContentItem(Base):
     embedded_at = Column(DateTime(timezone=True), nullable=True)
     cluster_id = Column(PG_UUID(as_uuid=True), ForeignKey("clusters.id"), nullable=True)
     extra_data = Column(JSONB, default={})
+    
+    # Summarisation fields
+    summary = Column(String, nullable=True)
+    takeaways = Column(JSONB, nullable=True)
+    summary_version = Column(Integer, nullable=True)  # FK -> prompt_versions.version (logical)
+    summarised_at = Column(DateTime(timezone=True), nullable=True)
+    summary_status = Column(SQLEnum(SummaryStatus), default=SummaryStatus.PENDING)
 
     source = relationship("Source", back_populates="content_items")
     cluster = relationship("Cluster", back_populates="content_items")
@@ -165,3 +183,48 @@ class MetricSnapshot(Base):
     snapshot_date = Column(DateTime(timezone=True), default=datetime.utcnow)
 
     content_item = relationship("ContentItem", backref="metric_snapshots")
+
+class PromptVersion(Base):
+    """Versioning for LLM prompts used in summarisation."""
+    __tablename__ = "prompt_versions"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    job_type = Column(SQLEnum(JobType), nullable=False)
+    version = Column(Integer, nullable=False)
+    system_prompt = Column(String, nullable=False)
+    user_prompt_tpl = Column(String, nullable=False)
+    is_active = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    notes = Column(String, nullable=True)
+
+
+class SummaryUsageLog(Base):
+    """Audit log for OpenAI LLM token usage and cost."""
+    __tablename__ = "summary_usage_log"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=True)
+    cluster_id = Column(PG_UUID(as_uuid=True), ForeignKey("clusters.id"), nullable=True)
+    job_type = Column(SQLEnum(JobType), nullable=False)
+    model = Column(String, nullable=False)
+    prompt_version = Column(Integer, nullable=False)
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    total_cost_usd = Column(Float, default=0.0)
+    latency_ms = Column(Integer, default=0)
+    success = Column(Boolean, default=True)
+    error_message = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class TrendingBrief(Base):
+    """Daily generated trend digest per category."""
+    __tablename__ = "trending_briefs"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    category = Column(SQLEnum(ContentCategory), nullable=False)
+    brief = Column(String, nullable=False)
+    theme = Column(String, nullable=False)
+    generated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    prompt_version = Column(Integer, nullable=False)
+    source_item_ids = Column(ARRAY(PG_UUID(as_uuid=True)), default=[])

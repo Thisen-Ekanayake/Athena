@@ -42,6 +42,11 @@ class ContentItemRead(ContentItemBase):
     citation_count: int
     score: float
     cluster_id: Optional[UUID] = None
+    
+    summary: Optional[str] = None
+    takeaways: Optional[List[str]] = None
+    summary_status: str
+    summarised_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
