@@ -12,3 +12,13 @@ loguru
 newspaper3k
 lxml_html_clean
 arxiv
+openai
+qdrant-client
+numpy
+scipy
+tenacity
+fastapi
+uvicorn
+pytest
+pytest-asyncio
+flake8

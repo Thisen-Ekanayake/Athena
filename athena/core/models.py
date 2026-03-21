@@ -36,6 +36,7 @@ class Source(Base):
     is_active = Column(Boolean, default=True)
     added_by = Column(String, default="system")
     consecutive_failures = Column(Integer, default=0)
+    authority_score = Column(Float, default=0.5)  # [0.0–1.0] source quality rating
 
     content_items = relationship("ContentItem", back_populates="source")
     fetch_logs = relationship("FetchLog", back_populates="source")
@@ -56,6 +57,10 @@ class ContentItem(Base):
     category = Column(SQLEnum(ContentCategory), nullable=False)
     content_hash = Column(String, index=True, unique=True)
     score = Column(Float, default=0.0)
+    score_version = Column(Integer, nullable=True)  # FK → scoring_config.version
+    scored_at = Column(DateTime(timezone=True), nullable=True)
+    is_trending = Column(Boolean, default=False)
+    category_rank = Column(Integer, nullable=True)
     embedding_id = Column(String, nullable=True)
     embedded_at = Column(DateTime(timezone=True), nullable=True)
     cluster_id = Column(PG_UUID(as_uuid=True), ForeignKey("clusters.id"), nullable=True)
@@ -110,3 +115,53 @@ class ItemLink(Base):
     similarity_score = Column(Float, nullable=False)
     link_type = Column(String, nullable=False)  # 'nearest_neighbour', 'cross_cluster'
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ContentScore(Base):
+    """Per-item sub-score breakdown for scoring transparency."""
+    __tablename__ = "content_scores"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
+    citation_score = Column(Float, default=0.0)
+    engagement_score = Column(Float, default=0.5)
+    sentiment_score = Column(Float, default=0.5)
+    recency_score = Column(Float, default=0.5)
+    authority_score = Column(Float, default=0.5)
+    composite_score = Column(Float, default=0.0)
+    score_version = Column(Integer, nullable=False)
+    computed_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    metadata_ = Column("metadata", JSONB, default={})  # extra debug info
+
+    content_item = relationship("ContentItem", backref="content_scores")
+
+
+class ScoringConfig(Base):
+    """Versioned weight profiles per content category."""
+    __tablename__ = "scoring_config"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    version = Column(Integer, nullable=False, unique=True)
+    category = Column(SQLEnum(ContentCategory), nullable=False)
+    weight_citation = Column(Float, default=0.30)
+    weight_engagement = Column(Float, default=0.15)
+    weight_sentiment = Column(Float, default=0.15)
+    weight_recency = Column(Float, default=0.20)
+    weight_authority = Column(Float, default=0.20)
+    half_life_days = Column(Integer, default=30)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    notes = Column(String, nullable=True)
+
+
+class MetricSnapshot(Base):
+    """Daily snapshot of citation_count + engagement per item for velocity computation."""
+    __tablename__ = "metric_snapshots"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
+    citation_count = Column(Integer, default=0)
+    engagement_raw = Column(Float, default=0.0)
+    snapshot_date = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    content_item = relationship("ContentItem", backref="metric_snapshots")

@@ -67,3 +67,31 @@ def update_content_item_metrics(url: str, citation_count: int, extra_data: dict)
 def get_active_sources():
     with SessionLocal() as session:
         return session.execute(select(Source).where(Source.is_active == True)).scalars().all()
+
+
+def get_scoring_config(category: str):
+    """Fetch the active scoring config for a given content category."""
+    from athena.core.models import ScoringConfig
+    with SessionLocal() as session:
+        config = session.execute(
+            select(ScoringConfig)
+            .where(ScoringConfig.is_active == True)
+            .where(ScoringConfig.category == category)
+            .order_by(ScoringConfig.version.desc())
+        ).scalar_one_or_none()
+        return config
+
+
+def save_metric_snapshot(item_id, citation_count: int, engagement_raw: float):
+    """Save a daily metric snapshot for velocity computation."""
+    from athena.core.models import MetricSnapshot
+    from datetime import datetime, timezone
+    with SessionLocal() as session:
+        snapshot = MetricSnapshot(
+            item_id=item_id,
+            citation_count=citation_count,
+            engagement_raw=engagement_raw,
+            snapshot_date=datetime.now(timezone.utc),
+        )
+        session.add(snapshot)
+        session.commit()
