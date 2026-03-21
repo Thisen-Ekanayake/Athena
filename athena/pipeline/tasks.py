@@ -16,6 +16,7 @@ from athena.core.models import SourceType
 from loguru import logger
 import athena.pipeline.embedding_worker
 import athena.pipeline.clustering
+import athena.pipeline.scoring
 
 load_dotenv()
 
@@ -54,6 +55,12 @@ def setup_periodic_tasks(sender, **kwargs):
     sender.add_periodic_task(21600.0, athena.pipeline.clustering.run_clustering.s(), name='run clustering every 6 hours')
     # Run item linking every 6 hours (after clustering)
     sender.add_periodic_task(21600.0, athena.pipeline.clustering.compute_item_links.s(), name='compute links every 6 hours')
+    # Run scoring queue every 1 minute
+    sender.add_periodic_task(60.0, athena.pipeline.scoring.process_scoring_queue.s(), name='process scoring queue every 1 minute')
+    # Refresh recency scores every 6 hours
+    sender.add_periodic_task(21600.0, athena.pipeline.scoring.refresh_recency_scores.s(), name='refresh recency scores every 6 hours')
+    # Take metric snapshot daily (86400 seconds)
+    sender.add_periodic_task(86400.0, athena.pipeline.scoring.take_metric_snapshot.s(), name='daily metric snapshot')
 
 
 @celery_app.task

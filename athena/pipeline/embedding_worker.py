@@ -140,6 +140,12 @@ def process_batch(item_ids: List[str]):
                 )
             session.commit()
             logger.info(f"Successfully embedded and updated {len(valid_items)} items.")
+
+            # Push embedded items to scoring queue for Layer 3
+            r = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+            for item in valid_items:
+                r.rpush("athena:scoring_queue", str(item.id))
+            logger.info(f"Queued {len(valid_items)} items for scoring.")
             
         except Exception as e:
             logger.error(f"Failed to process embedding batch: {e}")
