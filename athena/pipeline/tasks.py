@@ -30,6 +30,11 @@ celery_app = Celery(
 celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
+    task_routes={
+        'athena.pipeline.summarisation_tasks.summarise_item_worker': {'queue': 'summary_standard'},
+        'athena.pipeline.summarisation_tasks.label_cluster_worker': {'queue': 'summary_cluster'},
+        'athena.pipeline.summarisation_tasks.generate_trending_brief_worker': {'queue': 'summary_trend'}
+    }
 )
 
 DLQ_KEY = "athena:dlq"  # Redis list for permanently failed tasks
@@ -61,6 +66,50 @@ def setup_periodic_tasks(sender, **kwargs):
     sender.add_periodic_task(21600.0, athena.pipeline.scoring.refresh_recency_scores.s(), name='refresh recency scores every 6 hours')
     # Take metric snapshot daily (86400 seconds)
     sender.add_periodic_task(86400.0, athena.pipeline.scoring.take_metric_snapshot.s(), name='daily metric snapshot')
+    # Tier 2 hourly summary 
+    sender.add_periodic_task(3600.0, enqueue_tier2_summaries.s(), name='hourly tier 2 summaries')
+    # Daily trending briefs per category
+    sender.add_periodic_task(86400.0, generate_all_trending_briefs.s(), name='daily trending briefs')
+
+@celery_app.task
+def generate_all_trending_briefs():
+    """Trigger daily trending brief generation for all categories."""
+    import athena.pipeline.summarisation_tasks
+    from athena.core.models import ContentCategory
+    
+    for cat in ContentCategory:
+        athena.pipeline.summarisation_tasks.generate_trending_brief_worker.apply_async(
+            args=[cat.value], queue='summary_trend'
+        )
+
+@celery_app.task
+def enqueue_tier2_summaries():
+    """Phase 3: Periodic background job to enqueue Tier 2 items for summarisation."""
+    from athena.database.db import SessionLocal
+    from athena.core.models import ContentItem, SummaryStatus
+    import athena.pipeline.summarisation_tasks
+    import redis as redis_lib
+
+    # Only enqueue if we have budget
+    from athena.pipeline.summarisation import check_budget_before_call
+    if not check_budget_before_call("item_summary"):
+        logger.warning('Budget exhausted, skipping Tier 2 hourly batch')
+        return
+
+    with SessionLocal() as session:
+        # Get items with score 0.40 <= score < 0.75 and summary_status != COMPLETE
+        # We only batch up to 500 at a time
+        items = session.query(ContentItem).filter(
+            ContentItem.score >= 0.40,
+            ContentItem.score < 0.75,
+            ContentItem.summary_status != SummaryStatus.COMPLETE
+        ).limit(500).all()
+
+        for item in items:
+            item.summary_status = SummaryStatus.PENDING
+            athena.pipeline.summarisation_tasks.summarise_item_worker.apply_async(args=[str(item.id)], queue='summary_standard')
+        session.commit()
+    logger.info(f"Queued {len(items)} Tier 2 items for standard summarisation.")
 
 
 @celery_app.task

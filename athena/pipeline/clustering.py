@@ -84,6 +84,8 @@ def process_clusters(points, labels, raw_vectors):
         # Fetch existing clusters for stability matching
         existing_clusters = session.execute(select(Cluster).where(Cluster.is_active == True)).scalars().all()
         
+        clusters_to_label = set()
+        
         new_cluster_data = []
         for label, point_indices in label_to_points.items():
             cluster_vectors = raw_vectors[point_indices]
@@ -134,8 +136,15 @@ def process_clusters(points, labels, raw_vectors):
                 )
             )
             
+            clusters_to_label.add(cluster_id)
+            
         session.commit()
         logger.info("Clustering results persisted to database.")
+
+        import athena.pipeline.summarisation_tasks
+        for c_id in clusters_to_label:
+            athena.pipeline.summarisation_tasks.label_cluster_worker.apply_async(args=[str(c_id)], queue='summary_cluster')
+        logger.info(f"Triggered label generation for {len(clusters_to_label)} clusters.")
 
 def generate_tfidf_label(texts: List[str]) -> str:
     if not texts: return "Unknown Cluster"

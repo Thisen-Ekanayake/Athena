@@ -220,6 +220,9 @@ def score_item(item_id: str, session=None) -> Optional[float]:
             )
         )
         session.commit()
+        
+        # Enqueue for summarisation
+        enqueue_summary_tier(str(item.id), final_score, is_trending)
 
         logger.info(
             f"Scored item {item_id}: composite={final_score:.3f} "
@@ -369,6 +372,37 @@ def score_new_item(item_id: str):
     """Score a single newly embedded item and update ranks."""
     score_item(item_id)
     update_category_ranks()
+
+def enqueue_summary_tier(item_id: str, score: float, is_trending: bool):
+    """Emits the item to the correct Celery queue based on Layer 3 score."""
+    from athena.pipeline.summarisation_tasks import summarise_item_worker
+    
+    if is_trending or score >= 0.75:
+        # Tier 1 - Urgent
+        summarise_item_worker.apply_async(args=[item_id], queue='summary_urgent')
+        logger.info(f"Item {item_id} enqueued to summary_urgent")
+    elif score >= 0.40:
+        # Tier 2 - handled by hourly batch, just set to pending
+        with SessionLocal() as session:
+            from athena.core.models import ContentItem, SummaryStatus
+            session.execute(
+                update(ContentItem).where(ContentItem.id == item_id).values(
+                    summary_status=SummaryStatus.PENDING
+                )
+            )
+            session.commit()
+        logger.info(f"Item {item_id} marked as pending for Tier 2 batch")
+    else:
+        # Tier 3 - Lazy
+        with SessionLocal() as session:
+            from athena.core.models import ContentItem, SummaryStatus
+            session.execute(
+                update(ContentItem).where(ContentItem.id == item_id).values(
+                    summary_status=SummaryStatus.LAZY
+                )
+            )
+            session.commit()
+        logger.info(f"Item {item_id} marked as lazy summarisation")
 
 
 def populate_default_scoring_config():
