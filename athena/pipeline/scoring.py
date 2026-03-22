@@ -285,7 +285,7 @@ def update_category_ranks():
 
 def _get_celery_app():
     """Lazy import to avoid circular dependency."""
-    from athena.pipeline.tasks import celery_app
+    from athena.pipeline.celery_app import celery_app
     return celery_app
 
 
