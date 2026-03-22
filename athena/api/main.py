@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from athena.api.routers import feed, items, clusters, trending, search, sources
+from athena.api import qa_api
 
 
 def create_app() -> FastAPI:
@@ -43,6 +44,7 @@ def create_app() -> FastAPI:
     app.include_router(trending.router)
     app.include_router(search.router)
     app.include_router(sources.router)
+    app.include_router(qa_api.router, prefix="/api/v1", tags=["QA"])
 
     # ── Health check ────────────────────────────────────
     @app.get("/health", tags=["Health"])
