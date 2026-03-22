@@ -1,7 +1,9 @@
 import type { FeedItem } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
-import { Flame, Star, Layers, Search, ChevronDown, ChevronUp } from 'lucide-react'
+import { Flame, Star, Layers, Search, ChevronDown, ChevronUp, MessageSquare, ExternalLink } from 'lucide-react'
 import { useState } from 'react'
+import { ScoreTooltip } from './ScoreTooltip'
+import { useAppStore } from '../store/appStore'
 
 interface FeedCardProps {
   item: FeedItem
@@ -10,6 +12,8 @@ interface FeedCardProps {
 
 export function FeedCard({ item, viewMode = 'expanded' }: FeedCardProps) {
   const [expanded, setExpanded] = useState(false)
+  const [showScore, setShowScore] = useState(false)
+  const setRelatedItemId = useAppStore(s => s.setRelatedItemId)
   
   const scoreColor = 
     item.score >= 0.8 ? 'text-scoreHigh' : 
@@ -42,9 +46,17 @@ export function FeedCard({ item, viewMode = 'expanded' }: FeedCardProps) {
         </div>
 
         {/* Score Ring */}
-        <div className={`flex items-center gap-1.5 font-bold ${scoreColor} bg-zinc-900 px-2 py-1 rounded-md border border-zinc-800`}>
+        <div 
+          className={`relative flex items-center gap-1.5 font-bold ${scoreColor} bg-zinc-900 px-2 py-1 rounded-md border border-zinc-800 cursor-help`}
+          onMouseEnter={() => setShowScore(true)}
+          onMouseLeave={() => setShowScore(false)}
+        >
           <Star className="w-4 h-4 fill-current" />
           {(item.score * 100).toFixed(0)}
+          
+          {showScore && (
+            <ScoreTooltip itemId={item.id} score={item.score} isTrending={item.is_trending} />
+          )}
         </div>
       </div>
 
@@ -87,8 +99,8 @@ export function FeedCard({ item, viewMode = 'expanded' }: FeedCardProps) {
       )}
 
       {/* Footer Info (Clusters / Related Context) */}
-      <div className="mt-2 pt-4 border-t border-border/50 flex items-center justify-between text-xs text-zinc-500 font-medium">
-        <div className="flex items-center gap-4">
+      <div className="mt-2 pt-4 border-t border-border/50 flex flex-col sm:flex-row sm:items-center justify-between text-xs text-zinc-500 font-medium gap-3">
+        <div className="flex flex-wrap items-center gap-4">
           {item.cluster && (
             <div className="flex items-center gap-1.5 hover:text-zinc-300 cursor-pointer transition-colors">
               <Layers className="w-4 h-4" />
@@ -98,14 +110,32 @@ export function FeedCard({ item, viewMode = 'expanded' }: FeedCardProps) {
               )}
             </div>
           )}
+          
+          {item.related_count > 0 && (
+            <div 
+              onClick={() => setRelatedItemId(item.id)}
+              className="flex items-center gap-1.5 hover:text-zinc-300 cursor-pointer transition-colors"
+            >
+              <Search className="w-4 h-4" />
+              {item.related_count} related articles
+            </div>
+          )}
         </div>
         
-        {item.related_count > 0 && (
-          <div className="flex items-center gap-1.5 hover:text-zinc-300 cursor-pointer transition-colors">
-            <Search className="w-4 h-4" />
-            {item.related_count} related
-          </div>
-        )}
+        <div className="flex items-center gap-4">
+           <button className="flex items-center gap-1.5 hover:text-accentPrimary transition-colors">
+             <MessageSquare className="w-4 h-4" />
+             Ask a question
+           </button>
+           <a 
+             href={item.url} 
+             target="_blank" 
+             rel="noopener noreferrer"
+             className="flex items-center gap-1 hover:text-white transition-colors"
+           >
+             Open source <ExternalLink className="w-3 h-3" />
+           </a>
+        </div>
       </div>
     </article>
   )

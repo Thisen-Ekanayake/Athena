@@ -4,6 +4,7 @@ import { FeedTopBar } from '../components/FeedTopBar'
 import { FeedCard } from '../components/FeedCard'
 import { Alert } from '../components/shared/Alert'
 import { useState, useEffect } from 'react'
+import { Flame } from 'lucide-react'
 
 export function FeedPage() {
   const [sort, setSort] = useState<'score' | 'date' | 'trending'>('score')
@@ -40,6 +41,15 @@ export function FeedPage() {
         category={currentCategory} setCategory={setCategory}
         viewMode={viewMode} setViewMode={setViewMode}
       />
+      
+      {sort === 'trending' && (
+        <div className="bg-gradient-to-r from-purple-900/40 to-indigo-900/40 border-b border-purple-800/30 px-6 py-4 flex items-center justify-center fade-in">
+           <Flame className="w-5 h-5 text-purple-400 mr-2" />
+           <p className="text-sm font-medium text-purple-100">
+             Trending Content: Items gaining sudden velocity and cross-cluster attention.
+           </p>
+        </div>
+      )}
       
       <div className="p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto space-y-6">
         {status === 'pending' ? (
