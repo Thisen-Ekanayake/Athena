@@ -51,13 +51,16 @@ def _does_item_need_resummary(item: ContentItem, active_version: int) -> bool:
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def summarise_item_worker(self, item_id: str):
+def summarise_item_worker(self, item_id: str, tier: int = 2):
     """
     Tiered summarisation worker. Can be driven by any tier queue.
     Fetches the item, checks budget, loads text, generates summary.
+    tier=1: urgent (exempt from 80% budget cap)
+    tier=2: standard (pauses at 80% budget)
+    tier=3: lazy (on-demand only, pauses at 80% budget)
     """
-    if not check_budget_before_call(JobType.ITEM_SUMMARY.value):
-        logger.warning(f"Budget exceeded. Skipping summarisation for {item_id}.")
+    if not check_budget_before_call(JobType.ITEM_SUMMARY.value, tier=tier):
+        logger.warning(f"Budget exceeded for tier {tier}. Skipping summarisation for {item_id}.")
         # Let it fail so it might be retried or just ignored. If we raise self.retry,
         # it pushes to a queue. For now, we abort. Tier 1 skips this budget check logic if needed,
         # but let's implement standard budget abort here.

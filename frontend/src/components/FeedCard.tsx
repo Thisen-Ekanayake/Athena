@@ -2,6 +2,7 @@ import type { FeedItem } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
 import { Flame, Star, Layers, Search, ChevronDown, ChevronUp, MessageSquare, ExternalLink } from 'lucide-react'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { ScoreTooltip } from './ScoreTooltip'
 import { useAppStore } from '../store/appStore'
 import { useQAStore } from '../store/qaStore'
@@ -33,9 +34,12 @@ export function FeedCard({ item, viewMode = 'expanded' }: FeedCardProps) {
       {/* Header Info */}
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-2 flex-wrap text-sm">
-          <span className="font-medium text-textSecondary hover:text-white transition-colors cursor-pointer">
+          <Link 
+            to={`/sources/${item.source.id}`}
+            className="font-medium text-textSecondary hover:text-white transition-colors"
+          >
             {item.source.name}
-          </span>
+          </Link>
           <span className="text-zinc-600">•</span>
           <span className="text-zinc-400" title={new Date(item.published_at).toLocaleString()}>
             {formatDistanceToNow(new Date(item.published_at), { addSuffix: true })}
@@ -75,6 +79,19 @@ export function FeedCard({ item, viewMode = 'expanded' }: FeedCardProps) {
           {item.title}
         </a>
       </h2>
+
+      {/* Summary Pending Skeleton */}
+      {viewMode === 'expanded' && !item.summary && (item.summary_status === 'pending' || item.summary_status === 'lazy') && (
+        <div className="space-y-2 animate-pulse">
+          <div className="flex items-center gap-2 text-xs text-zinc-500">
+            <div className="w-3 h-3 rounded-full bg-zinc-700 animate-pulse" />
+            Preparing summary…
+          </div>
+          <div className="h-3 bg-zinc-800/60 rounded w-full" />
+          <div className="h-3 bg-zinc-800/60 rounded w-5/6" />
+          <div className="h-3 bg-zinc-800/60 rounded w-4/6" />
+        </div>
+      )}
 
       {/* Summary */}
       {viewMode === 'expanded' && item.summary && (

@@ -13,6 +13,8 @@ export function QAPanel({ item, onClose }: QAPanelProps) {
   const [isStreaming, setIsStreaming] = useState(false)
   const [status, setStatus] = useState<any>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [budgetExceeded, setBudgetExceeded] = useState(false)
+  const [lastQuestion, setLastQuestion] = useState<string>('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   
   const history = useQAStore(state => state.sessions[item.id] || [])
@@ -42,8 +44,9 @@ export function QAPanel({ item, onClose }: QAPanelProps) {
   const handleSend = async () => {
     if (!inputStr.trim() || isStreaming) return
     const q = inputStr.trim()
-    setInputStr("")
     setErrorMsg(null)
+    setBudgetExceeded(false)
+    setLastQuestion(q)
     
     // Add User message
     addMessage(item.id, { role: 'user', content: q })
@@ -62,6 +65,9 @@ export function QAPanel({ item, onClose }: QAPanelProps) {
 
       if (!res.ok) {
         const errData = await res.json()
+        if (res.status === 429) {
+          setBudgetExceeded(true)
+        }
         throw new Error(errData.detail || 'Q&A request failed')
       }
 
@@ -160,6 +166,12 @@ export function QAPanel({ item, onClose }: QAPanelProps) {
               {msg.role === 'assistant' && isStreaming && idx === history.length - 1 && (
                 <span className="inline-block w-1.5 h-3 ml-1 bg-zinc-400 animate-pulse" />
               )}
+              {msg.role === 'assistant' && (!isStreaming || idx !== history.length - 1) && (
+                <div className="mt-2 pt-2 border-t border-zinc-700/50 text-[10px] text-zinc-500 opacity-80 flex items-center gap-1">
+                  <span>Answer synthesized from:</span>
+                  <span className="font-medium text-zinc-400">{item.source.name}</span>
+                </div>
+              )}
             </div>
           </div>
         ))}
@@ -167,9 +179,31 @@ export function QAPanel({ item, onClose }: QAPanelProps) {
       </div>
 
       {errorMsg && (
-        <div className="px-4 py-2 bg-red-500/10 border-t border-red-500/20 flex items-center gap-2 text-xs text-red-400">
-          <AlertCircle className="w-3 h-3" />
-          {errorMsg}
+        <div className="px-4 py-2 bg-red-500/10 border-t border-red-500/20 flex items-center justify-between text-xs text-red-400">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-3 h-3" />
+            {errorMsg}
+          </div>
+          {lastQuestion && !budgetExceeded && (
+            <button
+              onClick={() => { setErrorMsg(null); setInputStr(lastQuestion); handleSend() }}
+              className="px-2.5 py-1 rounded bg-red-500/20 hover:bg-red-500/30 text-red-300 font-medium transition-colors"
+            >
+              Retry
+            </button>
+          )}
+        </div>
+      )}
+
+      {budgetExceeded && (
+        <div className="px-4 py-3 bg-orange-500/10 border-t border-orange-500/20 text-xs text-orange-400 text-center">
+          <p className="font-medium">Session limit reached for this article.</p>
+          <button
+            onClick={() => { clearSession(item.id); setBudgetExceeded(false); setErrorMsg(null) }}
+            className="mt-1.5 px-3 py-1 rounded bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 font-medium transition-colors"
+          >
+            Clear session & start fresh
+          </button>
         </div>
       )}
 

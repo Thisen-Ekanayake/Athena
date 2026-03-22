@@ -1,5 +1,7 @@
 import httpx
 import xml.etree.ElementTree as ET
+import asyncio
+import time
 from typing import List, Any
 from datetime import datetime
 from athena.scrapers.base import BaseScraper
@@ -10,6 +12,11 @@ from loguru import logger
 # All 4 required arXiv categories from the acquisition plan
 ARXIV_DEFAULT_QUERY = "cat:cs.AI OR cat:cs.LG OR cat:cs.CL OR stat.ML"
 ARXIV_DEFAULT_MAX_RESULTS = 50
+
+# Global state to enforce 3 req/s limit across all ArXivScraper instances in this process
+_LAST_ARXIV_CALL_TIME = 0.0
+_ARXIV_LOCK = asyncio.Lock()
+
 
 
 class ArXivScraper(BaseScraper):
@@ -28,7 +35,16 @@ class ArXivScraper(BaseScraper):
         }
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.get(self.BASE_URL, params=params, timeout=30.0)
+                global _LAST_ARXIV_CALL_TIME
+                async with _ARXIV_LOCK:
+                    now = time.time()
+                    elapsed = now - _LAST_ARXIV_CALL_TIME
+                    if elapsed < 0.34:  # 3 requests per second limit
+                        await asyncio.sleep(0.34 - elapsed)
+                    
+                    response = await client.get(self.BASE_URL, params=params, timeout=30.0)
+                    _LAST_ARXIV_CALL_TIME = time.time()
+                    
                 response.raise_for_status()
                 root = ET.fromstring(response.text)
                 return root.findall('atom:entry', self.NAMESPACE)

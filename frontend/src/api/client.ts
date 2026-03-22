@@ -35,6 +35,7 @@ export interface FeedItem {
   title: string
   url: string
   summary: string
+  summary_status?: string
   score: number
   published_at: string
   category: string

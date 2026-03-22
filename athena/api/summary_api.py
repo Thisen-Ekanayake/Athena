@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem, SummaryStatus, SummaryUsageLog
+from athena.api.deps import get_current_user_required
 
 app = FastAPI(title="Athena Summarisation API", version="1.0.0")
 
@@ -30,8 +31,15 @@ def get_item_summary(item_id: str, db: Session = Depends(get_db)):
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    if item.summary_status == SummaryStatus.LAZY:
-        from athena.pipeline.summarisation_tasks import summarise_on_demand_sync
+    from athena.pipeline.summarisation_tasks import summarise_on_demand_sync, _does_item_need_resummary, get_active_prompt_version
+    from athena.core.models import JobType
+    
+    active_prompt = get_active_prompt_version(JobType.ITEM_SUMMARY, db)
+    needs_resummary = False
+    if active_prompt and _does_item_need_resummary(item, active_prompt.version):
+        needs_resummary = True
+
+    if item.summary_status == SummaryStatus.LAZY or needs_resummary:
         item = summarise_on_demand_sync(item_id)
         if not item or item.summary_status != SummaryStatus.COMPLETE:
             raise HTTPException(status_code=500, detail="Failed to generate on-demand summary")
@@ -47,7 +55,7 @@ def get_item_summary(item_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/admin/summaries/cost")
-def get_summarisation_cost(db: Session = Depends(get_db)):
+def get_summarisation_cost(db: Session = Depends(get_db), user: dict = Depends(get_current_user_required)):
     """Daily and 7-day rolling spend in USD, and token breakdowns."""
     from datetime import timedelta
     now = datetime.now(timezone.utc)
@@ -64,14 +72,46 @@ def get_summarisation_cost(db: Session = Depends(get_db)):
         .where(SummaryUsageLog.created_at >= week_start)
     ).scalar() or 0.0
 
+    failed_count = db.execute(
+        select(func.count(SummaryUsageLog.id))
+        .where(SummaryUsageLog.created_at >= today_start)
+        .where(SummaryUsageLog.success.is_(False))
+    ).scalar() or 0
+
+    # Token usage and latency breakdown by job_type and model
+    stats = db.execute(
+        select(
+            SummaryUsageLog.job_type,
+            SummaryUsageLog.model,
+            func.sum(SummaryUsageLog.input_tokens).label("in_tokens"),
+            func.sum(SummaryUsageLog.output_tokens).label("out_tokens"),
+            func.avg(SummaryUsageLog.latency_ms).label("avg_latency")
+        )
+        .where(SummaryUsageLog.created_at >= today_start)
+        .group_by(SummaryUsageLog.job_type, SummaryUsageLog.model)
+    ).all()
+
+    breakdowns = []
+    for row in stats:
+        job_type = row[0].value if hasattr(row[0], 'value') else str(row[0])
+        breakdowns.append({
+            "job_type": job_type,
+            "model": row[1],
+            "input_tokens": row[2] or 0,
+            "output_tokens": row[3] or 0,
+            "average_latency_ms": round(row[4] or 0)
+        })
+
     return {
         "today_spend_usd": round(today_spend, 4),
-        "7_day_spend_usd": round(weekly_spend, 4)
+        "7_day_spend_usd": round(weekly_spend, 4),
+        "today_failed_count": failed_count,
+        "breakdown": breakdowns
     }
 
 
 @app.get("/admin/summaries/sample")
-def get_summary_sample(db: Session = Depends(get_db)):
+def get_summary_sample(db: Session = Depends(get_db), user: dict = Depends(get_current_user_required)):
     """Returns 10 random summaries for manual spot-check."""
     items = db.execute(
         select(ContentItem)
@@ -93,7 +133,7 @@ def get_summary_sample(db: Session = Depends(get_db)):
 
 
 @app.post("/admin/items/{item_id}/regenerate-summary")
-def regenerate_summary(item_id: str, db: Session = Depends(get_db)):
+def regenerate_summary(item_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user_required)):
     """Manually trigger regeneration for a specific item."""
     try:
         item_uuid = UUID(item_id)
