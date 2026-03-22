@@ -19,6 +19,7 @@ class JobType(str, enum.Enum):
     ITEM_SUMMARY = "item_summary"
     CLUSTER_LABEL = "cluster_label"
     TRENDING_BRIEF = "trending_brief"
+    QA = "qa"
 
 
 class SourceType(str, enum.Enum):
@@ -79,8 +80,10 @@ class ContentItem(Base):
     is_trending = Column(Boolean, default=False)
     category_rank = Column(Integer, nullable=True)
     embedding_id = Column(String, nullable=True)
+    embedding_model = Column(String, default="text-embedding-3-small")
     embedded_at = Column(DateTime(timezone=True), nullable=True)
     cluster_id = Column(PG_UUID(as_uuid=True), ForeignKey("clusters.id"), nullable=True)
+    cluster_distance = Column(Float, nullable=True)  # distance to cluster centroid
     extra_data = Column(JSONB, default={})
 
     # Summarisation fields
@@ -279,4 +282,47 @@ class QAUsageLog(Base):
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
     content_item = relationship("ContentItem", backref="qa_usage_logs")
+
+
+class ClusterRunLog(Base):
+    """Audit log for clustering pipeline runs."""
+    __tablename__ = "cluster_run_logs"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    started_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    total_items = Column(Integer, default=0)
+    num_clusters = Column(Integer, default=0)
+    noise_items = Column(Integer, default=0)
+    new_clusters = Column(Integer, default=0)
+    merged_clusters = Column(Integer, default=0)
+    deactivated_clusters = Column(Integer, default=0)
+    umap_dims = Column(Integer, default=50)
+    hdbscan_min_cluster_size = Column(Integer, default=5)
+    status = Column(String, default="running")  # running, success, failed
+    error_message = Column(String, nullable=True)
+
+
+class ReferenceEmbedding(Base):
+    """Stores positive/negative reference embeddings for semantic scoring."""
+    __tablename__ = "reference_embeddings"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    label = Column(String, nullable=False)  # 'positive' or 'negative'
+    text_content = Column(String, nullable=False)
+    embedding = Column(ARRAY(Float), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class ScoreAuditLog(Base):
+    """Audit log for significant score changes (> 0.1 delta)."""
+    __tablename__ = "score_audit_logs"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
+    old_score = Column(Float, nullable=False)
+    new_score = Column(Float, nullable=False)
+    delta = Column(Float, nullable=False)
+    reason = Column(String, nullable=True) 
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 

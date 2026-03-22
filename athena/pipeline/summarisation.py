@@ -57,11 +57,36 @@ def today_date() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def check_budget_before_call(job_type: str) -> bool:
-    """Check if we have exceeded the daily summary budget (default $5.00)."""
+def check_budget_before_call(job_type: str, tier: int = 2) -> bool:
+    """
+    Check if we have exceeded the daily summary budget.
+    Tier 1 (urgent/trending) is exempt from the 80% threshold.
+    Tier 2/3 pauses at 80% of daily budget to reserve capacity for urgent items.
+    """
     today_spend = redis.get('summary_spend:' + today_date())
-    if today_spend is not None and float(today_spend) >= SUMMARY_DAILY_BUDGET_USD:
-        logger.warning(f"Daily summary budget exhausted (${today_spend}) - pausing non-urgent execution")
+    if today_spend is None:
+        return True
+
+    current_spend = float(today_spend)
+    budget = SUMMARY_DAILY_BUDGET_USD
+
+    # Tier 1 (urgent) can use the full budget
+    if tier == 1:
+        if current_spend >= budget:
+            logger.warning(
+                f"Daily budget fully exhausted (${current_spend:.2f})"
+                f" — even Tier 1 paused"
+            )
+            return False
+        return True
+
+    # Tier 2/3 pause at 80% to reserve capacity for Tier 1
+    threshold = budget * 0.80
+    if current_spend >= threshold:
+        logger.warning(
+            f"Tier {tier} paused at 80% budget "
+            f"(${current_spend:.2f} / ${budget:.2f})"
+        )
         return False
     return True
 

@@ -82,26 +82,36 @@ class MockSession:
                     return self._items
                 return self._items
 
-        # Extremely naive matching based on class
-        target_class = getattr(stmt, 'froms', [None])[0]
-        if hasattr(target_class, 'name'):
-            table_name = target_class.name
-            if table_name == 'content_items':
-                return Result(self._data.get('items', []))
-            elif table_name == 'clusters':
-                # Return tuples for cluster list endpoint
-                return Result([(c, 5) for c in self._data.get('clusters', [])])
-            elif table_name == 'sources':
-                return Result(self._data.get('sources', []))
-            elif table_name == 'item_links':
-                return Result([])
-            elif table_name == 'trending_briefs':
-                return Result([self._data.get('brief', None)])
-            elif table_name == 'content_scores':
-                return Result(self._data.get('scores', []))
+        import re
+        stmt_str = str(stmt).lower()
         
-        # Fallback for count queries etc
-        return Result([len(self._data.get('items', []))])
+        # 1. Is it a count query? (e.g., pagination)
+        if re.search(r'select count\(', stmt_str):
+            if 'cluster' in stmt_str:
+                return Result([len(self._data.get('clusters', []))])
+            return Result([len(self._data.get('items', []))])
+            
+        # 2. Clusters endpoint (select cluster, count(items))
+        if 'clusters.' in stmt_str and 'count(' in stmt_str:
+            return Result([(c, 5) for c in self._data.get('clusters', [])])
+            
+        # 3. Regular model queries
+        if 'content_items' in stmt_str or 'contentitem' in stmt_str:
+            return Result(self._data.get('items', []))
+        elif 'trending_briefs' in stmt_str or 'trendingbrief' in stmt_str:
+            brief = self._data.get('brief')
+            return Result([brief] if brief else [])
+        elif 'content_scores' in stmt_str or 'contentscore' in stmt_str:
+            return Result(self._data.get('scores', []))
+        elif 'item_links' in stmt_str or 'itemlink' in stmt_str:
+            # Check item_links before sources due to source_item_id
+            return Result([])
+        elif 'sources' in stmt_str or 'source' in stmt_str:
+            return Result(self._data.get('sources', []))
+        elif 'clusters' in stmt_str or 'cluster' in stmt_str:
+            return Result(self._data.get('clusters', []))
+            
+        return Result([])
 
     def commit(self):
         pass
@@ -127,6 +137,7 @@ def mock_db():
         category=SourceCategory.BLOG,
         added_by="system",
         is_active=True,
+        authority_score=1.0,
     )
 
     cluster = Cluster(

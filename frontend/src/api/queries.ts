@@ -4,13 +4,15 @@ import { apiClient, type FeedResponse, type TrendingResponse, type ClusterInfo }
 export const useFeed = (
   sort: 'score' | 'date' | 'trending' = 'score', 
   category: string | null = null,
+  dateRange: '24h' | '7d' | '30d' | 'all' = 'all',
+  sourceId: string | null = null,
   limit: number = 20
 ) => {
   return useInfiniteQuery<FeedResponse>({
-    queryKey: ['feed', sort, category],
+    queryKey: ['feed', sort, category, dateRange, sourceId],
     queryFn: async ({ pageParam = 1 }) => {
       const { data } = await apiClient.get<FeedResponse>('/feed', {
-        params: { sort, category, page: pageParam, limit }
+        params: { sort, category, date_range: dateRange !== 'all' ? dateRange : undefined, source_id: sourceId, page: pageParam, limit }
       })
       return data
     },

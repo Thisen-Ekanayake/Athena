@@ -11,6 +11,8 @@ from loguru import logger
 
 from athena.api.routers import feed, items, clusters, trending, search, sources
 from athena.api import qa_api
+from athena.api import score_api
+from athena.api import summary_api
 
 
 def create_app() -> FastAPI:
@@ -45,6 +47,14 @@ def create_app() -> FastAPI:
     app.include_router(search.router)
     app.include_router(sources.router)
     app.include_router(qa_api.router, prefix="/api/v1", tags=["QA"])
+    app.include_router(
+        score_api.app.router, prefix="/api/v1",
+        tags=["Scoring"],
+    )
+    app.include_router(
+        summary_api.app.router, prefix="/api/v1",
+        tags=["Summarisation"],
+    )
 
     # ── Health check ────────────────────────────────────
     @app.get("/health", tags=["Health"])

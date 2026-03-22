@@ -22,8 +22,9 @@ If the article text is marked as PARTIAL CONTENT, acknowledge this and note
 that your answer may be incomplete due to limited article access.
 Never fabricate citations, section numbers, or quotes not present in the text."""
 
-def build_messages(article_text: str, question: str, history: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+def build_messages(article_text: str, question: str, history: List[Dict[str, str]], custom_sys_prompt: str | None = None) -> List[Dict[str, str]]:
+    sys_prompt = custom_sys_prompt if custom_sys_prompt else SYSTEM_PROMPT
+    messages = [{"role": "system", "content": sys_prompt}]
     
     if not history:
         # Turn 1

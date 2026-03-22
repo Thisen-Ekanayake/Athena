@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from 'react-router-dom'
-import { LayoutGrid, Settings, Layers, Menu } from 'lucide-react'
+import { LayoutGrid, Settings, Layers, Menu, Flame } from 'lucide-react'
 import { useState } from 'react'
 import { SearchInput } from './SearchInput'
 import { RelatedSidebar } from './RelatedSidebar'
@@ -9,6 +9,7 @@ export function Layout() {
 
   const navItems = [
     { to: '/', icon: LayoutGrid, label: 'Feed' },
+    { to: '/trending', icon: Flame, label: 'Trending' },
     { to: '/clusters', icon: Layers, label: 'Topics' },
   ]
 

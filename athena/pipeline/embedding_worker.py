@@ -1,10 +1,11 @@
 import os
+import time
 from typing import List
 from datetime import datetime
 from loguru import logger
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 from sqlalchemy import select, update
 import redis as redis_lib
 
@@ -103,12 +104,31 @@ def process_batch(item_ids: List[str]):
             return
 
         try:
-            # 1. Generate Embeddings
-            response = openai.embeddings.create(
-                input=batch_texts,
-                model=EMBEDDING_MODEL
-            )
-            embeddings = [data.embedding for data in response.data]
+            # 1. Generate Embeddings (with rate-limit backoff)
+            MAX_RETRIES = 3
+            embeddings = None
+            for attempt in range(MAX_RETRIES):
+                try:
+                    response = openai.embeddings.create(
+                        input=batch_texts,
+                        model=EMBEDDING_MODEL
+                    )
+                    embeddings = [data.embedding for data in response.data]
+                    break
+                except RateLimitError as e:
+                    if attempt < MAX_RETRIES - 1:
+                        wait = 2 ** attempt  # 1s, 2s, 4s
+                        logger.warning(
+                            f"OpenAI rate limit hit, retrying in {wait}s "
+                            f"(attempt {attempt + 1}/{MAX_RETRIES})"
+                        )
+                        time.sleep(wait)
+                    else:
+                        raise e
+
+            if not embeddings:
+                logger.error("Failed to generate embeddings after retries")
+                return
 
             # 2. Upsert to Qdrant
             points = []
@@ -134,7 +154,8 @@ def process_batch(item_ids: List[str]):
             for item in valid_items:
                 session.execute(
                     update(ContentItem).where(ContentItem.id == item.id).values(
-                        embedding_id=str(item.id),  # Using same UUID for simplicity
+                        embedding_id=str(item.id),
+                        embedding_model=EMBEDDING_MODEL,
                         embedded_at=datetime.utcnow()
                     )
                 )
@@ -149,8 +170,8 @@ def process_batch(item_ids: List[str]):
 
         except Exception as e:
             logger.error(f"Failed to process embedding batch: {e}")
-            # Potentially re-queue items?
+            r = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
             for item_id in item_ids:
-                r = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
                 r.rpush("athena:embedding_queue", item_id)
             session.rollback()
+

@@ -191,6 +191,21 @@ def score_item(item_id: str, session=None) -> Optional[float]:
         # 9. Apply trending boost
         final_score = apply_trending_boost(composite, is_trending)
 
+        # 9.5 Log significant changes (> 0.1)
+        old_score = item.score or 0.0
+        delta = final_score - old_score
+        # Only log if it's not the initial 0.0 -> score jump, meaning scored_at is not None
+        if abs(delta) > 0.1 and item.scored_at is not None:
+            from athena.core.models import ScoreAuditLog
+            audit_log = ScoreAuditLog(
+                item_id=item.id,
+                old_score=old_score,
+                new_score=final_score,
+                delta=delta,
+                reason="Significant score change during re-score"
+            )
+            session.add(audit_log)
+
         # 10. Persist ContentScore
         version = weights.get("version", 1)
         now = datetime.now(timezone.utc)

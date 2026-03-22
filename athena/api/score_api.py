@@ -9,8 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from athena.database.db import SessionLocal
-from athena.core.models import ContentItem, ContentScore
+from athena.core.models import ContentItem, ContentScore, FetchLog
 from athena.pipeline.scoring import score_all_items
+from athena.api.deps import get_current_user_required
 
 app = FastAPI(title="Athena Scoring API", version="1.0.0")
 
@@ -171,7 +172,7 @@ def get_trending_items(limit: int = 20, db: Session = Depends(get_db)):
 
 
 @app.post("/admin/rescore-all")
-def trigger_rescore():
+def trigger_rescore(user: dict = Depends(get_current_user_required)):
     """Admin endpoint: trigger a full re-score of all items (e.g. after config change)."""
     score_all_items.delay()
     return {"status": "Re-score triggered", "message": "All items will be re-scored in the background."}
@@ -211,3 +212,23 @@ def scoring_health(db: Session = Depends(get_db)):
             (trending_items or 0) / max(1, total_items or 1) * 100, 2
         ),
     }
+
+
+@app.get("/health/fetch")
+def fetch_health(db: Session = Depends(get_db)):
+    """Fetch health data for the dashboard."""
+    from sqlalchemy import func
+    
+    total_logs = db.execute(select(func.count(FetchLog.id))).scalar() or 0
+    successful_fetches = db.execute(
+        select(func.count(FetchLog.id)).where(FetchLog.status == "success")
+    ).scalar() or 0
+    failed_fetches = total_logs - successful_fetches
+    
+    return {
+        "total_fetches": total_logs,
+        "successful_fetches": successful_fetches,
+        "failed_fetches": failed_fetches,
+        "success_rate": round(successful_fetches / max(total_logs, 1) * 100, 2)
+    }
+

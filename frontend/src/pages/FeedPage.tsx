@@ -2,12 +2,17 @@ import { useFeed } from '../api/queries'
 import { useAppStore } from '../store/appStore'
 import { FeedTopBar } from '../components/FeedTopBar'
 import { FeedCard } from '../components/FeedCard'
+import { CardSkeleton } from '../components/CardSkeleton'
 import { Alert } from '../components/shared/Alert'
+import { RelatedSidebar } from '../components/RelatedSidebar'
 import { useState, useEffect } from 'react'
-import { Flame } from 'lucide-react'
+import { useParams, Link } from 'react-router-dom'
+import { Flame, ArrowLeft, Database } from 'lucide-react'
 
 export function FeedPage() {
+  const { sourceId } = useParams()
   const [sort, setSort] = useState<'score' | 'date' | 'trending'>('score')
+  const [dateRange, setDateRange] = useState<'24h' | '7d' | '30d' | 'all'>('all')
   const { currentCategory, setCategory, viewMode, setViewMode } = useAppStore()
 
   const {
@@ -17,7 +22,7 @@ export function FeedPage() {
     isFetchingNextPage,
     status,
     error,
-  } = useFeed(sort, currentCategory)
+  } = useFeed(sort, currentCategory, dateRange, sourceId)
 
   // Implement simple infinite scroll observer
   useEffect(() => {
@@ -39,10 +44,35 @@ export function FeedPage() {
       <FeedTopBar 
         sort={sort} setSort={setSort}
         category={currentCategory} setCategory={setCategory}
+        dateRange={dateRange} setDateRange={setDateRange}
         viewMode={viewMode} setViewMode={setViewMode}
       />
       
-      {sort === 'trending' && (
+      {sourceId && data?.pages[0]?.items[0] && (
+        <div className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex flex-col fade-in">
+           <Link to="/" className="text-textSecondary hover:text-white text-sm flex items-center mb-2 w-fit">
+             <ArrowLeft className="w-4 h-4 mr-1" /> Back to Main Feed
+           </Link>
+           <div className="flex items-center">
+             <Database className="w-5 h-5 text-accentPrimary mr-2" />
+             <h2 className="text-lg font-medium text-white">
+               Source: {data.pages[0].items[0].source.name}
+             </h2>
+           </div>
+        </div>
+      )}
+
+      {sourceId && data?.pages[0]?.items.length === 0 && status === 'success' && (
+        <div className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex flex-col fade-in">
+           <Link to="/" className="text-textSecondary hover:text-white text-sm flex items-center mb-2 w-fit">
+             <ArrowLeft className="w-4 h-4 mr-1" /> Back to Main Feed
+           </Link>
+           <h2 className="text-lg font-medium text-white">Viewing Unknown Source</h2>
+        </div>
+      )}
+      
+      {/* Hide trending banner if viewing a source, as trending sort doesn't really apply properly, though it can */}
+      {sort === 'trending' && !sourceId && (
         <div className="bg-gradient-to-r from-purple-900/40 to-indigo-900/40 border-b border-purple-800/30 px-6 py-4 flex items-center justify-center fade-in">
            <Flame className="w-5 h-5 text-purple-400 mr-2" />
            <p className="text-sm font-medium text-purple-100">
@@ -53,8 +83,10 @@ export function FeedPage() {
       
       <div className="p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto space-y-6">
         {status === 'pending' ? (
-          <div className="flex justify-center p-12">
-            <div className="w-8 h-8 rounded-full border-4 border-accentPrimary/20 border-t-accentPrimary animate-spin" />
+          <div className="space-y-6 flex flex-col items-stretch fade-in">
+            <CardSkeleton />
+            <CardSkeleton />
+            <CardSkeleton />
           </div>
         ) : status === 'error' ? (
           <Alert type="error" title="Error loading feed">
@@ -96,6 +128,9 @@ export function FeedPage() {
           </>
         )}
       </div>
+
+      {/* Render RelatedSidebar on top/alongside depending on its own CSS handling */}
+      <RelatedSidebar />
     </div>
   )
 }

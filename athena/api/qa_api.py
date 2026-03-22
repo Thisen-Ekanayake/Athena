@@ -6,9 +6,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 from typing import Dict, Any
 
-from athena.core.models import ContentItem, QAFetchCache
+from athena.core.models import ContentItem, QAFetchCache, QAUsageLog
 from athena.core.qa_fetcher import fetch_article_content, FetchResult
-from athena.api.deps import get_db
+from athena.api.deps import get_db, get_current_user_required
 
 
 router = APIRouter()
@@ -83,7 +83,8 @@ from fastapi.responses import StreamingResponse
 import json
 import openai
 from athena.core.qa_prompt import build_messages, prune_history_if_needed
-from athena.core.models import QAUsageLog
+from athena.core.qa_fetcher import select_relevant_sections
+from athena.core.models import ContentCategory
 import tiktoken
 
 class QARequest(BaseModel):
@@ -105,24 +106,20 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
     item = db.execute(select(ContentItem).where(ContentItem.id == item_id)).scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
-        
-    session_id = f"sess_{item_id}_{hash(req.question)}" # We need a proper session_id, frontend doesn't send it, let's just make one or use hash
-    # Wait, frontend is supposed to generate it? The spec says:
-    # "Body: { question: string, history: [{role, content}] }"
-    # So we can just use item_id and IP or simply track overall QA spend. Let's use a dummy session_id for logging.
+
     session_id = f"session_{item_id}"
-    
+
     # 1. Budget Checks
     today_str = datetime.utcnow().strftime('%Y-%m-%d')
     daily_spend = float(r.get(f"qa_spend:{today_str}") or 0.0)
     if daily_spend > 10.0:
         raise HTTPException(status_code=429, detail="Daily budget exhausted for Q&A.")
-        
+
     active_streams = r.incr("qa_active_streams")
     try:
         if active_streams > 10:
             raise HTTPException(status_code=429, detail="Server busy, too many concurrent Q&A streams.")
-            
+
         # Session token tracking
         session_tokens = int(r.get(f"qa_session_tokens:{session_id}") or 0)
         if session_tokens > 40000:
@@ -132,9 +129,29 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
         start_fetch = datetime.utcnow()
         result = await fetch_article_content(item)
         fetch_latency = int((datetime.utcnow() - start_fetch).total_seconds() * 1000)
-        
+
+        # 2b. Apply content length limits per category
+        is_paper = (
+            item.category == ContentCategory.PAPER
+            or item.category == 'paper'
+        )
+        max_tokens = 16000 if is_paper else 8000
+        article_text = select_relevant_sections(
+            result.text, req.question, max_tokens
+        )
+
+        # 2c. Fetch custom prompt from database
+        from athena.core.models import PromptVersion, JobType
+        active_prompt = db.execute(
+            select(PromptVersion)
+            .where(PromptVersion.job_type == JobType.QA)
+            .where(PromptVersion.is_active == True)
+            .order_by(PromptVersion.version.desc())
+        ).scalars().first()
+        sys_prompt = active_prompt.system_prompt if active_prompt else None
+
         # 3. Build Messages
-        messages_raw = build_messages(result.text, req.question, req.history)
+        messages_raw = build_messages(article_text, req.question, req.history, sys_prompt)
         messages = prune_history_if_needed(messages_raw, 8000)
         
         # Compute approx input tokens
@@ -144,13 +161,17 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
         async def generate():
             client = openai.AsyncOpenAI()
             try:
+                # Send partial content flag as initial event
+                if result.partial:
+                    yield f"data: {json.dumps({'partial': True, 'method': result.method})}\n\n"
+
                 stream = await client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=messages,
                     max_tokens=800,
                     stream=True,
                 )
-                
+
                 answer_tokens = 0
                 async for chunk in stream:
                     delta = chunk.choices[0].delta.content
@@ -202,7 +223,11 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
 from sqlalchemy import func
 
 @router.get("/admin/qa/sessions")
-def get_admin_qa_sessions(db: Session = Depends(get_db)):
+def get_qa_sessions_dashboard(
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user_required)
+):
     from athena.api.deps import get_redis
     r = get_redis()
     
@@ -217,10 +242,18 @@ def get_admin_qa_sessions(db: Session = Depends(get_db)):
     ).scalars().all()
     
     # Stats
-    method_dist = db.execute(
-        select(QAUsageLog.fetch_method, func.count(QAUsageLog.id))
+    stats_query = db.execute(
+        select(
+            QAUsageLog.fetch_method, 
+            func.count(QAUsageLog.id), 
+            func.avg(QAUsageLog.fetch_latency_ms)
+        )
         .group_by(QAUsageLog.fetch_method)
     ).all()
+    
+    avg_turns = db.execute(
+        select(func.avg(QAUsageLog.turn_number))
+    ).scalar() or 0.0
     
     # Partial content rate
     total_queries = db.execute(select(func.count(QAUsageLog.id))).scalar() or 1
@@ -229,7 +262,9 @@ def get_admin_qa_sessions(db: Session = Depends(get_db)):
     return {
         "daily_spend_usd": daily_spend,
         "questions_today": len([x for x in recent if x.created_at.strftime('%Y-%m-%d') == today_str]),
-        "fetch_distribution": {m: c for m, c in method_dist},
+        "fetch_distribution": {m: c for m, c, _ in stats_query},
+        "average_first_token_latency": {m: float(l) for m, c, l in stats_query if l is not None},
+        "average_turns_per_session": float(avg_turns),
         "partial_content_rate": round(partial_queries / total_queries, 4),
         "recent_sessions": [
             {
