@@ -31,9 +31,12 @@ def get_item_summary(item_id: str, db: Session = Depends(get_db)):
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    from athena.pipeline.summarisation_tasks import summarise_on_demand_sync, _does_item_need_resummary, get_active_prompt_version
+    from athena.pipeline.summarisation_tasks import (
+        summarise_on_demand_sync, _does_item_need_resummary,
+        get_active_prompt_version
+    )
     from athena.core.models import JobType
-    
+
     active_prompt = get_active_prompt_version(JobType.ITEM_SUMMARY, db)
     needs_resummary = False
     if active_prompt and _does_item_need_resummary(item, active_prompt.version):

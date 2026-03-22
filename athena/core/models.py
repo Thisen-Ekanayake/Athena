@@ -251,7 +251,7 @@ class QAFetchCache(Base):
     __tablename__ = "qa_fetch_cache"
 
     item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), primary_key=True)
-    fetch_method = Column(String, nullable=False) # staged | http | playwright | pdf | abstract_only
+    fetch_method = Column(String, nullable=False)  # staged | http | playwright | pdf | abstract_only
     word_count = Column(Integer, default=0)
     is_partial = Column(Boolean, default=False)
     last_fetched_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -323,6 +323,5 @@ class ScoreAuditLog(Base):
     old_score = Column(Float, nullable=False)
     new_score = Column(Float, nullable=False)
     delta = Column(Float, nullable=False)
-    reason = Column(String, nullable=True) 
+    reason = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-

@@ -65,7 +65,7 @@ def add_source(
     Triggers auto-detection and test fetch. Returns preview.
     """
     from athena.database.user_sources import (
-        detect_source_type, preview_source, add_user_source,
+        preview_source, add_user_source,
     )
 
     # Step 1: Preview

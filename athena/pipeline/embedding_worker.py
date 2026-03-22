@@ -174,4 +174,3 @@ def process_batch(item_ids: List[str]):
             for item_id in item_ids:
                 r.rpush("athena:embedding_queue", item_id)
             session.rollback()
-

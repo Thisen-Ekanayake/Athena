@@ -246,4 +246,3 @@ def compute_item_links():
                 session.add(link)
             session.commit()
     logger.info("Item links updated.")
-

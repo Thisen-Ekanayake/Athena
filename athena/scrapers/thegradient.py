@@ -6,6 +6,7 @@ from athena.scrapers.base import BaseScraper
 from athena.core.schemas import ContentItemCreate
 from athena.core.models import ContentCategory
 
+
 class TheGradientScraper(BaseScraper):
     BASE_URL = "https://thegradient.pub/"
 
@@ -14,7 +15,7 @@ class TheGradientScraper(BaseScraper):
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Athena/1.0"}
             response = await client.get(self.BASE_URL, headers=headers)
             response.raise_for_status()
-            
+
             soup = BeautifulSoup(response.text, "html.parser")
             # The Gradient uses Ghost; posts are typically in 'post-card' classes
             articles = soup.find_all("article", class_="post-card")
@@ -26,17 +27,17 @@ class TheGradientScraper(BaseScraper):
         url = link_el["href"] if link_el and "href" in link_el.attrs else ""
         if url.startswith("/"):
             url = f"https://thegradient.pub{url}"
-            
+
         title_el = raw.find("h2", class_="post-card-title")
         title = title_el.get_text().strip() if title_el else "Untitled Gradient Article"
-        
+
         abstract_el = raw.find("div", class_="post-card-excerpt")
         abstract = abstract_el.get_text().strip() if abstract_el else ""
-        
+
         # Ghost typically uses .author-name
         author_el = raw.find("span", class_="post-card-author") or raw.find("li", class_="author-list-item")
         authors = [author_el.get_text().strip()] if author_el else []
-        
+
         # Date is often in a time tag or not surfaced on the index
         time_el = raw.find("time")
         published_at = datetime.utcnow()
@@ -45,9 +46,9 @@ class TheGradientScraper(BaseScraper):
                 published_at = datetime.fromisoformat(time_el["datetime"])
             except ValueError:
                 pass
-                
+
         content_hash = self.generate_content_hash(f"{title}|{abstract}")
-        
+
         return ContentItemCreate(
             source_id=self.source_id,
             title=title,

@@ -21,6 +21,7 @@ client = TestClient(app)
 
 class MockRedis:
     """Simple in-memory mock for Redis caching."""
+
     def __init__(self):
         self.store = {}
 
@@ -46,6 +47,7 @@ class MockRedis:
 
 class MockSession:
     """Mock SQLAlchemy Session."""
+
     def __init__(self, data):
         self._data = data
         self._query_result = []
@@ -70,6 +72,7 @@ class MockSession:
                 class Scalars:
                     def __init__(self, items):
                         self._items = items
+
                     def all(self):
                         return self._items
                 return Scalars(self._items)
@@ -84,17 +87,17 @@ class MockSession:
 
         import re
         stmt_str = str(stmt).lower()
-        
+
         # 1. Is it a count query? (e.g., pagination)
         if re.search(r'select count\(', stmt_str):
             if 'cluster' in stmt_str:
                 return Result([len(self._data.get('clusters', []))])
             return Result([len(self._data.get('items', []))])
-            
+
         # 2. Clusters endpoint (select cluster, count(items))
         if 'clusters.' in stmt_str and 'count(' in stmt_str:
             return Result([(c, 5) for c in self._data.get('clusters', [])])
-            
+
         # 3. Regular model queries
         if 'content_items' in stmt_str or 'contentitem' in stmt_str:
             return Result(self._data.get('items', []))
@@ -110,7 +113,7 @@ class MockSession:
             return Result(self._data.get('sources', []))
         elif 'clusters' in stmt_str or 'cluster' in stmt_str:
             return Result(self._data.get('clusters', []))
-            
+
         return Result([])
 
     def commit(self):
@@ -162,7 +165,7 @@ def mock_db():
     # Wire relationships for the mapper
     item.source = source
     item.cluster = cluster
-    
+
     score = ContentScore(
         item_id=item_id,
         composite_score=0.95,
@@ -184,13 +187,13 @@ def mock_db():
     }
 
     session = MockSession(mock_data)
-    
+
     # Override dependencies
     app.dependency_overrides[get_db] = lambda: session
     app.dependency_overrides[get_redis] = lambda: MockRedis()
-    
+
     yield session
-    
+
     # Clean up
     app.dependency_overrides.clear()
 
@@ -252,11 +255,17 @@ def test_item_detail(mock_db):
 
 def test_item_score_breakdown(mock_db):
     item_id = str(mock_db._data['items'][0].id)
-    
+
     # We need to mock _get_weights in athena.pipeline.scoring for this test
     # since it does a separate DB query
     from unittest.mock import patch
-    with patch("athena.pipeline.scoring._get_weights", return_value={"citation": 0.3, "engagement": 0.15, "sentiment": 0.15, "recency": 0.2, "authority": 0.2}):
+    with patch(
+        "athena.pipeline.scoring._get_weights",
+        return_value={
+            "citation": 0.3, "engagement": 0.15, "sentiment": 0.15,
+            "recency": 0.2, "authority": 0.2
+        }
+    ):
         response = client.get(f"/api/v1/items/{item_id}/score-breakdown")
         assert response.status_code == 200
         data = response.json()
