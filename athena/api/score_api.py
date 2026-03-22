@@ -218,17 +218,16 @@ def scoring_health(db: Session = Depends(get_db)):
 def fetch_health(db: Session = Depends(get_db)):
     """Fetch health data for the dashboard."""
     from sqlalchemy import func
-    
+
     total_logs = db.execute(select(func.count(FetchLog.id))).scalar() or 0
     successful_fetches = db.execute(
         select(func.count(FetchLog.id)).where(FetchLog.status == "success")
     ).scalar() or 0
     failed_fetches = total_logs - successful_fetches
-    
+
     return {
         "total_fetches": total_logs,
         "successful_fetches": successful_fetches,
         "failed_fetches": failed_fetches,
         "success_rate": round(successful_fetches / max(total_logs, 1) * 100, 2)
     }
-

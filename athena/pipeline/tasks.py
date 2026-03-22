@@ -1,12 +1,10 @@
 from athena.pipeline.celery_app import celery_app
-from celery import Celery
 import os
 import time
 import asyncio
 import hashlib
 import redis as redis_lib
 from typing import Optional
-from dotenv import load_dotenv
 from athena.database.operations import get_active_sources, save_content_items
 from athena.scrapers.arxiv import ArXivScraper
 from athena.scrapers.rss import RSSScraper

@@ -15,7 +15,7 @@ from athena.api.cache import cache_get, cache_set
 from athena.api.config import settings
 from athena.api.routers.feed import _build_feed_item
 from athena.core.models import (
-    ContentItem, Cluster, Source, ItemLink,
+    ContentItem, Cluster, Source,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["Clusters"])

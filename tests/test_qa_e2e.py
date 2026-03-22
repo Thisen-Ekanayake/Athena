@@ -2,6 +2,7 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 from athena.api.main import app
 
+
 @pytest.mark.skip(reason="Requires test DB setup")
 @pytest.mark.asyncio
 async def test_admin_qa_sessions_endpoint():
@@ -14,10 +15,12 @@ async def test_admin_qa_sessions_endpoint():
         assert "questions_today" in data
         assert "recent_sessions" in data
 
+
 @pytest.mark.skip(reason="Stub")
 @pytest.mark.asyncio
 async def test_qa_adversarial_out_of_context():
     pass
+
 
 @pytest.mark.skip(reason="Stub")
 @pytest.mark.asyncio

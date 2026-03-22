@@ -1,3 +1,4 @@
+from athena.scrapers.arxiv import ArXivScraper
 import asyncio
 import sys
 import os
@@ -7,7 +8,6 @@ from uuid import uuid4
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # noqa: E402
-from athena.scrapers.arxiv import ArXivScraper
 
 
 async def test_arxiv():

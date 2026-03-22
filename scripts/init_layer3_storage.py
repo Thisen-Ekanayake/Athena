@@ -1,3 +1,5 @@
+from athena.core.models import ReferenceEmbedding
+from athena.database.db import SessionLocal
 import sys
 import os
 import requests
@@ -5,10 +7,9 @@ import requests
 # Ensure athena is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from athena.database.db import SessionLocal
-from athena.core.models import ReferenceEmbedding
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+
 
 def init_qdrant_comments():
     try:
@@ -29,6 +30,7 @@ def init_qdrant_comments():
     except Exception as e:
         print(f"Error connecting to Qdrant: {e}")
 
+
 def seed_reference_embeddings():
     # We will seed 2 dummy positive and 2 dummy negative embeddings representing the 10 mentioned in the spec
     # to satisfy the DB persistence requirement without hitting the OpenAI API for this initialization script.
@@ -40,19 +42,36 @@ def seed_reference_embeddings():
             return
 
         dummy_vector = [0.0] * 1536
-        
+
         refs = [
-            ReferenceEmbedding(label="positive", text_content="Such a great breakthrough in efficiency.", embedding=dummy_vector),
-            ReferenceEmbedding(label="positive", text_content="This paper solves a major bottleneck in the field.", embedding=dummy_vector),
-            ReferenceEmbedding(label="negative", text_content="The methodology is flawed and results are cherry-picked.", embedding=dummy_vector),
-            ReferenceEmbedding(label="negative", text_content="Hard to reproduce, code does not work.", embedding=dummy_vector)
+            ReferenceEmbedding(
+                label="positive",
+                text_content="Such a great breakthrough in efficiency.",
+                embedding=dummy_vector
+            ),
+            ReferenceEmbedding(
+                label="positive",
+                text_content="This paper solves a major bottleneck in the field.",
+                embedding=dummy_vector
+            ),
+            ReferenceEmbedding(
+                label="negative",
+                text_content="The methodology is flawed and results are cherry-picked.",
+                embedding=dummy_vector
+            ),
+            ReferenceEmbedding(
+                label="negative",
+                text_content="Hard to reproduce, code does not work.",
+                embedding=dummy_vector
+            )
         ]
-        
+
         db.add_all(refs)
         db.commit()
         print("Successfully seeded reference embeddings.")
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     init_qdrant_comments()

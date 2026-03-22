@@ -5,7 +5,6 @@ DB session, Redis client, and JWT auth middleware.
 """
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
 import redis as redis_lib
 import jose
 from jose import jwt
@@ -14,6 +13,7 @@ from athena.database.db import SessionLocal
 from athena.api.config import settings
 
 # ── DB Session ──────────────────────────────────────────
+
 
 def get_db():
     """Yield a SQLAlchemy session per request."""
@@ -95,4 +95,3 @@ def get_current_user_required(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token",
         )
-

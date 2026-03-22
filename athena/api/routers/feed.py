@@ -5,18 +5,17 @@ GET /api/v1/feed — paginated, sorted, filtered content feed.
 """
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func, desc, asc
+from sqlalchemy import select, func, desc
 import redis as redis_lib
 
 from athena.api.deps import get_db, get_redis
 from athena.api.cache import cache_get, cache_set
 from athena.api.config import settings
 from athena.api.schemas import (
-    FeedResponse, FeedItemResponse, PaginationInfo,
-    SourceInfo, ClusterInfo,
+    FeedResponse,
 )
 from athena.core.models import (
-    ContentItem, Source, Cluster, ItemLink, ContentCategory,
+    ContentItem, Source, Cluster, ItemLink,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["Feed"])

@@ -1,12 +1,11 @@
-import asyncio
+from athena.core.models import Source, SourceType, SourceCategory
+from athena.database.db import SessionLocal
 import sys
 import os
 
 # Ensure athena is in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from athena.database.db import SessionLocal
-from athena.core.models import Source, SourceType, SourceCategory
 
 COMPANY_FEEDS = [
     {"name": "OpenAI Research", "url": "https://openai.com/blog/rss/"},
@@ -17,6 +16,7 @@ COMPANY_FEEDS = [
     {"name": "Anthropic", "url": "https://www.anthropic.com/feed.xml"},
     {"name": "Apple Machine Learning", "url": "https://machinelearning.apple.com/feed.xml"},
 ]
+
 
 def seed_feeds():
     db = SessionLocal()
@@ -37,11 +37,12 @@ def seed_feeds():
                 print(f"Added company feed: {feed['name']}")
             else:
                 print(f"Feed already exists: {feed['name']}")
-        
+
         db.commit()
         print("Company feeds seeding complete.")
     finally:
         db.close()
+
 
 if __name__ == "__main__":
     seed_feeds()

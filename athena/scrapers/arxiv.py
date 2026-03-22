@@ -18,7 +18,6 @@ _LAST_ARXIV_CALL_TIME = 0.0
 _ARXIV_LOCK = asyncio.Lock()
 
 
-
 class ArXivScraper(BaseScraper):
     BASE_URL = "https://export.arxiv.org/api/query"
     NAMESPACE = {'atom': 'http://www.w3.org/2005/Atom'}
@@ -41,10 +40,10 @@ class ArXivScraper(BaseScraper):
                     elapsed = now - _LAST_ARXIV_CALL_TIME
                     if elapsed < 0.34:  # 3 requests per second limit
                         await asyncio.sleep(0.34 - elapsed)
-                    
+
                     response = await client.get(self.BASE_URL, params=params, timeout=30.0)
                     _LAST_ARXIV_CALL_TIME = time.time()
-                    
+
                 response.raise_for_status()
                 root = ET.fromstring(response.text)
                 return root.findall('atom:entry', self.NAMESPACE)

@@ -4,7 +4,6 @@ Athena Layer 5 — Unified FastAPI Application
 Entry point that mounts all API routers, configures CORS,
 and wires up DB + Redis connections.
 """
-from contextlib import contextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger

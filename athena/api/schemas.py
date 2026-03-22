@@ -6,7 +6,7 @@ Response models for all API endpoints, matching the plan document Section 3.4.
 from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict
 
 
 # ── Nested components ───────────────────────────────────
@@ -43,7 +43,6 @@ class FeedItemResponse(BaseModel):
     related_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
-
 
 
 class PaginationInfo(BaseModel):
@@ -156,7 +155,6 @@ class SourceResponse(BaseModel):
     consecutive_failures: int = 0
 
     model_config = ConfigDict(from_attributes=True)
-
 
 
 class SourcePreviewResponse(BaseModel):
