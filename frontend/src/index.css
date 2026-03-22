@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #09090b;
+  --color-card: #18181b;
+  --color-border: #27272a;
+  --color-text-primary: #f4f4f5;
+  --color-text-secondary: #a1a1aa;
+  
+  --color-accent-primary: #3b82f6;
+  --color-accent-hover: #2563eb;
+
+  --color-score-high: #22c55e;
+  --color-score-mid: #eab308;
+  --color-score-low: #ef4444;
+
+  --font-sans: "Inter", "system-ui", "sans-serif";
+}
+
+@layer base {
+  body {
+    background-color: var(--color-background);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer components {
+  .card {
+    background-color: var(--color-card);
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    overflow: hidden;
+    transition-property: all;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 200ms;
+  }
+  
+  .card-hover:hover {
+    border-color: #6b7280;
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  }
+  
+  .badge {
+    padding-left: 0.625rem;
+    padding-right: 0.625rem;
+    padding-top: 0.125rem;
+    padding-bottom: 0.125rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 500;
+    border-width: 1px;
+  }
+  
+  .badge-neutral {
+    background-color: #27272a;
+    color: #d4d4d8;
+    border-color: #3f3f46;
+  }
+
+  .badge-blue {
+    background-color: rgb(30 58 138 / 0.3);
+    color: #60a5fa;
+    border-color: #1e40af;
+  }
+
+  .badge-purple {
+    background-color: rgb(88 28 135 / 0.3);
+    color: #c084fc;
+    border-color: #6b21a8;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    font-weight: 500;
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 150ms;
+  }
+  
+  .btn-primary {
+    background-color: var(--color-accent-primary);
+    color: #ffffff;
+  }
+  .btn-primary:hover {
+    background-color: var(--color-accent-hover);
+  }
+
+  .btn-outline {
+    border: 1px solid var(--color-border);
+    background-color: transparent;
+    color: var(--color-text-primary);
+  }
+  .btn-outline:hover {
+    background-color: #27272a;
+  }
+  
+  .btn-icon {
+    padding: 0.5rem;
+    border-radius: 9999px;
+    color: #a1a1aa;
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+    transition-duration: 200ms;
+  }
+  .btn-icon:hover {
+    background-color: #27272a;
+    color: #ffffff;
+  }
+}

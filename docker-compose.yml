@@ -1,4 +1,20 @@
 services:
+  web:
+    build: .
+    command: uvicorn athena.api.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+    depends_on:
+      - db
+      - redis
+      - qdrant
+    volumes:
+      - .:/app
+
   db:
     image: postgres:14
     restart: always
