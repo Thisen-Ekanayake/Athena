@@ -4,6 +4,9 @@ import { Flame, Star, Layers, Search, ChevronDown, ChevronUp, MessageSquare, Ext
 import { useState } from 'react'
 import { ScoreTooltip } from './ScoreTooltip'
 import { useAppStore } from '../store/appStore'
+import { useQAStore } from '../store/qaStore'
+import { QAPanel } from './QAPanel'
+
 
 interface FeedCardProps {
   item: FeedItem
@@ -14,6 +17,12 @@ export function FeedCard({ item, viewMode = 'expanded' }: FeedCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [showScore, setShowScore] = useState(false)
   const setRelatedItemId = useAppStore(s => s.setRelatedItemId)
+  const activeQAItem = useQAStore(s => s.activeItemId)
+  const setActiveQAItem = useQAStore(s => s.setActiveItem)
+  
+  const handleQAPrefetch = () => {
+    fetch(`http://localhost:8000/api/v1/items/${item.id}/qa/prefetch`).catch(() => {})
+  }
   
   const scoreColor = 
     item.score >= 0.8 ? 'text-scoreHigh' : 
@@ -123,10 +132,15 @@ export function FeedCard({ item, viewMode = 'expanded' }: FeedCardProps) {
         </div>
         
         <div className="flex items-center gap-4">
-           <button className="flex items-center gap-1.5 hover:text-accentPrimary transition-colors">
+           <button 
+             onMouseEnter={handleQAPrefetch}
+             onClick={() => setActiveQAItem(activeQAItem === item.id ? null : item.id)}
+             className="flex items-center gap-1.5 hover:text-accentPrimary transition-colors"
+           >
              <MessageSquare className="w-4 h-4" />
              Ask a question
            </button>
+
            <a 
              href={item.url} 
              target="_blank" 
@@ -137,6 +151,11 @@ export function FeedCard({ item, viewMode = 'expanded' }: FeedCardProps) {
            </a>
         </div>
       </div>
+
+      {/* Conditionally render QAPanel */}
+      {activeQAItem === item.id && (
+        <QAPanel item={item} onClose={() => setActiveQAItem(null)} />
+      )}
     </article>
   )
 }

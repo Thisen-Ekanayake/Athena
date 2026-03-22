@@ -241,3 +241,42 @@ class TrendingBrief(Base):
     generated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     prompt_version = Column(Integer, nullable=False)
     source_item_ids = Column(ARRAY(PG_UUID(as_uuid=True)), default=[])
+
+
+class QAFetchCache(Base):
+    """Caches fetch status and metadata for Q&A features."""
+    __tablename__ = "qa_fetch_cache"
+
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), primary_key=True)
+    fetch_method = Column(String, nullable=False) # staged | http | playwright | pdf | abstract_only
+    word_count = Column(Integer, default=0)
+    is_partial = Column(Boolean, default=False)
+    last_fetched_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    fetch_latency_ms = Column(Integer, default=0)
+
+    content_item = relationship("ContentItem", backref="qa_fetch_cache")
+
+
+class QAUsageLog(Base):
+    """Audit log for Q&A feature token usage and session history."""
+    __tablename__ = "qa_usage_log"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
+    session_id = Column(String, nullable=False)
+    turn_number = Column(Integer, nullable=False)
+    question_length = Column(Integer, default=0)
+    fetch_method = Column(String, nullable=False)
+    fetch_latency_ms = Column(Integer, default=0)
+    article_tokens = Column(Integer, default=0)
+    history_tokens = Column(Integer, default=0)
+    answer_tokens = Column(Integer, default=0)
+    total_cost_usd = Column(Float, default=0.0)
+    model = Column(String, nullable=False)
+    partial_content = Column(Boolean, default=False)
+    success = Column(Boolean, default=True)
+    error_type = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    content_item = relationship("ContentItem", backref="qa_usage_logs")
+

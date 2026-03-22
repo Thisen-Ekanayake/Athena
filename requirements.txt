@@ -24,3 +24,5 @@ pytest-asyncio
 flake8
 tiktoken
 python-jose[cryptography]
+beautifulsoup4
+pdfplumber
