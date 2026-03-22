@@ -12,7 +12,7 @@ import redis as redis_lib
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem
 from athena.pipeline.preprocessing import preprocess
-from athena.pipeline.tasks import celery_app
+from athena.pipeline.celery_app import celery_app
 
 # Config
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")

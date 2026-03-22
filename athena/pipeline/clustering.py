@@ -12,7 +12,7 @@ from uuid import UUID
 
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem, Cluster, ItemLink, ClusterRunLog
-from athena.pipeline.tasks import celery_app
+from athena.pipeline.celery_app import celery_app
 
 # Config
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")

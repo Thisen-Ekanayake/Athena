@@ -26,3 +26,6 @@ tiktoken
 python-jose[cryptography]
 beautifulsoup4
 pdfplumber
+umap-learn
+hdbscan
+scikit-learn

@@ -19,8 +19,12 @@ class PlaywrightScraper(BaseScraper):
     clean body text of the articles.
     """
 
-    async def fetch(self, url: str) -> List[ContentItemCreate]:
-        items = []
+    async def fetch(self, url: str) -> List[dict]:
+        """
+        Fetch RSS entries and for each, fetch the full page HTML using Playwright.
+        Returns a list of raw dictionaries containing metadata and HTML content.
+        """
+        raw_items = []
         logger.info(f"Fetching feed for Playwright: {url}")
         feed = feedparser.parse(url)
 
@@ -31,7 +35,7 @@ class PlaywrightScraper(BaseScraper):
             )
             page = await context.new_page()
 
-            for entry in feed.entries[:10]:  # Limit to 10 latest to avoid long crawls
+            for entry in feed.entries[:10]:
                 try:
                     title = html.unescape(entry.get('title', 'Unknown').strip())
                     link = entry.get('link', '').strip()
@@ -55,39 +59,56 @@ class PlaywrightScraper(BaseScraper):
                         logger.warning(f"Timeout or error loading {link}, skipping: {goto_err}")
                         continue
 
-                    article = Article(url=link)
-                    article.set_html(page_html)
-                    article.parse()
-
-                    text_content = article.text.strip()
-                    if not text_content:
-                        continue
-
-                    authors = article.authors if article.authors else []
+                    authors = [a.get('name') for a in entry.get('authors', []) if a.get('name')]
                     if not authors and entry.get('author'):
                         authors = [entry.author]
 
-                    content_hash = self.generate_content_hash(f"{title}|{text_content}")
-
-                    item = ContentItemCreate(
-                        source_id=self.source_id,
-                        title=title,
-                        url=link,
-                        published_at=published_at,
-                        authors=authors,
-                        abstract=text_content[:800],  # using text preview as abstract
-                        category=ContentCategory.COMMUNITY_BLOG.value,
-                        content_hash=content_hash,
-                        extra_data={"feed_link": url, "full_text_scraped": True}
-                    )
-                    items.append(item)
+                    raw_items.append({
+                        "title": title,
+                        "link": link,
+                        "published_at": published_at,
+                        "page_html": page_html,
+                        "authors": authors,
+                        "feed_url": url
+                    })
                 except Exception as e:
-                    logger.error(f"Error scraping {entry.get('link')} with Playwright: {e}")
+                    logger.error(f"Error fetching {entry.get('link')} with Playwright: {e}")
                     continue
 
             await browser.close()
 
-        if not items:
-            raise Exception(f"Failed to scrape any items using Playwright from {url}.")
+        return raw_items
 
-        return items
+    def parse(self, raw: dict) -> ContentItemCreate:
+        """
+        Extract the article body from the raw HTML using Newspaper3k.
+        """
+        link = raw['link']
+        title = raw['title']
+        page_html = raw['page_html']
+
+        article = Article(url=link)
+        article.set_html(page_html)
+        article.parse()
+
+        text_content = article.text.strip()
+        if not text_content:
+            raise ValueError(f"No text content could be extracted from {link}")
+
+        authors = raw['authors']
+        if not authors and article.authors:
+            authors = article.authors
+
+        content_hash = self.generate_content_hash(f"{title}|{text_content}")
+
+        return ContentItemCreate(
+            source_id=self.source_id,
+            title=title,
+            url=link,
+            published_at=raw['published_at'],
+            authors=authors,
+            abstract=text_content[:800],
+            category=ContentCategory.COMMUNITY_BLOG.value,
+            content_hash=content_hash,
+            extra_data={"feed_link": raw['feed_url'], "full_text_scraped": True}
+        )

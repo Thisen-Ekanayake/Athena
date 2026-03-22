@@ -20,7 +20,10 @@ def run():
         print(f"Found {len(sources)} active sources.")
         for source in sources:
             print(f"Crawling {source.name}...")
-            await _crawl_source_async(str(source.id))
+            try:
+                await _crawl_source_async(str(source.id))
+            except Exception as e:
+                print(f"Failed to crawl {source.name}: {e}")
 
     asyncio.run(main())
     print("Crawl Complete.")
