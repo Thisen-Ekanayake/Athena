@@ -187,3 +187,48 @@ SELECT id, name, type, category FROM sources;
 -- View recent content titles
 SELECT title, published_at FROM content_items ORDER BY published_at DESC LIMIT 5;
 ```
+
+## 8. Running the Application End-to-End
+
+### 8.1. Start the Backend API
+
+The backend API provides the endpoints for the frontend application. It can be run either via Docker or locally.
+
+**Option A: Running locally (Development)**
+Ensure your virtual environment is active and infrastructure (DB, Redis, Qdrant) is running, then start the FastAPI server:
+```bash
+source venv/bin/activate
+uvicorn athena.api.main:app --host 0.0.0.0 --port 8000 --reload
+```
+The API will be available at `http://localhost:8000`. You can view the interactive API documentation at `http://localhost:8000/docs`.
+
+**Option B: Using Docker Compose**
+The `web` service in `docker-compose.yml` automatically starts the API when you run `docker-compose up -d`.
+
+### 8.2. Start the Frontend Application
+
+The frontend is a React application built with Vite. To open it:
+
+```bash
+# Open a new terminal
+cd frontend
+npm install   # (Only needed the first time)
+npm run dev
+```
+
+The frontend will be available at `http://localhost:5173` (or another port specified by Vite in the console).
+
+## 9. Running Tests
+
+The project uses `pytest` for the backend test suite. Make sure your virtual environment is active and your infrastructure containers are running.
+
+```bash
+# Run all tests
+pytest tests/
+
+# Run tests with verbose output
+pytest -v tests/
+
+# Run a specific test file
+pytest tests/test_api.py
+```
