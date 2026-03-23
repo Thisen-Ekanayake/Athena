@@ -147,7 +147,7 @@ async def _enrich_paper_async(url: str, arxiv_id: str):
 
     # Strip version suffix (e.g. 2403.00001v1 -> 2403.00001) as enrichment APIs prefer base IDs
     base_arxiv_id = re.sub(r'v\d+$', '', arxiv_id)
-    
+
     logger.info(f"Enriching paper: {base_arxiv_id} (original: {arxiv_id})")
     ss_data = await ss_enricher.fetch_paper_metrics(base_arxiv_id)
     pwc_data = await pwc_enricher.fetch_paper_artifacts(base_arxiv_id)
