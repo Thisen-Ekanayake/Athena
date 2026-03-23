@@ -24,7 +24,7 @@ Then, install the Playwright browsers:
 playwright install chromium
 ```
 
-Create a `.env` file from the example:
+Create a `.env` file from the example and ensure you have the necessary API keys (especially `SEMANTIC_SCHOLAR_API_KEY` for paper enrichment):
 
 ```bash
 cp .env.example .env
@@ -32,16 +32,16 @@ cp .env.example .env
 
 ## 2. Start Infrastructure
 
-Start the PostgreSQL, Redis, and Qdrant services using Docker Compose:
+Start the PostgreSQL, Redis, and Qdrant services using Docker Compose. This is **mandatory** for the backend and workers to function:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 Verify that the services are running:
 
 ```bash
-docker-compose ps
+docker compose ps
 ```
 
 ## 3. Initialize and Seed
@@ -99,12 +99,11 @@ Sources and Item Counts:
   [SCRAPE] LessWrong: ~10
 ```
 
-### Verifying Enrichment Data (Phase 1)
-Check if arXiv papers were enriched with citation counts from Semantic Scholar:
+Check if arXiv papers were enriched with citation counts from Semantic Scholar and benchmarks from Papers With Code:
 ```bash
 python3 scripts/view_db.py -s "ArXiv" -n 5
 ```
-Look for the `extra_data.semantic_scholar` or non-zero `citation_count` fields.
+Look for the `extra_data.semantic_scholar` or `extra_data.paperswithcode` fields. Note that ArXiv IDs are automatically normalized to remove version suffixes (e.g. `2401.00001v1` becomes `2401.00001`) for better API compatibility.
 
 ### Verifying Fetch Logs (Phase 3)
 Fetch logs are written to the `fetch_logs` table after every run. Check them with:
@@ -232,3 +231,20 @@ pytest -v tests/
 # Run a specific test file
 pytest tests/test_api.py
 ```
+
+## 10. Troubleshooting
+
+### Backend Returns 500 Error
+This is usually caused by the database services not running. Ensure you have run:
+```bash
+docker compose up -d
+```
+And verify with `docker compose ps` that `athena-db-1`, `athena-redis-1`, and `athena-qdrant-1` are all "Up".
+
+### Celery Worker Not Processing Enrichment
+1. Ensure Redis is running and accessible.
+2. Check that the `SEMANTIC_SCHOLAR_API_KEY` is set in your `.env` file.
+3. ArXiv enrichment requires the worker to be running in a separate terminal with `--pool=threads`.
+
+### Frontend Cannot Connect to Backend
+Ensure the backend is running on `http://localhost:8000`. If you are running the backend in Docker, check the port mapping in `docker-compose.yml`.
