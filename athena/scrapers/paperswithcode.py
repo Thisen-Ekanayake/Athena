@@ -10,10 +10,17 @@ class PapersWithCodeEnricher:
         """
         Fetch GitHub repos and benchmark scores for a given arXiv ID.
         """
-        async with httpx.AsyncClient() as client:
+        headers = {
+            "User-Agent": "Athena-Scraper/1.0",
+            "Accept": "application/json"
+        }
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
             try:
                 # 1. Find the paper on PWC using arxiv_id
                 response = await client.get(f"{self.BASE_URL}/papers/", params={"arxiv_id": arxiv_id}, timeout=10.0)
+                if response.status_code != 200 or "application/json" not in response.headers.get("content-type", ""):
+                    logger.debug(f"PapersWithCode: Invalid response for arXiv:{arxiv_id} (Status: {response.status_code})")
+                    return None
                 response.raise_for_status()
                 data = response.json()
 
