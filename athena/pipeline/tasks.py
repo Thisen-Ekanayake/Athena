@@ -3,6 +3,7 @@ import os
 import time
 import asyncio
 import hashlib
+import re
 import redis as redis_lib
 from typing import Optional
 from athena.database.operations import get_active_sources, save_content_items
@@ -144,9 +145,12 @@ async def _enrich_paper_async(url: str, arxiv_id: str):
     ss_enricher = SemanticScholarEnricher()
     pwc_enricher = PapersWithCodeEnricher()
 
-    logger.info(f"Enriching paper: {arxiv_id}")
-    ss_data = await ss_enricher.fetch_paper_metrics(arxiv_id)
-    pwc_data = await pwc_enricher.fetch_paper_artifacts(arxiv_id)
+    # Strip version suffix (e.g. 2403.00001v1 -> 2403.00001) as enrichment APIs prefer base IDs
+    base_arxiv_id = re.sub(r'v\d+$', '', arxiv_id)
+
+    logger.info(f"Enriching paper: {base_arxiv_id} (original: {arxiv_id})")
+    ss_data = await ss_enricher.fetch_paper_metrics(base_arxiv_id)
+    pwc_data = await pwc_enricher.fetch_paper_artifacts(base_arxiv_id)
 
     citation_count = ss_data.get("citation_count", 0) if ss_data else 0
     extra_data = {

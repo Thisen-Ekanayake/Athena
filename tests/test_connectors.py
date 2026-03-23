@@ -130,14 +130,20 @@ class TestPapersWithCodeEnricher:
         enricher = PapersWithCodeEnricher()
 
         mock_paper_resp = MagicMock()
+        mock_paper_resp.status_code = 200
+        mock_paper_resp.headers = {"content-type": "application/json"}
         mock_paper_resp.json.return_value = {"results": [{"id": "test-paper"}]}
         mock_paper_resp.raise_for_status = MagicMock()
 
         mock_repos_resp = MagicMock()
+        mock_repos_resp.status_code = 200
+        mock_repos_resp.headers = {"content-type": "application/json"}
         mock_repos_resp.json.return_value = {"results": []}
         mock_repos_resp.raise_for_status = MagicMock()
 
         mock_results_resp = MagicMock()
+        mock_results_resp.status_code = 200
+        mock_results_resp.headers = {"content-type": "application/json"}
         mock_results_resp.json.return_value = {"results": []}
         mock_results_resp.raise_for_status = MagicMock()
 
