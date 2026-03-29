@@ -1,32 +1,31 @@
-FROM python:3.11-slim
+# Use the full Python image which already includes build tools (gcc, g++, make, etc.)
+# This is larger (~330MB vs ~50MB) but builds MUCH faster and more reliably.
+FROM python:3.11-bookworm
+
+# Set build-time environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
-# Install system dependencies
-# - gcc, g++, build-essential: required for compiling C/C++ extensions
-#   (hdbscan, umap-learn, scipy, scikit-learn)
-# - libpq-dev: required for psycopg2-binary
-# - libffi-dev, libssl-dev: required for cryptography / python-jose
-# - python3-dev: required for packages that compile against Python headers
+# Install only the necessary runtime libraries not already in the full image
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    build-essential \
     libpq-dev \
-    libffi-dev \
-    libssl-dev \
-    python3-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
-
-# Upgrade pip to latest to avoid resolution issues
-RUN pip install --no-cache-dir --upgrade pip
 
 # Install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
 
-# Copy source code
+# (Optional) Install Playwright browsers if your scrapers use them
+# RUN playwright install --with-deps chromium
+
+# Copy the rest of the application
 COPY . .
 
-# Default command: run the Celery worker
+# Default command
 CMD ["celery", "-A", "athena.pipeline.tasks", "worker", "--loglevel=info", "-B"]

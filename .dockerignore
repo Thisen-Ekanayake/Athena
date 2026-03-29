@@ -1,0 +1,17 @@
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.venv
+venv
+.env
+.git
+.gitignore
+frontend/node_modules
+dist
+.pytest_cache
+.ipynb_checkpoints
+athena.egg-info
+fetch_logs
+postgres_data
+qdrant_data
