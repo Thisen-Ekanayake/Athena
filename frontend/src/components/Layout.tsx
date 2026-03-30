@@ -1,82 +1,87 @@
-import { Outlet, NavLink } from 'react-router-dom'
-import { LayoutGrid, Settings, Layers, Menu, Flame } from 'lucide-react'
-import { useState } from 'react'
-import { SearchInput } from './SearchInput'
+import { Outlet } from 'react-router-dom'
+import { Menu, X } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Sidebar } from './Sidebar'
 import { RelatedSidebar } from './RelatedSidebar'
+import { AnimatePresence, motion } from 'framer-motion'
 
 export function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [isCondensed, setIsCondensed] = useState(false)
 
-  const navItems = [
-    { to: '/', icon: LayoutGrid, label: 'Feed' },
-    { to: '/trending', icon: Flame, label: 'Trending' },
-    { to: '/clusters', icon: Layers, label: 'Topics' },
-  ]
+  useEffect(() => {
+    const handleResize = () => {
+      const width = window.innerWidth
+      setIsCondensed(width >= 768 && width < 1100)
+    }
+
+    handleResize()
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-background">
-      {/* Mobile Header */}
-      <header className="md:hidden flex items-center justify-between p-4 border-b border-border bg-card">
-        <h1 className="text-xl font-bold tracking-tight text-white">Athena</h1>
-        <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="p-2 text-textSecondary">
-          <Menu className="w-6 h-6" />
+    <div className="min-h-screen flex text-text-primary selection:bg-accent-primary/30">
+      {/* Mobile Top Header */}
+      <header className="md:hidden fixed top-0 left-0 right-0 h-16 flex items-center justify-between px-6 z-50 bg-glass-fill backdrop-blur-glass border-b border-border-subtle">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-md bg-accent-primary/20 border border-accent-primary/30 flex items-center justify-center">
+            <div className="w-3 h-3 bg-accent-primary rounded-sm" />
+          </div>
+          <h1 className="text-lg font-display font-bold tracking-tight">Athena</h1>
+        </div>
+        <button 
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)} 
+          className="p-2 -mr-2 text-text-secondary hover:text-text-primary transition-colors"
+        >
+          {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
         </button>
       </header>
 
-      {/* Sidebar Navigation */}
-      <aside className={`
-        ${mobileMenuOpen ? 'flex' : 'hidden'} 
-        md:flex w-full md:w-64 border-r border-border bg-card flex-shrink-0 flex-col h-auto md:h-screen md:sticky md:top-0 z-20
-      `}>
-        <div className="p-6 hidden md:block">
-          <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-br from-white to-zinc-400 bg-clip-text text-transparent">Athena</h1>
-          <p className="text-xs text-textSecondary mt-1">Research Intelligence</p>
-        </div>
+      {/* Sidebar - Desktop & Tablet */}
+      <Sidebar 
+        isOpen={mobileMenuOpen} 
+        onClose={() => setMobileMenuOpen(false)} 
+        isCondensed={isCondensed} 
+      />
 
-        <div className="px-4 py-2">
-          <SearchInput />
-        </div>
-
-        <nav className="flex-1 px-4 py-4 md:py-2 space-y-1">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${
-                  isActive 
-                    ? 'bg-accentPrimary/10 text-accentPrimary' 
-                    : 'text-textSecondary hover:bg-zinc-800 hover:text-white'
-                }`
-              }
-              onClick={() => setMobileMenuOpen(false)}
-            >
-              <item.icon className="w-5 h-5" />
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-
-        <div className="p-4 border-t border-border/50">
-          <NavLink
-            to="/settings"
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2.5 rounded-md text-sm font-medium transition-colors ${
-                isActive ? 'text-white bg-zinc-800' : 'text-textSecondary hover:text-white hover:bg-zinc-800'
-              }`
-            }
+      {/* Mobile Sidebar Overlay */}
+      <AnimatePresence>
+        {mobileMenuOpen && (
+          <motion.div
+            initial={{ opacity: 0, x: -100 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -100 }}
+            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed inset-0 z-40 md:hidden bg-glass-fill-active backdrop-blur-glass-heavy border-r border-border-glow"
           >
-            <Settings className="w-5 h-5" />
-            Settings
-          </NavLink>
-        </div>
-      </aside>
+            <div className="flex flex-col h-full pt-20 px-4">
+              <Sidebar 
+                isOpen={mobileMenuOpen} 
+                onClose={() => setMobileMenuOpen(false)} 
+                isCondensed={false} 
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Main Content Area */}
-      <main className="flex-1 min-w-0 flex flex-col h-full md:h-screen relative overflow-y-auto">
-        <Outlet />
-        <RelatedSidebar />
+      <main className="flex-1 min-w-0 flex flex-col md:flex-row relative">
+        <div className="flex-1 w-full max-w-[1600px] mx-auto flex flex-col md:flex-row">
+          <div className="flex-1 pt-20 md:pt-0 overflow-y-auto overflow-x-hidden custom-scrollbar">
+            <div className="px-6 py-8 md:px-12 md:py-12">
+              <Outlet />
+            </div>
+          </div>
+          
+          {/* Related Sidebar - only visible on wide screens (> 1400px) */}
+          <div className="hidden min-[1400px]:block">
+            <RelatedSidebar />
+          </div>
+        </div>
       </main>
     </div>
   )
 }
+

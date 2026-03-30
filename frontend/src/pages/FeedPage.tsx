@@ -4,10 +4,11 @@ import { FeedTopBar } from '../components/FeedTopBar'
 import { FeedCard } from '../components/FeedCard'
 import { CardSkeleton } from '../components/CardSkeleton'
 import { Alert } from '../components/shared/Alert'
-import { RelatedSidebar } from '../components/RelatedSidebar'
 import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { Flame, ArrowLeft, Database } from 'lucide-react'
+import { Layers, ArrowLeft, Orbit } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import React from 'react'
 
 export function FeedPage() {
   const { sourceId } = useParams()
@@ -24,7 +25,6 @@ export function FeedPage() {
     error,
   } = useFeed(sort, currentCategory, dateRange, sourceId)
 
-  // Implement simple infinite scroll observer
   useEffect(() => {
     let fetching = false
     const handleScroll = async () => {
@@ -40,7 +40,7 @@ export function FeedPage() {
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
 
   return (
-    <div className="flex-1 relative">
+    <div className="flex-1 flex flex-col min-h-screen">
       <FeedTopBar 
         sort={sort} setSort={setSort}
         category={currentCategory} setCategory={setCategory}
@@ -48,89 +48,89 @@ export function FeedPage() {
         viewMode={viewMode} setViewMode={setViewMode}
       />
       
-      {sourceId && data?.pages[0]?.items[0] && (
-        <div className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex flex-col fade-in">
-           <Link to="/" className="text-textSecondary hover:text-white text-sm flex items-center mb-2 w-fit">
-             <ArrowLeft className="w-4 h-4 mr-1" /> Back to Main Feed
-           </Link>
-           <div className="flex items-center">
-             <Database className="w-5 h-5 text-accentPrimary mr-2" />
-             <h2 className="text-lg font-medium text-white">
-               Source: {data.pages[0].items[0].source.name}
-             </h2>
-           </div>
-        </div>
-      )}
-
-      {sourceId && data?.pages[0]?.items.length === 0 && status === 'success' && (
-        <div className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex flex-col fade-in">
-           <Link to="/" className="text-textSecondary hover:text-white text-sm flex items-center mb-2 w-fit">
-             <ArrowLeft className="w-4 h-4 mr-1" /> Back to Main Feed
-           </Link>
-           <h2 className="text-lg font-medium text-white">Viewing Unknown Source</h2>
-        </div>
-      )}
-      
-      {/* Hide trending banner if viewing a source, as trending sort doesn't really apply properly, though it can */}
-      {sort === 'trending' && !sourceId && (
-        <div className="bg-gradient-to-r from-purple-900/40 to-indigo-900/40 border-b border-purple-800/30 px-6 py-4 flex items-center justify-center fade-in">
-           <Flame className="w-5 h-5 text-purple-400 mr-2" />
-           <p className="text-sm font-medium text-purple-100">
-             Trending Content: Items gaining sudden velocity and cross-cluster attention.
-           </p>
-        </div>
-      )}
-      
-      <div className="p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto space-y-6">
-        {status === 'pending' ? (
-          <div className="space-y-6 flex flex-col items-stretch fade-in">
-            <CardSkeleton />
-            <CardSkeleton />
-            <CardSkeleton />
-          </div>
-        ) : status === 'error' ? (
-          <Alert type="error" title="Error loading feed">
-            {(error as Error).message}
-          </Alert>
-        ) : (
-          <>
-            {data?.pages.map((group, i) => (
-              <div key={i} className="space-y-6 flex flex-col items-stretch fade-in">
-                {group.items.map(item => (
-                  <FeedCard key={item.id} item={item} viewMode={viewMode} />
-                ))}
-              </div>
-            ))}
-            
-            {isFetchingNextPage && (
-              <div className="flex justify-center p-6">
-                <div className="w-6 h-6 rounded-full border-4 border-accentPrimary/20 border-t-accentPrimary animate-spin" />
-              </div>
-            )}
-            
-            {!hasNextPage && data?.pages[0]?.items.length > 0 && (
-               <div className="text-center text-textSecondary text-sm py-12 opacity-50">
-                 You've reached the end of the feed.
-               </div>
-            )}
-
-            {data?.pages[0]?.items.length === 0 && (
-               <div className="text-center text-textSecondary py-24">
-                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-zinc-900 mb-4 border border-zinc-800">
-                   <svg className="w-8 h-8 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                   </svg>
+      <div className="flex-1 w-full max-w-[1200px] mx-auto px-6 py-8 md:px-12 md:py-12">
+        <AnimatePresence mode="wait">
+          {sourceId && data?.pages[0]?.items[0] && (
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="glass-float rounded-2xl px-6 py-5 flex flex-col mb-10 border border-accent-secondary/20"
+            >
+               <Link to="/" className="text-accent-secondary hover:text-white text-[11px] font-bold tracking-widest flex items-center mb-3 w-fit uppercase transition-all">
+                 <ArrowLeft className="w-3.5 h-3.5 mr-1.5" /> Back to Main Feed
+               </Link>
+               <div className="flex items-center gap-3">
+                 <div className="w-10 h-10 rounded-xl bg-accent-secondary/10 flex items-center justify-center text-accent-secondary border border-accent-secondary/20 shadow-glow-secondary">
+                   <Layers className="w-5 h-5" />
                  </div>
-                 <h3 className="text-lg font-medium text-white mb-2">No items found</h3>
-                 <p className="max-w-sm mx-auto">There are currently no items matching this category or sort order.</p>
+                 <div>
+                   <h2 className="text-xl font-display font-bold text-white tracking-tight">
+                     {data.pages[0].items[0].source.name}
+                   </h2>
+                   <p className="text-[11px] text-text-muted font-medium uppercase tracking-[0.2em]">Source Intelligence Stream</p>
+                 </div>
                </div>
-            )}
-          </>
-        )}
-      </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-      {/* Render RelatedSidebar on top/alongside depending on its own CSS handling */}
-      <RelatedSidebar />
+        <div className="space-y-6">
+          {status === 'pending' ? (
+            <div className="grid gap-6">
+              {[1, 2, 3].map(i => <CardSkeleton key={i} />)}
+            </div>
+          ) : status === 'error' ? (
+            <Alert type="error" title="Ingestion Failure">
+              {(error as Error).message}
+            </Alert>
+          ) : (
+            <div className="grid gap-6">
+              {data?.pages.map((group, i) => (
+                <React.Fragment key={i}>
+                  {group.items.map((item, idx) => (
+                    <FeedCard 
+                      key={item.id} 
+                      item={item} 
+                      viewMode={viewMode} 
+                      index={idx}
+                    />
+                  ))}
+                </React.Fragment>
+              ))}
+              
+              {isFetchingNextPage && (
+                 <div className="flex justify-center p-12">
+                   <div className="relative">
+                     <div className="w-10 h-10 rounded-full border-2 border-accent-primary/20 animate-ping absolute inset-0" />
+                     <div className="w-10 h-10 rounded-full border-2 border-accent-primary border-t-transparent animate-spin relative" />
+                   </div>
+                 </div>
+              )}
+              
+              {!hasNextPage && data?.pages[0]?.items.length > 0 && (
+                 <div className="text-center py-20 opacity-50">
+                   <div className="flex items-center justify-center gap-3 text-[11px] font-display font-bold tracking-[0.3em] text-text-ghost uppercase">
+                     <div className="h-px w-20 bg-gradient-to-r from-transparent to-border-glow" />
+                     SYNCHRONIZATION COMPLETE
+                     <div className="h-px w-20 bg-gradient-to-l from-transparent to-border-glow" />
+                   </div>
+                 </div>
+              )}
+
+              {data?.pages[0]?.items.length === 0 && (
+                 <div className="flex flex-col items-center justify-center py-32 text-center opacity-40">
+                   <div className="w-20 h-20 rounded-full glass-void border border-white/5 flex items-center justify-center mb-6 shadow-inner">
+                     <Orbit className="w-10 h-10 text-text-ghost animate-pulse" />
+                   </div>
+                   <h3 className="text-xl font-display font-medium text-white mb-2">The void is silent</h3>
+                   <p className="max-w-xs text-sm text-text-muted">No intelligence matches your current resonance parameters.</p>
+                 </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
