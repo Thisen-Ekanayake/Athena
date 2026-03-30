@@ -1,4 +1,4 @@
-import { Newspaper, Flame, Clock } from 'lucide-react'
+import { Newspaper, Flame, Clock, Filter, List, Grid2X2 } from 'lucide-react'
 
 interface TopBarProps {
   sort: 'score' | 'date' | 'trending'
@@ -14,31 +14,30 @@ interface TopBarProps {
 export function FeedTopBar({ 
   sort, setSort, 
   category, setCategory,
-  dateRange, setDateRange
+  dateRange, setDateRange,
+  viewMode, setViewMode
 }: TopBarProps) {
   
   const categories = [
-    { id: null, label: 'All' },
+    { id: null, label: 'All Intelligence' },
     { id: 'paper', label: 'Papers' },
-    { id: 'company_blog', label: 'Company Blogs' },
-    { id: 'community_blog', label: 'Community Blogs' }
+    { id: 'company_blog', label: 'Tech Blogs' },
+    { id: 'community_blog', label: 'Community' }
   ]
 
   return (
-    <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-md border-b border-border px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="sticky top-0 z-20 glass-base border-b border-white/5 px-6 py-3 flex flex-col md:flex-row md:items-center justify-between gap-4 backdrop-blur-xl">
       
       {/* Category Pills */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-2 sm:pb-0 hide-scrollbar">
+      <div className="flex items-center gap-2 overflow-x-auto pb-2 md:pb-0 hide-scrollbar no-scrollbar">
         {categories.map(c => (
           <button
             key={c.id || 'all'}
             onClick={() => setCategory(c.id)}
-            aria-label={`Filter by ${c.label}`}
-            aria-pressed={category === c.id}
-            className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+            className={`whitespace-nowrap px-4 py-1.5 rounded-full text-[11px] font-display font-bold tracking-wider uppercase transition-all duration-300 ${
               category === c.id 
-                ? 'bg-white text-black' 
-                : 'bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800 hover:text-white'
+                ? 'bg-accent-primary text-white shadow-glow-primary' 
+                : 'glass-void hover:glass-float text-text-muted hover:text-text-primary border border-white/5'
             }`}
           >
             {c.label}
@@ -46,53 +45,79 @@ export function FeedTopBar({
         ))}
       </div>
 
-      {/* Sort controls */}
+      {/* Controls Container */}
       <div className="flex items-center gap-3">
-        <select 
-          value={dateRange}
-          onChange={(e) => setDateRange(e.target.value as any)}
-          aria-label="Filter by date range"
-          className="bg-zinc-900 border border-border text-zinc-300 text-xs rounded-md px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-accentPrimary"
-        >
-          <option value="24h">Past 24 Hours</option>
-          <option value="7d">Past Week</option>
-          <option value="30d">Past Month</option>
-          <option value="all">All Time</option>
-        </select>
+        {/* Date Filter */}
+        <div className="relative group">
+          <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-text-ghost">
+            <Filter className="w-3 h-3" />
+          </div>
+          <select 
+            value={dateRange}
+            onChange={(e) => setDateRange(e.target.value as any)}
+            className="appearance-none bg-void/40 border border-white/5 text-text-secondary text-[11px] font-bold rounded-lg pl-8 pr-8 py-2 focus:outline-none focus:border-accent-primary/50 cursor-pointer hover:bg-white/5 transition-all uppercase tracking-tight"
+          >
+            <option value="24h">Velocity: 24H</option>
+            <option value="7d">Velocity: 7D</option>
+            <option value="30d">Velocity: 30D</option>
+            <option value="all">Velocity: INF</option>
+          </select>
+        </div>
         
-        <div className="flex items-center bg-zinc-900 rounded-lg p-1 border border-border" role="group" aria-label="Sort feed">
+        {/* Sort Switcher */}
+        <div className="flex items-center glass-void rounded-lg p-1 border border-white/5">
           <button
             onClick={() => setSort('score')}
-            aria-pressed={sort === 'score'}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              sort === 'score' ? 'bg-zinc-700 text-white shadow' : 'text-zinc-400 hover:text-white'
+            className={`p-1.5 rounded-md transition-all duration-300 ${
+              sort === 'score' ? 'bg-white/10 text-accent-primary shadow-sm' : 'text-text-muted hover:text-text-primary'
             }`}
+            title="Relevance Score"
           >
-            <Newspaper className="w-3.5 h-3.5" />
-            Top
+            <Newspaper className="w-4 h-4" />
           </button>
           <button
             onClick={() => setSort('trending')}
-            aria-pressed={sort === 'trending'}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              sort === 'trending' ? 'bg-zinc-700 text-white shadow' : 'text-zinc-400 hover:text-white'
+            className={`p-1.5 rounded-md transition-all duration-300 ${
+              sort === 'trending' ? 'bg-white/10 text-accent-tertiary shadow-sm' : 'text-text-muted hover:text-text-primary'
             }`}
+            title="Social Signal"
           >
-            <Flame className="w-3.5 h-3.5" />
-            Trending
+            <Flame className="w-4 h-4" />
           </button>
           <button
             onClick={() => setSort('date')}
-            aria-pressed={sort === 'date'}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-              sort === 'date' ? 'bg-zinc-700 text-white shadow' : 'text-zinc-400 hover:text-white'
+            className={`p-1.5 rounded-md transition-all duration-300 ${
+              sort === 'date' ? 'bg-white/10 text-accent-secondary shadow-sm' : 'text-text-muted hover:text-text-primary'
             }`}
+            title="Recency"
           >
-            <Clock className="w-3.5 h-3.5" />
-            Latest
+            <Clock className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* View Mode Toggle */}
+        <div className="flex items-center glass-void rounded-lg p-1 border border-white/5">
+          <button
+            onClick={() => setViewMode('expanded')}
+            className={`p-1.5 rounded-md transition-all duration-300 ${
+              viewMode === 'expanded' ? 'bg-white/10 text-white shadow-sm' : 'text-text-muted hover:text-text-primary'
+            }`}
+            title="Expanded View"
+          >
+            <List className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => setViewMode('compact')}
+            className={`p-1.5 rounded-md transition-all duration-300 ${
+              viewMode === 'compact' ? 'bg-white/10 text-white shadow-sm' : 'text-text-muted hover:text-text-primary'
+            }`}
+            title="Compact View"
+          >
+            <Grid2X2 className="w-4 h-4" />
           </button>
         </div>
       </div>
     </div>
   )
 }
+
