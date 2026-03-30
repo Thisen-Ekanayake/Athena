@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { X, Send, Loader2, AlertCircle } from 'lucide-react'
+import { X, Send, Loader2, AlertCircle, Sparkles, Trash2, MessageSquare } from 'lucide-react'
 import { useQAStore } from '../store/qaStore'
 import { type FeedItem } from '../api/client'
+import { motion, AnimatePresence } from 'framer-motion'
 
 interface QAPanelProps {
   item: FeedItem
   onClose: () => void
 }
+
+const EMPTY_HISTORY: any[] = []
 
 export function QAPanel({ item, onClose }: QAPanelProps) {
   const [inputStr, setInputStr] = useState("")
@@ -14,24 +17,23 @@ export function QAPanel({ item, onClose }: QAPanelProps) {
   const [status, setStatus] = useState<any>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [budgetExceeded, setBudgetExceeded] = useState(false)
-  const [lastQuestion, setLastQuestion] = useState<string>('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   
-  const history = useQAStore(state => state.sessions[item.id] || [])
+  const history = useQAStore(state => state.sessions[item.id]) ?? EMPTY_HISTORY
   const addMessage = useQAStore(state => state.addMessage)
   const updateLastMessage = useQAStore(state => state.updateLastMessage)
   const clearSession = useQAStore(state => state.clearSession)
 
-  // Scroll to bottom when history changes
+  const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [history, isStreaming])
 
-  // Fetch status on mount
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const res = await fetch(`http://localhost:8000/api/v1/items/${item.id}/qa/status`)
+        const res = await fetch(`${apiBase}/api/v1/items/${item.id}/qa/status`)
         const data = await res.json()
         setStatus(data)
       } catch (e) {
@@ -39,25 +41,22 @@ export function QAPanel({ item, onClose }: QAPanelProps) {
       }
     }
     checkStatus()
-  }, [item.id])
+  }, [item.id, apiBase])
 
   const handleSend = async () => {
     if (!inputStr.trim() || isStreaming) return
     const q = inputStr.trim()
+    setInputStr("")
     setErrorMsg(null)
     setBudgetExceeded(false)
-    setLastQuestion(q)
     
-    // Add User message
     addMessage(item.id, { role: 'user', content: q })
-    
-    // Prepare for assistant streaming
     setIsStreaming(true)
     addMessage(item.id, { role: 'assistant', content: '' })
     let currentAnswer = ""
 
     try {
-      const res = await fetch(`http://localhost:8000/api/v1/items/${item.id}/qa`, {
+      const res = await fetch(`${apiBase}/api/v1/items/${item.id}/qa`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: q, history })
@@ -65,9 +64,7 @@ export function QAPanel({ item, onClose }: QAPanelProps) {
 
       if (!res.ok) {
         const errData = await res.json()
-        if (res.status === 429) {
-          setBudgetExceeded(true)
-        }
+        if (res.status === 429) setBudgetExceeded(true)
         throw new Error(errData.detail || 'Q&A request failed')
       }
 
@@ -97,7 +94,7 @@ export function QAPanel({ item, onClose }: QAPanelProps) {
                  currentAnswer += token
                  updateLastMessage(item.id, currentAnswer)
               }
-            } catch(e) { /* ignore parse error on partial chunks if any */ }
+            } catch(e) {}
           }
         }
       }
@@ -118,115 +115,160 @@ export function QAPanel({ item, onClose }: QAPanelProps) {
   }
 
   return (
-    <div className="mt-4 border border-zinc-800 bg-zinc-950 rounded-md overflow-hidden flex flex-col animate-in fade-in slide-in-from-top-2 duration-300">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-zinc-900 border-b border-zinc-800">
-        <div className="flex items-center gap-2">
-           <span className="text-xs font-semibold text-zinc-300">Ask Athena</span>
-           {status && status.status === 'partial' && (
-             <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-orange-500/20 text-orange-400">
-               Partial content (Abstract only)
-             </span>
-           )}
-           {status && status.status === 'unavailable' && (
-             <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-red-500/20 text-red-400">
-               Article unavailable
-             </span>
-           )}
-        </div>
-        <div className="flex items-center gap-3">
-          <button 
-            onClick={() => clearSession(item.id)} 
-             className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-          >
-             Clear
-          </button>
-          <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 max-h-80 overflow-y-auto p-4 space-y-4">
-        {history.length === 0 && (
-          <div className="text-sm text-zinc-500 text-center py-6">
-            Ask any question about this article. The answer will be grounded entirely in the text.
+    <AnimatePresence>
+      <motion.div
+        initial={{ x: '100%' }}
+        animate={{ x: 0 }}
+        exit={{ x: '100%' }}
+        transition={{ duration: 0.36, ease: [0.16, 1, 0.3, 1] }}
+        className="fixed inset-y-0 right-0 z-[60] w-full md:w-[450px] glass-opaque shadow-2xl flex flex-col border-l border-border-glow"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-5 border-b border-border-subtle bg-white/5">
+          <div className="flex flex-col gap-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-accent-primary" />
+              <h2 className="text-sm font-display font-bold tracking-wide text-text-primary uppercase">Research Assistant</h2>
+            </div>
+            <p className="text-[11px] text-text-muted truncate max-w-[300px]">{item.title}</p>
           </div>
-        )}
-        
-        {history.map((msg, idx) => (
-          <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[85%] rounded-lg px-4 py-2 text-sm leading-relaxed ${
-              msg.role === 'user' 
-                ? 'bg-accentPrimary/20 text-accentPrimary border border-accentPrimary/30 rounded-br-none' 
-                : 'bg-zinc-900 text-zinc-200 border border-zinc-800 rounded-bl-none'
-            }`}>
-              <div className="whitespace-pre-wrap">{msg.content}</div>
-              {msg.role === 'assistant' && isStreaming && idx === history.length - 1 && (
-                <span className="inline-block w-1.5 h-3 ml-1 bg-zinc-400 animate-pulse" />
-              )}
-              {msg.role === 'assistant' && (!isStreaming || idx !== history.length - 1) && (
-                <div className="mt-2 pt-2 border-t border-zinc-700/50 text-[10px] text-zinc-500 opacity-80 flex items-center gap-1">
-                  <span>Answer synthesized from:</span>
-                  <span className="font-medium text-zinc-400">{item.source.name}</span>
+          <button 
+            onClick={onClose} 
+            className="p-2 -mr-2 text-text-muted hover:text-text-primary hover:bg-white/5 rounded-full transition-all"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Status Area */}
+        <AnimatePresence>
+          {status && (status.status === 'partial' || status.status === 'unavailable') && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              className="px-6 py-2 bg-accent-warning/10 border-b border-accent-warning/20 flex items-center justify-center"
+            >
+              <div className="flex items-center gap-2 text-[10px] uppercase font-bold text-accent-warning tracking-wider">
+                <AlertCircle className="w-3.5 h-3.5" />
+                {status.status === 'partial' ? 'Abstract-only grounding' : 'Article content unavailable'}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto px-6 py-8 space-y-8 custom-scrollbar">
+          {history.length === 0 && (
+            <div className="h-full flex flex-col items-center justify-center text-center px-8 opacity-40">
+              <div className="w-16 h-16 rounded-3xl bg-accent-primary/10 border border-accent-primary/20 flex items-center justify-center mb-6">
+                <MessageSquare className="w-8 h-8 text-accent-primary" />
+              </div>
+              <h3 className="font-display font-medium text-text-primary mb-2">Contextual Intelligence</h3>
+              <p className="text-[13px] text-text-muted leading-relaxed">
+                Ask specific questions about this article. Answers are grounded directly in the research corpus.
+              </p>
+            </div>
+          )}
+          
+          {history.map((msg, idx) => (
+            <div key={idx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+              <div className={`
+                max-w-[90%] rounded-2xl px-5 py-3.5 text-[14px] leading-relaxed relative
+                ${msg.role === 'user' 
+                  ? 'bg-accent-primary text-white font-medium rounded-tr-none shadow-glow-primary' 
+                  : 'glass-void border border-border-subtle text-text-secondary rounded-tl-none font-mono'}
+              `}>
+                <div className="whitespace-pre-wrap">{msg.content}</div>
+                {msg.role === 'assistant' && isStreaming && idx === history.length - 1 && (
+                  <span className="inline-block w-1.5 h-4 ml-1 bg-accent-primary animate-pulse align-middle" />
+                )}
+              </div>
+              <div className={`mt-2 text-[10px] font-display font-medium tracking-[0.05em] text-text-ghost uppercase`}>
+                {msg.role === 'user' ? 'Direct Query' : 'Assistant Sync'}
+              </div>
+            </div>
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Error Handling */}
+        <AnimatePresence>
+          {(errorMsg || budgetExceeded) && (
+            <motion.div 
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="p-4 mx-6 mb-4 rounded-xl glass border-accent-critical/30 bg-accent-critical/5 shadow-lg"
+            >
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-4 h-4 text-accent-critical flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-[13px] text-accent-critical font-medium mb-1">
+                    {budgetExceeded ? 'Session limit reached' : 'Lumina stream interrupted'}
+                  </p>
+                  <p className="text-[11px] text-text-muted mb-3">
+                    {budgetExceeded ? 'Frequent querying detected. Reset the session to continue.' : errorMsg}
+                  </p>
+                  <div className="flex gap-2">
+                    {budgetExceeded ? (
+                      <button
+                        onClick={() => { clearSession(item.id); setBudgetExceeded(false); setErrorMsg(null) }}
+                        className="px-3 py-1.5 rounded-md bg-accent-critical/20 hover:bg-accent-critical/30 text-accent-critical text-[11px] font-bold transition-all"
+                      >
+                        RESET SESSION
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => { setErrorMsg(null); handleSend() }}
+                        className="px-3 py-1.5 rounded-md bg-accent-primary/20 hover:bg-accent-primary/30 text-accent-primary text-[11px] font-bold transition-all"
+                      >
+                        RETRY STREAM
+                      </button>
+                    )}
+                  </div>
                 </div>
-              )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Input Area */}
+        <div className="p-6 bg-white/3 border-t border-border-subtle backdrop-blur-md">
+          <div className="relative">
+            <textarea
+               value={inputStr}
+               onChange={e => setInputStr(e.target.value)}
+               onKeyDown={handleKeyDown}
+               placeholder="Enter your query..."
+               className="w-full glass-void border border-border-subtle rounded-xl py-4 pl-5 pr-14 text-sm focus:outline-none focus:border-border-glow resize-none h-[80px] custom-scrollbar text-text-primary transition-all shadow-inner"
+               disabled={isStreaming}
+            />
+            <div className="absolute right-3 bottom-3 flex items-center gap-2">
+              <button
+                onClick={() => clearSession(item.id)}
+                title="Clear Session"
+                className="p-2 text-text-ghost hover:text-accent-critical transition-all rounded-lg hover:bg-accent-critical/10"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+              <button
+                 onClick={handleSend}
+                 disabled={!inputStr.trim() || isStreaming}
+                 className="p-2 text-white bg-accent-primary rounded-lg shadow-glow-primary hover:scale-105 active:scale-95 disabled:opacity-50 disabled:scale-100 disabled:shadow-none transition-all"
+              >
+                 {isStreaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+              </button>
             </div>
           </div>
-        ))}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {errorMsg && (
-        <div className="px-4 py-2 bg-red-500/10 border-t border-red-500/20 flex items-center justify-between text-xs text-red-400">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-3 h-3" />
-            {errorMsg}
+          <div className="mt-3 flex justify-between items-center px-1">
+            <span className="text-[10px] font-display font-medium text-text-ghost uppercase tracking-widest">
+              grounded in {item.source.name}
+            </span>
+            <span className="text-[10px] font-mono text-text-ghost">
+              Shift + Enter for new line
+            </span>
           </div>
-          {lastQuestion && !budgetExceeded && (
-            <button
-              onClick={() => { setErrorMsg(null); setInputStr(lastQuestion); handleSend() }}
-              className="px-2.5 py-1 rounded bg-red-500/20 hover:bg-red-500/30 text-red-300 font-medium transition-colors"
-            >
-              Retry
-            </button>
-          )}
         </div>
-      )}
-
-      {budgetExceeded && (
-        <div className="px-4 py-3 bg-orange-500/10 border-t border-orange-500/20 text-xs text-orange-400 text-center">
-          <p className="font-medium">Session limit reached for this article.</p>
-          <button
-            onClick={() => { clearSession(item.id); setBudgetExceeded(false); setErrorMsg(null) }}
-            className="mt-1.5 px-3 py-1 rounded bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 font-medium transition-colors"
-          >
-            Clear session & start fresh
-          </button>
-        </div>
-      )}
-
-      {/* Input */}
-      <div className="p-3 bg-zinc-900/50 border-t border-zinc-800">
-        <div className="relative flex items-center">
-          <textarea
-             value={inputStr}
-             onChange={e => setInputStr(e.target.value)}
-             onKeyDown={handleKeyDown}
-             placeholder="Ask a question about this article..."
-             className="w-full bg-zinc-900 border border-zinc-800 rounded-md py-2 pl-3 pr-10 text-sm focus:outline-none focus:border-accentPrimary/50 resize-none h-10"
-             disabled={isStreaming}
-          />
-          <button
-             onClick={handleSend}
-             disabled={!inputStr.trim() || isStreaming}
-             className="absolute right-2 p-1.5 text-zinc-400 hover:text-accentPrimary disabled:opacity-50 disabled:hover:text-zinc-400 transition-colors"
-          >
-             {isStreaming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-          </button>
-        </div>
-      </div>
-    </div>
+      </motion.div>
+    </AnimatePresence>
   )
 }
