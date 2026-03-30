@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useSources, useToggleSource, useAddSource } from '../api/queries/sources'
 import { Alert } from '../components/shared/Alert'
-import { Check, Orbit, ExternalLink } from 'lucide-react'
+import { Check, Orbit, ExternalLink, Shield, Cpu, Activity, Plus } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
 
 export function SettingsPage() {
   const { data: sources, isLoading: sourcesLoading } = useSources()
@@ -32,169 +33,215 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="p-6 md:p-12 max-w-5xl mx-auto w-full fade-in flex-1 overflow-y-auto">
-      <div className="mb-8 border-b border-border pb-6">
-        <h1 className="text-3xl font-bold text-white tracking-tight">Settings Workspace</h1>
-        <p className="text-textSecondary mt-2">Manage sources, AI models, and clustering behaviors.</p>
+    <div className="flex-1 flex flex-col min-h-screen">
+      <div className="glass-base border-b border-white/5 pt-28 pb-10 px-8">
+        <div className="max-w-[1200px] mx-auto">
+          <h1 className="text-3xl font-display font-bold text-white tracking-tight">Control <span className="text-accent-primary">Horizon</span></h1>
+          <p className="text-sm text-text-muted mt-2 font-medium">Configure harvesting silos, intelligence resonators, and system core parameters.</p>
+        </div>
       </div>
 
-      <div className="grid md:grid-cols-4 gap-8">
+      <div className="max-w-[1200px] mx-auto w-full px-6 py-12 md:px-12 grid md:grid-cols-4 gap-12">
         {/* Settings Navigation Sidebar */}
-        <div className="col-span-1 space-y-1">
-          <div className="text-sm font-semibold text-zinc-500 uppercase tracking-wider mb-4 px-3">Configuration</div>
-          <button className="w-full text-left px-4 py-2.5 rounded-md bg-zinc-800/80 text-white font-medium shadow-sm border border-zinc-700">
-            Content Sources
-          </button>
-          <button className="w-full text-left px-4 py-2.5 rounded-md text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors">
-            Trending Clusters
-          </button>
-          <button className="w-full text-left px-4 py-2.5 rounded-md text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200 transition-colors">
-            Intelligence
-          </button>
+        <div className="col-span-1 space-y-4">
+          <div className="text-[10px] font-display font-bold text-text-ghost uppercase tracking-[0.2em] px-3">Subsystems</div>
+          <nav className="space-y-1">
+            <button className="w-full text-left px-4 py-3 rounded-xl bg-accent-primary/10 text-accent-primary font-display font-bold text-[13px] border border-accent-primary/20 shadow-glow-primary transition-all">
+              Content Harvest
+            </button>
+            <button className="w-full text-left px-4 py-3 rounded-xl text-text-muted hover:text-text-primary hover:bg-white/5 transition-all font-display font-bold text-[13px]">
+              Logic Clusters
+            </button>
+            <button className="w-full text-left px-4 py-3 rounded-xl text-text-muted hover:text-text-primary hover:bg-white/5 transition-all font-display font-bold text-[13px]">
+              System Core
+            </button>
+          </nav>
         </div>
 
         {/* Settings Content Pane */}
-        <div className="col-span-1 md:col-span-3 space-y-8">
+        <div className="col-span-1 md:col-span-3 space-y-12">
           
           {/* Add Custom Source */}
-          <section className="card p-6 border-zinc-700 bg-zinc-900/40 shadow-lg">
-             <h3 className="text-lg font-medium text-white mb-1 flex items-center gap-2">
-               <Orbit className="w-5 h-5 text-accentPrimary" />
-               Add Custom Source
-             </h3>
-             <p className="text-sm text-zinc-400 mb-5">Automatically detect RSS feeds or scrape content.</p>
+          <section className="glass-opaque rounded-2xl p-8 border border-white/5 shadow-2xl overflow-hidden relative group">
+             <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+               <Orbit className="w-32 h-32 text-accent-primary" />
+             </div>
              
-             {!previewData ? (
-               <form className="space-y-4" onSubmit={handleDetect}>
-                 <div>
-                   <label className="block text-sm font-medium text-zinc-300 mb-1.5">Source URL</label>
-                   <div className="flex gap-3">
-                     <input 
-                       type="url" 
-                       value={urlInput}
-                       onChange={e => setUrlInput(e.target.value)}
-                       placeholder="https://news.ycombinator.com"
-                       className="flex-1 bg-zinc-900 border border-zinc-700 text-white rounded-md px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-accentPrimary transition-shadow"
-                     />
-                     <button 
-                       type="submit" 
-                       disabled={addSource.isPending || !urlInput}
-                       className="btn btn-primary px-6 whitespace-nowrap"
-                     >
-                       {addSource.isPending ? 'Detecting...' : 'Detect'}
-                     </button>
-                   </div>
-                 </div>
-                 {addSource.isError && (
-                   <Alert type="error">{addSource.error?.message || 'Failed to detect source format.'}</Alert>
-                 )}
-               </form>
-             ) : (
-               <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
-                 <div className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-5">
-                   <div className="flex items-start justify-between">
-                     <div>
-                       <h4 className="text-base font-bold text-white mb-1 flex items-center gap-2">
-                         <Check className="w-4 h-4 text-green-400" />
-                         Found: {previewData.source_name}
-                       </h4>
-                       <span className="text-xs font-semibold px-2 py-1 rounded bg-zinc-700 text-zinc-300 uppercase tracking-wide">
-                         Type: {previewData.source_type}
-                       </span>
+             <h3 className="text-xl font-display font-bold text-white mb-2 flex items-center gap-3">
+               <Plus className="w-5 h-5 text-accent-primary" />
+               Harvest Deployment
+             </h3>
+             <p className="text-sm text-text-secondary mb-8 font-medium">Instantiate a new intelligence harvesting node from any URL or RSS stream.</p>
+             
+             <AnimatePresence mode="wait">
+               {!previewData ? (
+                 <motion.form 
+                  key="input"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  className="space-y-6" 
+                  onSubmit={handleDetect}
+                 >
+                   <div className="space-y-2">
+                     <label className="text-[10px] font-display font-bold text-text-ghost uppercase tracking-[0.15em] ml-1">Universal Resource Locator</label>
+                     <div className="flex gap-3">
+                       <input 
+                         type="url" 
+                         value={urlInput}
+                         onChange={e => setUrlInput(e.target.value)}
+                         placeholder="https://research.deepmind.com/blog"
+                         className="flex-1 glass-void border border-white/5 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent-primary transition-all font-medium placeholder:text-text-ghost"
+                       />
+                       <button 
+                         type="submit" 
+                         disabled={addSource.isPending || !urlInput}
+                         className="px-8 py-3 bg-accent-primary text-white rounded-xl font-display font-bold text-[13px] hover:shadow-glow-primary transition-all disabled:opacity-50 disabled:grayscale"
+                       >
+                         {addSource.isPending ? 'SCANNING...' : 'MATERIALIZE'}
+                       </button>
                      </div>
                    </div>
-                   
-                   <div className="mt-4 pt-4 border-t border-zinc-700/50 space-y-3">
-                     <h5 className="text-xs font-semibold tracking-wider text-zinc-500 uppercase">Preview Items</h5>
-                     {previewData.sample_items?.slice(0, 2).map((item: any, idx: number) => (
-                       <article key={idx} className="bg-zinc-900 p-3 rounded border border-zinc-800">
-                         <h6 className="text-sm font-semibold text-zinc-200 truncate">{item.title}</h6>
-                         {item.summary && <p className="text-xs text-zinc-500 line-clamp-2 mt-1">{item.summary}</p>}
-                       </article>
-                     ))}
+                   {addSource.isError && (
+                     <Alert type="error" title="Ingestion Failed">{(addSource.error as any)?.message || 'Target format unrecognized.'}</Alert>
+                   )}
+                 </motion.form>
+               ) : (
+                 <motion.div 
+                  key="preview"
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  className="space-y-6"
+                 >
+                   <div className="glass-void border border-accent-secondary/20 rounded-xl p-6">
+                     <div className="flex items-start justify-between mb-6">
+                       <div className="flex gap-4">
+                         <div className="w-12 h-12 rounded-xl bg-accent-secondary/10 flex items-center justify-center text-accent-secondary border border-accent-secondary/20 shadow-glow-secondary">
+                           <Activity className="w-6 h-6" />
+                         </div>
+                         <div>
+                           <h4 className="text-xl font-display font-bold text-white mb-1 flex items-center gap-2">
+                             {previewData.source_name}
+                           </h4>
+                           <span className="text-[10px] font-mono font-bold text-accent-secondary border border-accent-secondary/30 px-2 py-0.5 rounded-md uppercase">
+                             Stream Type: {previewData.source_type}
+                           </span>
+                         </div>
+                       </div>
+                       <Check className="w-6 h-6 text-green-500" />
+                     </div>
+                     
+                     <div className="space-y-3">
+                       <h5 className="text-[10px] font-display font-bold tracking-widest text-text-ghost uppercase flex items-center gap-2">
+                         <Orbit className="w-3 h-3" />
+                         HARVEST PREVIEW
+                       </h5>
+                       <div className="grid gap-2">
+                         {previewData.sample_items?.slice(0, 2).map((item: any, idx: number) => (
+                           <div key={idx} className="glass-base p-3 rounded-lg border border-white/5">
+                             <h6 className="text-[13px] font-bold text-text-primary truncate">{item.title}</h6>
+                           </div>
+                         ))}
+                       </div>
+                     </div>
+                     
+                     <div className="mt-8 flex gap-3">
+                        <button 
+                          onClick={handleConfirmAdd}
+                          disabled={addSource.isPending}
+                          className="flex-1 py-3 bg-accent-secondary text-white rounded-xl font-display font-bold text-[13px] hover:shadow-glow-secondary transition-all"
+                        >
+                         {addSource.isPending ? 'DEPLOYING...' : 'CONFIRM DEPLOYMENT'}
+                        </button>
+                        <button 
+                          onClick={() => { setPreviewData(null); addSource.reset() }}
+                          className="px-6 py-3 glass-base border border-white/10 text-white rounded-xl font-display font-bold text-[13px] hover:bg-white/5 transition-all"
+                        >
+                          ABORT
+                        </button>
+                     </div>
                    </div>
-                   
-                   <div className="mt-5 flex gap-3">
-                      <button 
-                        onClick={handleConfirmAdd}
-                        disabled={addSource.isPending}
-                        className="btn btn-primary px-5 py-2 flex-1"
-                      >
-                       {addSource.isPending ? 'Adding...' : 'Confirm & Add Source'}
-                      </button>
-                      <button 
-                        onClick={() => { setPreviewData(null); addSource.reset() }}
-                        className="btn btn-outline px-5 py-2 flex-1"
-                      >
-                        Cancel
-                      </button>
-                   </div>
-                 </div>
-               </div>
-             )}
+                 </motion.div>
+               )}
+             </AnimatePresence>
           </section>
 
           {/* Active Sources Table */}
-          <section className="space-y-4">
-             <div className="flex justify-between items-end mb-2">
-               <h3 className="text-lg font-medium text-white">Active Sources</h3>
+          <section className="space-y-6">
+             <div className="flex items-center gap-3 px-1">
+               <Shield className="w-5 h-5 text-accent-primary" />
+               <h3 className="text-xl font-display font-bold text-white">Active Reservoirs</h3>
              </div>
              
-             <div className="border border-zinc-800 rounded-lg overflow-hidden bg-card">
+             <div className="glass-opaque rounded-2xl overflow-hidden border border-white/5 shadow-xl">
                {sourcesLoading ? (
-                 <div className="p-12 flex justify-center"><div className="w-6 h-6 border-2 border-accentPrimary border-t-transparent rounded-full animate-spin" /></div>
+                 <div className="p-20 flex justify-center">
+                   <div className="w-8 h-8 rounded-full border-2 border-accent-primary border-t-transparent animate-spin" />
+                 </div>
                ) : sources && sources.length > 0 ? (
-                 <table className="min-w-full divide-y divide-zinc-800">
-                   <thead className="bg-zinc-900/50">
-                     <tr>
-                       <th className="px-5 py-3.5 text-left text-xs font-semibold text-zinc-400 uppercase tracking-wider">Source</th>
-                       <th className="px-5 py-3.5 text-left text-xs font-semibold text-zinc-400 uppercase tracking-wider">Type</th>
-                       <th className="px-5 py-3.5 text-left text-xs font-semibold text-zinc-400 uppercase tracking-wider">Health</th>
-                       <th className="px-5 py-3.5 text-right text-xs font-semibold text-zinc-400 uppercase tracking-wider">Status</th>
-                     </tr>
-                   </thead>
-                   <tbody className="divide-y divide-zinc-800/50 bg-card">
-                     {sources.map(source => (
-                       <tr key={source.id} className="hover:bg-zinc-900/50 transition-colors">
-                         <td className="px-5 py-4 whitespace-nowrap">
-                           <div className="flex flex-col">
-                             <span className="text-sm font-medium text-white">{source.name}</span>
-                             <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-xs text-zinc-500 hover:text-accentPrimary flex items-center gap-1 mt-0.5">
-                               {new URL(source.url).hostname} <ExternalLink className="w-3 h-3" />
-                             </a>
-                           </div>
-                         </td>
-                         <td className="px-5 py-4 whitespace-nowrap">
-                           <span className="badge badge-neutral tracking-wide uppercase text-[10px]">{source.type}</span>
-                         </td>
-                         <td className="px-5 py-4 whitespace-nowrap">
-                           {source.consecutive_failures > 0 ? (
-                              <span className="flex items-center gap-1.5 text-xs text-red-400 font-medium">
-                                <div className="w-2 h-2 rounded-full bg-red-500" />
-                                {source.consecutive_failures} failures
-                              </span>
-                           ) : (
-                              <span className="flex items-center gap-1.5 text-xs text-green-400 font-medium">
-                                <div className="w-2 h-2 rounded-full bg-green-500" />
-                                Healthy
-                              </span>
-                           )}
-                         </td>
-                         <td className="px-5 py-4 whitespace-nowrap text-right">
-                           <button
-                             onClick={() => toggleSource.mutate({ id: source.id, is_active: !source.is_active })}
-                             className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-accentPrimary focus:ring-offset-2 focus:ring-offset-zinc-900 transition-colors ${source.is_active ? 'bg-accentPrimary' : 'bg-zinc-700'}`}
-                           >
-                             <span className="sr-only">Toggle source</span>
-                             <span className={`pointer-events-none absolute left-0 inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform duration-200 ease-in-out ${source.is_active ? 'translate-x-4' : 'translate-x-0'}`} />
-                           </button>
-                         </td>
+                 <div className="overflow-x-auto">
+                   <table className="min-w-full divide-y divide-white/5">
+                     <thead className="glass-void/50">
+                       <tr>
+                         <th className="px-6 py-4 text-left text-xs font-display font-bold text-text-ghost uppercase tracking-widest">Materialized Source</th>
+                         <th className="px-6 py-4 text-left text-xs font-display font-bold text-text-ghost uppercase tracking-widest">Protocol</th>
+                         <th className="px-6 py-4 text-left text-xs font-display font-bold text-text-ghost uppercase tracking-widest">Health State</th>
+                         <th className="px-6 py-4 text-right text-xs font-display font-bold text-text-ghost uppercase tracking-widest">Inertia</th>
                        </tr>
-                     ))}
-                   </tbody>
-                 </table>
+                     </thead>
+                     <tbody className="divide-y divide-white/5">
+                       {sources.map((source, idx) => (
+                         <motion.tr 
+                          key={source.id} 
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: idx * 0.05 }}
+                          className="hover:bg-white/[0.02] transition-colors"
+                         >
+                           <td className="px-6 py-5 whitespace-nowrap">
+                             <div className="flex flex-col">
+                               <span className="text-[15px] font-bold text-white group-hover:text-accent-primary transition-colors">{source.name}</span>
+                               <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-mono text-text-ghost hover:text-accent-primary flex items-center gap-1.5 mt-1 transition-colors">
+                                 {new URL(source.url).hostname} <ExternalLink className="w-3 h-3" />
+                               </a>
+                             </div>
+                           </td>
+                           <td className="px-6 py-5 whitespace-nowrap">
+                             <span className="text-[10px] font-mono font-bold text-text-muted bg-white/5 px-2 py-0.5 rounded border border-white/5 uppercase tracking-wider">{source.type}</span>
+                           </td>
+                           <td className="px-6 py-5 whitespace-nowrap">
+                             {source.consecutive_failures > 0 ? (
+                               <div className="flex items-center gap-2 text-xs text-[#E05A6B] font-bold font-display uppercase tracking-widest">
+                                 <div className="w-1.5 h-1.5 rounded-full bg-[#E05A6B] shadow-[0_0_8px_#E05A6B]" />
+                                 {source.consecutive_failures} DESYNC
+                               </div>
+                             ) : (
+                               <div className="flex items-center gap-2 text-xs text-[#5AE07F] font-bold font-display uppercase tracking-widest">
+                                 <div className="w-1.5 h-1.5 rounded-full bg-[#5AE07F] shadow-[0_0_8px_#5AE07F]" />
+                                 RESONANT
+                               </div>
+                             )}
+                           </td>
+                           <td className="px-6 py-5 whitespace-nowrap text-right">
+                             <button
+                               onClick={() => toggleSource.mutate({ id: source.id, is_active: !source.is_active })}
+                               className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition-all duration-500 focus:outline-none ${source.is_active ? 'bg-accent-primary' : 'bg-void border border-white/10'}`}
+                             >
+                               <span className="sr-only">Toggle Inertia</span>
+                               <span className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-lg transition-transform duration-500 ease-glass ${source.is_active ? 'translate-x-[10px]' : 'translate-x-[-10px]'}`} />
+                             </button>
+                           </td>
+                         </motion.tr>
+                       ))}
+                     </tbody>
+                   </table>
+                 </div>
                ) : (
-                 <div className="p-8 text-center text-zinc-500 text-sm">No sources added yet.</div>
+                 <div className="p-20 text-center flex flex-col items-center opacity-30">
+                   <Cpu className="w-12 h-12 text-text-ghost mb-4 animate-pulse" />
+                   <p className="text-sm font-display font-medium text-text-muted uppercase tracking-widest">Harvest Field Depleted</p>
+                 </div>
                )}
              </div>
           </section>
@@ -203,3 +250,4 @@ export function SettingsPage() {
     </div>
   )
 }
+
