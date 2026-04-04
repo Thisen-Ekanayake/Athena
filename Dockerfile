@@ -21,8 +21,8 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
-# (Optional) Install Playwright browsers if your scrapers use them
-# RUN playwright install --with-deps chromium
+# Install Playwright browsers if your scrapers use them
+RUN playwright install --with-deps chromium
 
 # Copy the rest of the application
 COPY . .
