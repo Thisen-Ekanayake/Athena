@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from athena.api.routers import feed, items, clusters, trending, search, sources
+from athena.api.routers import feed, items, clusters, trending, search, sources, sync
 from athena.api import qa_api
 from athena.api import score_api
 from athena.api import summary_api
@@ -45,6 +45,7 @@ def create_app() -> FastAPI:
     app.include_router(trending.router)
     app.include_router(search.router)
     app.include_router(sources.router)
+    app.include_router(sync.router)
     app.include_router(qa_api.router, prefix="/api/v1", tags=["QA"])
     app.include_router(
         score_api.app.router, prefix="/api/v1",
