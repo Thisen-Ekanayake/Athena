@@ -1,6 +1,9 @@
+import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutGrid, Layers, Flame, Settings } from 'lucide-react'
+import { LayoutGrid, Layers, Flame, Settings, RefreshCw } from 'lucide-react'
 import { SearchInput } from './SearchInput'
+import { apiClient } from '../api/client'
+import { SyncLogsModal } from './SyncLogsModal'
 
 interface SidebarProps {
   onClose: () => void
@@ -9,6 +12,30 @@ interface SidebarProps {
 }
 
 export function Sidebar({ onClose, isCondensed }: SidebarProps) {
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [isLogsOpen, setIsLogsOpen] = useState(false)
+
+  const handleSync = async () => {
+    if (isSyncing) {
+      setIsLogsOpen(true) // Just open the logs if already syncing
+      return
+    }
+    
+    setIsLogsOpen(true)
+    setIsSyncing(true)
+    try {
+      await apiClient.post('/sync')
+    } catch (error) {
+      console.error('Sync failed:', error)
+    } finally {
+      // Keep syncing state for visual feedback until logs show progress
+      // or the user manually closes it.
+      // We don't auto-close the modal or stop syncing state immediately
+      // because the actual scraping happens in the background.
+      setTimeout(() => setIsSyncing(false), 5000)
+    }
+  }
+
   const navItems = [
     { to: '/', icon: LayoutGrid, label: 'Feed', section: 'DISCOVER' },
     { to: '/trending', icon: Flame, label: 'Trending', section: 'DISCOVER' },
@@ -110,7 +137,21 @@ export function Sidebar({ onClose, isCondensed }: SidebarProps) {
         {navLinks}
       </nav>
 
-      <div className="p-4 mt-auto border-t border-border-subtle">
+      <div className="p-4 mt-auto border-t border-border-subtle space-y-2">
+        <button
+          onClick={handleSync}
+          disabled={isSyncing}
+          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md transition-all duration-300 ${
+            isSyncing 
+              ? 'text-accent-primary bg-accent-primary/10 cursor-not-allowed' 
+              : 'text-text-muted hover:text-text-primary hover:bg-white/5'
+          }`}
+          title="Sync all sources"
+        >
+          <RefreshCw className={`w-[18px] h-[18px] ${isSyncing ? 'animate-spin' : ''}`} />
+          {!isCondensed && <span className="text-[13px] font-display font-medium">Sync Data</span>}
+        </button>
+
         <NavLink
           to="/settings"
           className={({ isActive }) =>
@@ -123,6 +164,10 @@ export function Sidebar({ onClose, isCondensed }: SidebarProps) {
           {!isCondensed && <span className="text-[13px] font-display font-medium">Settings</span>}
         </NavLink>
       </div>
+      <SyncLogsModal 
+        isOpen={isLogsOpen} 
+        onClose={() => setIsLogsOpen(false)} 
+      />
     </aside>
   )
 }
