@@ -120,7 +120,7 @@ def crawl_all_sources():
     if not sources:
         logger.warning("No active sources found to sync!")
         return
-    
+
     logger.info(f"Found {len(sources)} active sources. Enqueueing crawl tasks...")
     for source in sources:
         crawl_source.delay(str(source.id))
