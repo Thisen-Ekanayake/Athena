@@ -1,15 +1,25 @@
 import { useState, useEffect } from 'react'
 import { Search as SearchIcon, X, Command } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 
 interface SearchInputProps {
   isCondensed?: boolean
+  onFocus?: () => void
 }
 
-export function SearchInput({ isCondensed }: SearchInputProps) {
-  const [query, setQuery] = useState('')
+export function SearchInput({ isCondensed, onFocus }: SearchInputProps) {
+  const [searchParams] = useSearchParams()
+  const [query, setQuery] = useState(searchParams.get('q') || '')
   const [isFocused, setIsFocused] = useState(false)
   const navigate = useNavigate()
+  const location = useLocation()
+
+  // Sync state with URL only when on the search page
+  useEffect(() => {
+    if (location.pathname === '/search') {
+      setQuery(searchParams.get('q') || '')
+    }
+  }, [location.pathname, searchParams])
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -25,8 +35,9 @@ export function SearchInput({ isCondensed }: SearchInputProps) {
   if (isCondensed) {
     return (
       <button 
-        className="w-full flex items-center justify-center p-2 rounded-md transition-all duration-300 text-text-muted hover:text-accent-primary hover:bg-white/5"
-        onClick={() => setIsFocused(true)}
+        className="w-full flex items-center justify-center p-2 rounded-md transition-all duration-300 text-text-muted hover:text-accent-primary hover:bg-white/5 active:scale-95"
+        onClick={onFocus}
+        title="Search (⌘K)"
       >
         <SearchIcon className="w-[18px] h-[18px]" />
       </button>
