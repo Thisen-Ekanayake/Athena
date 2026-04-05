@@ -6,6 +6,7 @@ GET /api/v1/feed — paginated, sorted, filtered content feed.
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, desc
+from datetime import datetime, timedelta
 import redis as redis_lib
 
 from athena.api.deps import get_db, get_redis
@@ -63,6 +64,7 @@ def get_feed(
     source_id: str | None = Query(None),
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
+    date_range: str | None = Query(None, pattern="^(24h|7d|30d)$"),
     db: Session = Depends(get_db),
     r: redis_lib.Redis = Depends(get_redis),
 ):
@@ -71,7 +73,7 @@ def get_feed(
     The primary endpoint for the main feed.
     """
     # ── Cache check ─────────────────────────────────────
-    cache_key = f"feed:{sort}:{category}:{page}:{limit}:{cluster_id}:{source_id}:{date_from}:{date_to}"  # noqa: E501
+    cache_key = f"feed:{sort}:{category}:{page}:{limit}:{cluster_id}:{source_id}:{date_from}:{date_to}:{date_range}"  # noqa: E501
     cached = cache_get(r, cache_key)
     if cached:
         return cached
@@ -94,6 +96,15 @@ def get_feed(
         query = query.where(ContentItem.published_at >= date_from)
     if date_to:
         query = query.where(ContentItem.published_at <= date_to)
+
+    if date_range:
+        now = datetime.utcnow()
+        if date_range == "24h":
+            query = query.where(ContentItem.published_at >= now - timedelta(hours=24))
+        elif date_range == "7d":
+            query = query.where(ContentItem.published_at >= now - timedelta(days=7))
+        elif date_range == "30d":
+            query = query.where(ContentItem.published_at >= now - timedelta(days=30))
 
     # Sort
     if sort == "score":
