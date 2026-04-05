@@ -3,7 +3,7 @@ Athena Layer 5 — Search Router
 
 GET /api/v1/search — semantic search via OpenAI embed + Qdrant ANN.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, or_
 from sqlalchemy.orm import Session
 from loguru import logger
@@ -107,13 +107,13 @@ def search(
         )
         if category:
             keyword_query = keyword_query.where(ContentItem.category == category)
-        
+
         items = db.execute(keyword_query.limit(limit)).scalars().all()
-        
+
         results = [_build_feed_item(item) for item in items]
         for r in results:
             r["similarity"] = 0.5  # Neutral score for keyword matches
-            
+
         return {
             "query": q,
             "items": results,
