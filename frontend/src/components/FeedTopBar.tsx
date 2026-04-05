@@ -57,10 +57,10 @@ export function FeedTopBar({
             onChange={(e) => setDateRange(e.target.value as any)}
             className="appearance-none bg-void/40 border border-white/5 text-text-secondary text-[11px] font-bold rounded-lg pl-8 pr-8 py-2 focus:outline-none focus:border-accent-primary/50 cursor-pointer hover:bg-white/5 transition-all uppercase tracking-tight"
           >
-            <option value="24h">Velocity: 24H</option>
-            <option value="7d">Velocity: 7D</option>
-            <option value="30d">Velocity: 30D</option>
-            <option value="all">Velocity: INF</option>
+            <option value="24h">Sort: 24H</option>
+            <option value="7d">Sort: 7D</option>
+            <option value="30d">Sort: 30D</option>
+            <option value="all">Sort: INF</option>
           </select>
         </div>
         
