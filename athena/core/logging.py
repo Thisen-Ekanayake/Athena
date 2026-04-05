@@ -1,10 +1,10 @@
-import json
 import os
 import redis
 from loguru import logger
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 SYNC_LOG_CHANNEL = "athena:sync:logs"
+
 
 class RedisSink:
     def __init__(self):
@@ -19,6 +19,7 @@ class RedisSink:
         except Exception as e:
             # Don't use the logger here to avoid infinite recursion if it fails
             print(f"Failed to publish log to Redis: {e}")
+
 
 def setup_redis_logging():
     """Add a Redis sink to loguru to stream sync logs."""
