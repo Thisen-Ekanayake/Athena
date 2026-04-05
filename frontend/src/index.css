@@ -59,6 +59,10 @@
   --dur-fast: 120ms;
   --dur-mid: 240ms;
   --dur-slow: 480ms;
+
+  /* Spring-like Bezier Equivs for CSS transitions */
+  --ease-spring-out: cubic-bezier(0.175, 0.885, 0.32, 1.1);
+  --ease-spring-in-out: cubic-bezier(0.68, -0.6, 0.32, 1.6);
 }
 
 .light-theme {
@@ -182,6 +186,19 @@
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   border: none;
+}
+
+/* ── Performance Utilities ── */
+@utility will-change-transform {
+  will-change: transform;
+}
+
+@utility will-change-opacity {
+  will-change: opacity;
+}
+
+@utility will-change-motion {
+  will-change: transform, opacity;
 }
 
 @utility btn-glass {

@@ -120,8 +120,8 @@ export function QAPanel({ item, onClose }: QAPanelProps) {
         initial={{ x: '100%' }}
         animate={{ x: 0 }}
         exit={{ x: '100%' }}
-        transition={{ duration: 0.36, ease: [0.16, 1, 0.3, 1] }}
-        className="fixed inset-y-0 right-0 z-[60] w-full md:w-[450px] glass-opaque shadow-2xl flex flex-col border-l border-border-glow"
+        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+        className="fixed inset-y-0 right-0 z-[60] w-full md:w-[450px] glass-opaque shadow-2xl flex flex-col border-l border-border-glow will-change-transform"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-5 border-b border-border-subtle bg-white/5">
@@ -171,7 +171,13 @@ export function QAPanel({ item, onClose }: QAPanelProps) {
           )}
           
           {history.map((msg, idx) => (
-            <div key={idx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+            <motion.div 
+              layout
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              key={idx} 
+              className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+            >
               <div className={`
                 max-w-[90%] rounded-2xl px-5 py-3.5 text-[14px] leading-relaxed relative
                 ${msg.role === 'user' 
@@ -186,7 +192,7 @@ export function QAPanel({ item, onClose }: QAPanelProps) {
               <div className={`mt-2 text-[10px] font-display font-medium tracking-[0.05em] text-text-ghost uppercase`}>
                 {msg.role === 'user' ? 'Direct Query' : 'Assistant Sync'}
               </div>
-            </div>
+            </motion.div>
           ))}
           <div ref={messagesEndRef} />
         </div>

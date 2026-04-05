@@ -30,25 +30,30 @@ export function FeedCard({ item, viewMode = 'expanded', index = 0 }: FeedCardPro
   const isCompact = viewMode === 'compact'
 
   const cardVariants = {
-    hidden: { opacity: 0, y: 12 },
+    hidden: { opacity: 0, y: 20, scale: 0.98 },
     visible: (i: number) => ({
       opacity: 1, 
       y: 0,
+      scale: 1,
       transition: {
-        delay: i * 0.06,
-        duration: 0.48,
-        ease: [0.16, 1, 0.3, 1] as any
-      }
+        type: "spring",
+        stiffness: 260,
+        damping: 20,
+        delay: i * 0.05,
+      } as any
     })
   }
 
   return (
     <motion.article 
+      layout
       custom={index}
       initial="hidden"
       animate="visible"
       variants={cardVariants}
-      className={`group relative glass rounded-lg transition-all duration-300 ${isCompact ? 'p-4' : 'p-6 mb-6'} hover:glass-float`}
+      whileHover={{ y: -4, transition: { type: "spring", stiffness: 400, damping: 25 } }}
+      whileTap={{ scale: 0.99 }}
+      className={`group relative glass rounded-lg transition-colors duration-500 ${isCompact ? 'p-4' : 'p-6 mb-6'} hover:glass-float will-change-motion`}
     >
       <div className="flex items-start gap-4">
         {/* Score Ring Section */}
@@ -123,10 +128,14 @@ export function FeedCard({ item, viewMode = 'expanded', index = 0 }: FeedCardPro
               <AnimatePresence>
                 {expanded && (
                   <motion.ul 
+                    layout
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: 'auto', opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                    transition={{ 
+                      height: { type: "spring", stiffness: 300, damping: 30 },
+                      opacity: { duration: 0.2 }
+                    }}
                     className="mt-3 space-y-2 overflow-hidden"
                   >
                     {item.takeaways.map((t, i) => (
