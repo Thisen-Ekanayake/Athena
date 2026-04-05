@@ -10,9 +10,10 @@ interface SidebarProps {
   onClose: () => void
   isCondensed: boolean
   isOpen?: boolean
+  onSearchClick?: () => void
 }
 
-export function Sidebar({ onClose, isCondensed }: SidebarProps) {
+export function Sidebar({ onClose, isCondensed, onSearchClick }: SidebarProps) {
   const [isSyncing, setIsSyncing] = useState(false)
   const [isLogsOpen, setIsLogsOpen] = useState(false)
 
@@ -131,7 +132,7 @@ export function Sidebar({ onClose, isCondensed }: SidebarProps) {
       </div>
 
       <div className="px-4 mb-8">
-        <SearchInput isCondensed={isCondensed} />
+        <SearchInput isCondensed={isCondensed} onFocus={onSearchClick} />
       </div>
 
       <nav className="flex-1 overflow-y-auto custom-scrollbar">
