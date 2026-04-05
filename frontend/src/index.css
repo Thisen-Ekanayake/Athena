@@ -61,25 +61,68 @@
   --dur-slow: 480ms;
 }
 
+.light-theme {
+  /* ── Core Palette Overrides ── */
+  --color-void: #f8fafc;
+  --color-abyss: #f1f5f9;
+  --color-deep: #e2e8f0;
+  --color-surface: #ffffff;
+  --color-lift: #f8fafc;
+
+  /* ── Accent Overrides ── */
+  --color-accent-primary: #1a2560;
+  --color-accent-secondary: #2e7fff;
+
+  /* ── Glass Surfaces Overrides ── */
+  --glass-fill: rgba(255, 255, 255, 0.7);
+  --glass-fill-hover: rgba(255, 255, 255, 0.85);
+  --glass-fill-active: rgba(255, 255, 255, 0.95);
+
+  /* ── Borders Overrides ── */
+  --border-subtle: rgba(76, 95, 255, 0.15);
+  --border-default: rgba(76, 95, 255, 0.25);
+  --border-glow: rgba(76, 95, 255, 0.4);
+
+  /* ── Glows Overrides ── */
+  --glow-primary: 0 0 20px rgba(76, 95, 255, 0.15);
+  --glow-secondary: 0 0 16px rgba(56, 197, 212, 0.1);
+  --glow-card: 0 4px 24px rgba(0, 0, 0, 0.06);
+
+  /* ── Text Scale Overrides ── */
+  --text-primary: rgba(15, 23, 42, 0.95);
+  --text-secondary: rgba(51, 65, 85, 0.8);
+  --text-muted: rgba(100, 116, 139, 0.65);
+  --text-ghost: rgba(148, 163, 184, 0.5);
+
+  /* ── Background Gradients Override ── */
+  --bg-gradient-1: radial-gradient(ellipse 80% 60% at 15% 10%, rgba(76, 95, 255, 0.08) 0%, transparent 65%);
+  --bg-gradient-2: radial-gradient(ellipse 70% 50% at 85% 90%, rgba(46, 127, 255, 0.06) 0%, transparent 60%);
+  --bg-gradient-3: radial-gradient(ellipse 50% 40% at 50% 50%, rgba(56, 197, 212, 0.03) 0%, transparent 70%);
+}
+
+:root:not(.light-theme) {
+  --bg-gradient-1: radial-gradient(ellipse 80% 60% at 15% 10%, rgba(76, 95, 255, 0.18) 0%, transparent 65%);
+  --bg-gradient-2: radial-gradient(ellipse 70% 50% at 85% 90%, rgba(46, 127, 255, 0.14) 0%, transparent 60%);
+  --bg-gradient-3: radial-gradient(ellipse 50% 40% at 50% 50%, rgba(56, 197, 212, 0.06) 0%, transparent 70%);
+}
+
 @layer base {
   body {
     background-color: var(--color-void);
     background-image:
-      /* Primary orb — top-left, Oxford Indigo */
-      radial-gradient(ellipse 80% 60% at 15% 10%,
-        rgba(76, 95, 255, 0.18) 0%, transparent 65%),
-      /* Secondary orb — bottom-right, Cerulean */
-      radial-gradient(ellipse 70% 50% at 85% 90%,
-        rgba(46, 127, 255, 0.14) 0%, transparent 60%),
-      /* Tertiary orb — centre, Aqua whisper */
-      radial-gradient(ellipse 50% 40% at 50% 50%,
-        rgba(56, 197, 212, 0.06) 0%, transparent 70%);
+      /* Primary orb — top-left */
+      var(--bg-gradient-1),
+      /* Secondary orb — bottom-right */
+      var(--bg-gradient-2),
+      /* Tertiary orb — centre */
+      var(--bg-gradient-3);
     background-attachment: fixed;
     color: var(--text-primary);
     font-family: var(--font-body);
     -webkit-font-smoothing: antialiased;
     min-height: 100vh;
     position: relative;
+    transition: background-color var(--dur-mid) var(--ease-glass), color var(--dur-mid) var(--ease-glass);
   }
 
   body::before {
@@ -108,7 +151,8 @@
               inset 0 1px 0 rgba(255, 255, 255, 0.06);
   transition: background var(--dur-mid) var(--ease-glass),
               border-color var(--dur-mid) var(--ease-glass),
-              box-shadow var(--dur-mid) var(--ease-glass);
+              box-shadow var(--dur-mid) var(--ease-glass),
+              opacity var(--dur-mid) var(--ease-glass);
 }
 
 @utility glass-base-hover {

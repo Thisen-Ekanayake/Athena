@@ -6,8 +6,11 @@ import { SearchResultsPage } from './pages/SearchResultsPage'
 import { ClusterBrowserPage } from './pages/ClusterBrowserPage'
 import { ClusterViewPage } from './pages/ClusterViewPage'
 import { Layout } from './components/Layout'
+import { useTheme } from './hooks/useTheme'
 
 function App() {
+  useTheme()
+  
   return (
     <BrowserRouter>
       <Routes>
