@@ -3,11 +3,13 @@ import { Menu, X } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { Sidebar } from './Sidebar'
 import { RelatedSidebar } from './RelatedSidebar'
+import { SearchModal } from './SearchModal'
 import { AnimatePresence, motion } from 'framer-motion'
 
 export function Layout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [isCondensed, setIsCondensed] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
 
   useEffect(() => {
     const handleResize = () => {
@@ -15,9 +17,20 @@ export function Layout() {
       setIsCondensed(width >= 768 && width < 1100)
     }
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        setSearchOpen(true)
+      }
+    }
+
     handleResize()
     window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      window.removeEventListener('keydown', handleKeyDown)
+    }
   }, [])
 
   return (
@@ -43,6 +56,12 @@ export function Layout() {
         isOpen={mobileMenuOpen} 
         onClose={() => setMobileMenuOpen(false)} 
         isCondensed={isCondensed} 
+        onSearchClick={() => setSearchOpen(true)}
+      />
+
+      <SearchModal 
+        isOpen={searchOpen} 
+        onClose={() => setSearchOpen(false)} 
       />
 
       {/* Mobile Sidebar Overlay */}
@@ -60,6 +79,7 @@ export function Layout() {
                 isOpen={mobileMenuOpen} 
                 onClose={() => setMobileMenuOpen(false)} 
                 isCondensed={false} 
+                onSearchClick={() => setSearchOpen(true)}
               />
             </div>
           </motion.div>
