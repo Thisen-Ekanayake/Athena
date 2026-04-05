@@ -9,6 +9,7 @@ from loguru import logger
 
 router = APIRouter(prefix="/api/v1/sync", tags=["Sync"])
 
+
 @router.post("")
 async def trigger_sync(background_tasks: BackgroundTasks):
     """
@@ -18,6 +19,7 @@ async def trigger_sync(background_tasks: BackgroundTasks):
     logger.info("Manual sync triggered via API")
     crawl_all_sources.delay()
     return {"status": "Sync triggered", "message": "Scraping pipeline has been started in the background."}
+
 
 @router.get("/events")
 async def sync_events(request: Request):
@@ -31,24 +33,24 @@ async def sync_events(request: Request):
         r = get_redis_client()
         pubsub = r.pubsub()
         pubsub.subscribe(SYNC_LOG_CHANNEL)
-        
+
         try:
             # Send initial message
             yield f"data: {json.dumps({'message': 'Connection established. Waiting for logs...'})}\n\n"
-            
+
             while True:
                 if await request.is_disconnected():
                     break
-                
+
                 # Check for messages
                 message = pubsub.get_message(ignore_subscribe_messages=True)
                 if message:
                     log_data = message['data']
                     if isinstance(log_data, bytes):
                         log_data = log_data.decode('utf-8')
-                    
+
                     yield f"data: {json.dumps({'message': log_data})}\n\n"
-                
+
                 await asyncio.sleep(0.1)  # Avoid pegging CPU
         except Exception as e:
             logger.error(f"Error in log generator: {e}")
