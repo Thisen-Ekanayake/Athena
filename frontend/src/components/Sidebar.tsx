@@ -4,6 +4,7 @@ import { LayoutGrid, Layers, Flame, Settings, RefreshCw } from 'lucide-react'
 import { SearchInput } from './SearchInput'
 import { apiClient } from '../api/client'
 import { SyncLogsModal } from './SyncLogsModal'
+import { ThemeToggle } from './shared/ThemeToggle'
 
 interface SidebarProps {
   onClose: () => void
@@ -163,6 +164,13 @@ export function Sidebar({ onClose, isCondensed }: SidebarProps) {
           <Settings className="w-[18px] h-[18px]" />
           {!isCondensed && <span className="text-[13px] font-display font-medium">Settings</span>}
         </NavLink>
+
+        <div className="pt-2">
+          <ThemeToggle 
+            className="w-full justify-start md:px-3 bg-white/0 hover:bg-white/5 active:bg-white/10" 
+            showLabel={!isCondensed} 
+          />
+        </div>
       </div>
       <SyncLogsModal 
         isOpen={isLogsOpen} 
