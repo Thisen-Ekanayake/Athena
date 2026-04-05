@@ -35,6 +35,22 @@ class PlaywrightScraper(BaseScraper):
             )
             page = await context.new_page()
 
+            # Verify playwright is usable
+            try:
+                await page.goto("about:blank")
+            except Exception as e:
+                if "Executable doesn't exist" in str(e):
+                    logger.critical(
+                        "Playwright browsers NOT found! Please ensure 'playwright install' "
+                        "was run in the worker environment."
+                    )
+                    await browser.close()
+                    raise RuntimeError(
+                        "Playwright browsers missing. Rebuild docker container with "
+                        "'docker compose up --build'."
+                    )
+                raise e
+
             for entry in feed.entries[:10]:
                 try:
                     title = html.unescape(entry.get('title', 'Unknown').strip())

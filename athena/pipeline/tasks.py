@@ -17,6 +17,10 @@ from loguru import logger
 import athena.pipeline.embedding_worker
 import athena.pipeline.clustering
 import athena.pipeline.scoring
+from athena.core.logging import setup_redis_logging
+
+# Initialize Redis logging sink for live sync feedback
+setup_redis_logging()
 
 # Celery config: enable dead-letter queue via task_routes
 
@@ -111,9 +115,16 @@ def enqueue_tier2_summaries():
 
 @celery_app.task
 def crawl_all_sources():
+    logger.info("Starting manual sync of all sources...")
     sources = get_active_sources()
+    if not sources:
+        logger.warning("No active sources found to sync!")
+        return
+
+    logger.info(f"Found {len(sources)} active sources. Enqueueing crawl tasks...")
     for source in sources:
         crawl_source.delay(str(source.id))
+    logger.info("All crawl tasks have been enqueued.")
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
@@ -235,8 +246,10 @@ async def _crawl_source_async(source_id: str, is_retry: bool = False):
                         pass
 
             if items:
+                logger.info(f"Parsed {len(items)} items from {source.name}. Saving new items...")
                 new_urls = save_content_items(items)
                 if new_urls:
+                    logger.success(f"Added {len(new_urls)} new items from {source.name}!")
                     for item in items:
                         item_url = str(item.url)
                         if item_url in new_urls:
@@ -246,6 +259,10 @@ async def _crawl_source_async(source_id: str, is_retry: bool = False):
                                     enrich_arxiv_paper.delay(item_url, arxiv_id)
                             # Phase 5: Stage and queue
                             stage_content_item.delay(item_url, item.abstract or '', item.title)
+                else:
+                    logger.info(f"No new items found for {source.name} (all {len(items)} items were duplicates).")
+            else:
+                logger.warning(f"No items were correctly parsed from {source.name}.")
 
             # Reset consecutive failures on success
             source.consecutive_failures = 0
