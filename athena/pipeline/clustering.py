@@ -5,7 +5,6 @@ from loguru import logger
 from qdrant_client import QdrantClient
 from sqlalchemy import select, update
 import umap
-import hdbscan
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
 from datetime import datetime
