@@ -1,7 +1,7 @@
 import type { FeedItem } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
 import { Flame, Layers, Search, ChevronDown, ChevronUp, MessageSquare, ExternalLink, Sparkles, MoreHorizontal } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { ScoreTooltip } from './ScoreTooltip'
 import { ScoreRing } from './ScoreRing'
@@ -19,7 +19,19 @@ interface FeedCardProps {
 export function FeedCard({ item, viewMode = 'expanded', index = 0 }: FeedCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [showScore, setShowScore] = useState(false)
+  const scoreRef = useRef<HTMLDivElement>(null)
   const setRelatedItemId = useAppStore(s => s.setRelatedItemId)
+
+  useEffect(() => {
+    if (!showScore) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (scoreRef.current && !scoreRef.current.contains(e.target as Node)) {
+        setShowScore(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showScore])
   const activeQAItem = useQAStore(s => s.activeItemId)
   const setActiveQAItem = useQAStore(s => s.setActiveItem)
   
@@ -57,10 +69,10 @@ export function FeedCard({ item, viewMode = 'expanded', index = 0 }: FeedCardPro
     >
       <div className="flex items-start gap-4">
         {/* Score Ring Section */}
-        <div 
-          className="relative flex-shrink-0 cursor-help"
-          onMouseEnter={() => setShowScore(true)}
-          onMouseLeave={() => setShowScore(false)}
+        <div
+          ref={scoreRef}
+          className="relative flex-shrink-0 cursor-pointer"
+          onClick={() => setShowScore(v => !v)}
         >
           <ScoreRing score={item.score} size={isCompact ? 36 : 48} />
           
