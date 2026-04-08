@@ -6,6 +6,7 @@ from qdrant_client import QdrantClient
 from sqlalchemy import select, update
 import umap
 import hdbscan
+from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
 from datetime import datetime
 from uuid import UUID
@@ -18,8 +19,6 @@ from athena.pipeline.celery_app import celery_app
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 COLLECTION_NAME = "athena_content"
 STABILITY_THRESHOLD = 0.85
-
-qdrant = QdrantClient(url=QDRANT_URL)
 
 
 @celery_app.task
@@ -35,8 +34,15 @@ def run_clustering():
     """
     logger.info("Starting clustering run...")
 
+    qdrant = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+
     # 1. Fetch all points from Qdrant
     # For now, fetch ALL. In production, we might want to fetch only semi-recent ones.
+    collections = [c.name for c in qdrant.get_collections().collections]
+    if COLLECTION_NAME not in collections:
+        logger.warning(f"Qdrant collection '{COLLECTION_NAME}' does not exist yet. Skipping clustering.")
+        return
+
     offset = None
     all_points = []
     while True:
@@ -56,21 +62,21 @@ def run_clustering():
         return
 
     vectors = np.array([p.vector for p in all_points])
-    [p.id for p in all_points]
 
     # 2. UMAP dimensionality reduction
     reducer = umap.UMAP(n_neighbors=15, n_components=50, metric='cosine', random_state=42)
     reduced_vectors = reducer.fit_transform(vectors)
 
-    # 3. HDBSCAN clustering
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=5, min_samples=3, metric='euclidean', prediction_data=True)
+    # 3. Topics Clustering (K-Means)
+    num_items = len(all_points)
+    k = max(5, min(20, num_items // 10))
+    clusterer = KMeans(n_clusters=k, random_state=42, n_init='auto')
     cluster_labels = clusterer.fit_predict(reduced_vectors)
 
-    # -1 is noise
     unique_labels = set(cluster_labels)
-    unique_labels.discard(-1)
+    noise_count = list(cluster_labels).count(-1)
 
-    logger.info(f"Found {len(unique_labels)} clusters and {list(cluster_labels).count(-1)} noise points.")
+    logger.info(f"Found {len(unique_labels)} topic clusters and {noise_count} noise points.")
 
     # 4. Process clusters (with run log)
     with SessionLocal() as session:
@@ -203,6 +209,7 @@ def compute_item_links():
     Detects cross_cluster vs nearest_neighbour link types.
     """
     logger.info("Computing nearest neighbour links...")
+    qdrant = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
     with SessionLocal() as session:
         # Get all embedded items with their cluster assignments
         items = session.execute(
