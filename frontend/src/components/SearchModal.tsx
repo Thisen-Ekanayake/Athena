@@ -55,9 +55,20 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
           <div className="fixed inset-0 z-[60] flex items-start justify-center pt-[15vh] px-4 pointer-events-none">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: -20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: -20 }}
-              className="w-full max-w-2xl glass-base border border-white/10 rounded-xl shadow-2xl overflow-hidden pointer-events-auto"
+              animate={{ 
+                opacity: 1, 
+                scale: 1, 
+                y: 0,
+                transition: {
+                  type: "spring",
+                  stiffness: 300,
+                  damping: 25,
+                  staggerChildren: 0.05,
+                  delayChildren: 0.1
+                }
+              }}
+              exit={{ opacity: 0, scale: 0.95, y: -20, transition: { duration: 0.2 } }}
+              className="w-full max-w-2xl glass-base border border-white/10 rounded-xl shadow-2xl overflow-hidden pointer-events-auto will-change-motion"
             >
               <form onSubmit={handleSearch} className="relative">
                 <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
@@ -98,8 +109,14 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
                       { icon: Orbit, label: 'Emergent Intelligence Patterns', value: 'Emergent Intelligence' },
                       { icon: History, label: 'Historical Convergence Events', value: 'Historical Convergence' }
                     ].map((item) => (
-                      <button
+                      <motion.button
                         key={item.value}
+                        variants={{
+                          hidden: { opacity: 0, x: -10 },
+                          visible: { opacity: 1, x: 0 }
+                        }}
+                        initial="hidden"
+                        animate="visible"
                         onClick={() => {
                           setQuery(item.value)
                           navigate(`/search?q=${encodeURIComponent(item.value)}`)
@@ -109,7 +126,7 @@ export function SearchModal({ isOpen, onClose }: SearchModalProps) {
                       >
                         <item.icon className="w-4 h-4 text-text-ghost group-hover:text-accent-primary" />
                         <span>{item.label}</span>
-                      </button>
+                      </motion.button>
                     ))}
                   </div>
                 </div>
