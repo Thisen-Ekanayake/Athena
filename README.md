@@ -1,76 +1,168 @@
 # Athena
 
-Athena is a sophisticated data acquisition and RAG (Retrieval-Augmented Generation) system designed to aggregate, process, and rank information from various AI research and industry sources. It provides a unified platform for tracking AI trends, research papers, and industry news.
+> AI research intelligence — aggregate, process, rank, and explore content from across the AI landscape.
 
-## 🚀 Quick Start
+```mermaid
+graph LR
+    subgraph Sources
+        A1[ArXiv]
+        A2[Semantic Scholar]
+        A3[Papers With Code]
+        A4[RSS Feeds]
+        A5[Playwright Scrapers]
+    end
 
-### 1. Environment Setup
+    subgraph Pipeline
+        B1[Scraper Layer]
+        B2[Celery Workers]
+        B3[Embeddings]
+        B4[Clustering]
+        B5[Scoring]
+        B6[Summarisation]
+    end
+
+    subgraph Storage
+        C1[(PostgreSQL)]
+        C2[(Qdrant)]
+        C3[(Redis)]
+    end
+
+    subgraph Serve
+        D1[FastAPI]
+        D2[Vue Frontend]
+    end
+
+    Sources --> B1
+    B1 --> B2
+    B2 --> B3 & B4 & B5 & B6
+    B3 --> C2
+    B2 --> C1
+    C3 --- B2
+    C1 & C2 --> D1
+    D1 --> D2
+```
+
+---
+
+## Architecture
+
+```mermaid
+graph TD
+    subgraph Acquisition ["Layer 1–2 · Acquisition & Polling"]
+        S1["arxiv.py"]
+        S2["semanticscholar.py"]
+        S3["paperswithcode.py"]
+        S4["rss.py"]
+        S5["lesswrong.py · substack.py\nthegradient.py · towardsdatascience.py"]
+    end
+
+    subgraph Pipeline ["Layer 3–4 · Processing (Celery Beat)"]
+        direction TB
+        T1["scoring.py\nevery 1 min"]
+        T2["embedding_worker.py\nevery 1 min"]
+        T3["clustering.py\nevery 6 h"]
+        T4["summarisation_tasks.py\non demand"]
+        T5["crawl sources\nevery 6 h"]
+    end
+
+    subgraph API ["Layer 5 · API  :8000"]
+        R1["/feed · /items · /sources"]
+        R2["/clusters · /trending"]
+        R3["/search · /qa · /score"]
+        R4["/sync"]
+    end
+
+    DB[(PostgreSQL\nContent · Clusters\nSources · Scores)]
+    VDB[(Qdrant\nEmbeddings)]
+    CACHE[(Redis\nBroker · Cache)]
+
+    Acquisition --> Pipeline
+    Pipeline <--> CACHE
+    Pipeline --> DB & VDB
+    DB & VDB --> API
+    API --> FE["Vue.js Frontend\n:5173"]
+```
+
+---
+
+## Data Flow
+
+```mermaid
+sequenceDiagram
+    participant Scraper
+    participant Celery
+    participant Postgres
+    participant Qdrant
+    participant API
+    participant UI
+
+    Scraper->>Postgres: insert raw ContentItem
+    Celery->>Postgres: enrich (citations, metadata)
+    Celery->>Qdrant: generate & store embeddings
+    Celery->>Postgres: run scoring & clustering
+    Celery->>Postgres: generate AI summary
+    UI->>API: GET /feed, /search, /qa
+    API->>Postgres: ranked content query
+    API->>Qdrant: semantic search
+    API-->>UI: ranked + enriched results
+```
+
+---
+
+## Quick Start
+
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-playwright install chromium
+# 1. Python env
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt && playwright install chromium
 cp .env.example .env
-```
 
-### 2. Infrastructure
-Start PostgreSQL, Redis, and Qdrant services:
-```bash
+# 2. Infrastructure
 docker-compose up -d
-```
 
-### 3. Initialize & Run
-```bash
-# Setup DB schema and seed initial sources
-python3 scripts/setup_project.py
-
-# Run the data ingestion pass
-python3 scripts/run_crawl.py
-
-# Start Celery worker for background enrichment and processing
+# 3. Init & run
+python3 scripts/setup_project.py   # schema + seed sources
+python3 scripts/run_crawl.py       # first ingestion pass
 celery -A athena.pipeline.tasks worker -l info --pool=threads
 ```
 
-## 🏗 Architecture & Layers
+**Services**
 
-Athena is built with a layered architecture to ensure scalability and separation of concerns:
+| Service | Port |
+|---------|------|
+| FastAPI | 8000 |
+| Vue Frontend | 5173 |
+| PostgreSQL | 5432 |
+| Redis | 6379 |
+| Qdrant | 6333 |
 
-- **Layer 1: Acquisition**: Connectors for ArXiv, Semantic Scholar, and Papers With Code.
-- **Layer 2: Polling**: Scheduled RSS/API polling for major AI companies (OpenAI, DeepMind, Meta, etc.).
-- **Layer 3: Scoring**: Multi-signal scoring system based on citations, recency, and engagement.
-- **Layer 4: Enrichment**: Automated summarization, embedding generation, and clustering.
-- **Layer 5: API**: Unified FastAPI application serving the research intelligence feed.
+---
 
-## 🛠 Key Features
+## Stack
 
-- **Multi-Source Ingestion**: 
-  - **Connectors**: ArXiv, Semantic Scholar, Papers With Code.
-  - **RSS Feeds**: Major AI lab blogs and news.
-  - **Headless Scraping**: Playwright-based scrapers for The Gradient, Towards Data Science, LessWrong, and Substack.
-- **Intelligent Processing**: 
-  - **Enrichment**: Citation counts and paper metadata enrichment.
-  - **RAG Ready**: Qdrant vector database integration for semantic search.
-  - **Summarization**: Automated AI-generated summaries of lengthy articles.
-- **Advanced API**: 
-  - **Routers**: Feed, Items, Clusters, Trending, Search, and Sources.
-  - **Q&A System**: Integrated Q&A API for interacting with research content.
-  - **Scoring & Ranking**: Dynamic ranking based on custom weight profiles.
+```mermaid
+graph LR
+    FE["Vue 3 + Vite"]
+    BE["FastAPI + Uvicorn"]
+    WQ["Celery + Redis"]
+    DB["PostgreSQL\n(SQLAlchemy)"]
+    VDB["Qdrant\n(vector search)"]
+    LLM["OpenAI\n(summaries · QA · embeddings)"]
+    ML["scikit-learn · UMAP · HDBSCAN\n(clustering)"]
 
-## 🤝 Contributing
+    FE <--> BE
+    BE <--> DB & VDB
+    WQ --> DB & VDB & LLM & ML
+```
 
-Contributions are welcome! Please follow these steps:
-1. Fork the project.
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`).
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`).
-4. Push to the branch (`git push origin feature/AmazingFeature`).
-5. Open a Pull Request.
+---
 
-## 📜 License
+## Contributing
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+1. Fork → `git checkout -b feature/your-feature`
+2. Commit → `git commit -m 'feat: description'`
+3. PR → open against `main`
 
-## 📂 Documentation
+## License
 
-For detailed technical guides and component breakdowns:
-- [User Guide](USER_GUIDE.md) - Full setup and execution manual.
-- [Codebase Documentation](docs/) - Technical details of every script and module.
+MIT — see [LICENSE](LICENSE)
