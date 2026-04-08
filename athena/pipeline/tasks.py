@@ -113,6 +113,49 @@ def enqueue_tier2_summaries():
     logger.info(f"Queued {len(items)} Tier 2 items for standard summarisation.")
 
 
+def _publish_sync_event(payload: dict):
+    """Publish a structured sync progress event to Redis."""
+    import json
+    from athena.core.logging import SYNC_LOG_CHANNEL
+    try:
+        r = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        r.publish(SYNC_LOG_CHANNEL, json.dumps(payload))
+    except Exception as e:
+        logger.warning(f"Failed to publish sync event: {e}")
+
+
+def _publish_crawl_progress(status: str):
+    """Increment the sync counter and emit progress/done events."""
+    try:
+        r = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        if not r.exists('athena:sync:state'):
+            return
+
+        r.hincrby('athena:sync:state', 'completed', 1)
+        if status == 'error':
+            r.hincrby('athena:sync:state', 'errors', 1)
+
+        state = {k.decode(): v.decode() for k, v in r.hgetall('athena:sync:state').items()}
+        completed = int(state.get('completed', 0))
+        total = int(state.get('total', 0))
+        errors = int(state.get('errors', 0))
+
+        _publish_sync_event({'type': 'sync_progress', 'completed': completed, 'total': total})
+
+        if total > 0 and completed >= total:
+            overall = 'error' if errors == total else ('partial' if errors > 0 else 'done')
+            _publish_sync_event({
+                'type': 'sync_done',
+                'status': overall,
+                'completed': completed,
+                'errors': errors,
+                'total': total,
+            })
+            r.delete('athena:sync:state')
+    except Exception as e:
+        logger.warning(f"Failed to publish crawl progress: {e}")
+
+
 @celery_app.task
 def crawl_all_sources():
     logger.info("Starting manual sync of all sources...")
@@ -121,7 +164,16 @@ def crawl_all_sources():
         logger.warning("No active sources found to sync!")
         return
 
-    logger.info(f"Found {len(sources)} active sources. Enqueueing crawl tasks...")
+    total = len(sources)
+    try:
+        r = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        r.hset('athena:sync:state', mapping={'total': total, 'completed': 0, 'errors': 0})
+        r.expire('athena:sync:state', 7200)
+        _publish_sync_event({'type': 'sync_start', 'total': total})
+    except Exception as e:
+        logger.warning(f"Failed to initialise sync state: {e}")
+
+    logger.info(f"Found {total} active sources. Enqueueing crawl tasks...")
     for source in sources:
         crawl_source.delay(str(source.id))
     logger.info("All crawl tasks have been enqueued.")
@@ -131,10 +183,12 @@ def crawl_all_sources():
 def crawl_source(self, source_id: str):
     try:
         asyncio.run(_crawl_source_async(source_id, is_retry=self.request.retries > 0))
+        _publish_crawl_progress('success')
     except Exception as exc:
         logger.error(f"Task for source {source_id} failed: {exc}")
         if self.request.retries >= self.max_retries:
             _push_to_dlq(source_id, exc)
+            _publish_crawl_progress('error')
             return  # Drop - already in DLQ, no more retries
         raise self.retry(exc=exc, countdown=2 ** self.request.retries * 60)
 

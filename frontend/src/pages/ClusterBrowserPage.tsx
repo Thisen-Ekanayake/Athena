@@ -61,7 +61,7 @@ export function ClusterBrowserPage() {
               >
                 <Link to={`/clusters/${cluster.id}`} className="block h-full glass-opaque hover:glass-float rounded-2xl p-6 border border-white/5 hover:border-accent-primary/30 transition-all duration-500 shadow-lg">
                   <div className="flex justify-between items-start mb-4 gap-4">
-                    <h3 className="font-display font-bold text-lg text-white group-hover:text-accent-primary transition-colors line-clamp-2 leading-tight">
+                    <h3 className="font-display font-bold text-lg text-text-primary group-hover:text-accent-primary transition-colors line-clamp-2 leading-tight">
                       {cluster.label}
                     </h3>
                     <div className="flex flex-col items-end">
