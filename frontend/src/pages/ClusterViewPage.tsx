@@ -25,7 +25,7 @@ export function ClusterViewPage() {
                 <div className="w-8 h-8 rounded-lg bg-accent-secondary/10 border border-accent-secondary/20 flex items-center justify-center text-accent-secondary shadow-glow-secondary">
                   <Layers className="w-4 h-4" />
                 </div>
-                <h1 className="text-3xl font-display font-bold text-white tracking-tight truncate">
+                <h1 className="text-3xl font-display font-bold text-text-primary tracking-tight truncate">
                   {data ? data.cluster.label : 'Analyzing Node...'}
                 </h1>
               </div>
@@ -64,7 +64,7 @@ export function ClusterViewPage() {
           ) : (
             <div className="flex flex-col items-center justify-center py-32 text-center opacity-40">
               <Orbit className="w-12 h-12 text-text-ghost mb-4 animate-pulse" />
-              <h3 className="text-xl font-display font-medium text-white mb-2">Silent Silo</h3>
+              <h3 className="text-xl font-display font-medium text-text-primary mb-2">Silent Silo</h3>
               <p className="text-sm text-text-muted">No intelligence found within this localized structure.</p>
             </div>
           )}
