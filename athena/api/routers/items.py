@@ -109,7 +109,8 @@ def get_score_breakdown(
         select(ContentScore)
         .where(ContentScore.item_id == item_uuid)
         .order_by(desc(ContentScore.computed_at))
-    ).scalar_one_or_none()
+        .limit(1)
+    ).scalars().first()
     if not score_record:
         raise HTTPException(
             status_code=404,
