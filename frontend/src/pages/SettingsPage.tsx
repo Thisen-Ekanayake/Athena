@@ -4,6 +4,10 @@ import { Alert } from '../components/shared/Alert'
 import { Check, Orbit, ExternalLink, Shield, Cpu, Activity, Plus } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
+function safeHostname(url: string): string {
+  try { return new URL(url).hostname } catch { return url }
+}
+
 export function SettingsPage() {
   const { data: sources, isLoading: sourcesLoading } = useSources()
   const toggleSource = useToggleSource()
@@ -203,7 +207,7 @@ export function SettingsPage() {
                              <div className="flex flex-col">
                                <span className="text-[15px] font-bold text-white group-hover:text-accent-primary transition-colors">{source.name}</span>
                                <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-mono text-text-ghost hover:text-accent-primary flex items-center gap-1.5 mt-1 transition-colors">
-                                 {new URL(source.url).hostname} <ExternalLink className="w-3 h-3" />
+                                 {safeHostname(source.url)} <ExternalLink className="w-3 h-3" />
                                </a>
                              </div>
                            </td>

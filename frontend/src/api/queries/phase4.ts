@@ -1,6 +1,19 @@
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from '../client'
 
+interface ApiSignal {
+  score: number
+  label: string
+  weight: number
+}
+
+interface ApiScoreBreakdown {
+  composite_score: number
+  signals: Record<string, ApiSignal>
+  computed_at: string
+  is_trending: boolean
+}
+
 export interface ScoreBreakdown {
   score: number
   signals: {
@@ -10,14 +23,34 @@ export interface ScoreBreakdown {
     weight: number
   }[]
   computed_at: string
+  is_trending: boolean
+}
+
+const SIGNAL_LABELS: Record<string, string> = {
+  citation_impact: 'Citation Impact',
+  engagement: 'Engagement',
+  community_sentiment: 'Sentiment',
+  recency_velocity: 'Recency',
+  source_authority: 'Authority',
 }
 
 export const useScoreBreakdown = (itemId: string, enabled: boolean) => {
   return useQuery({
     queryKey: ['score-breakdown', itemId],
-    queryFn: async () => {
-      const { data } = await apiClient.get<ScoreBreakdown>(`/items/${itemId}/score-breakdown`)
-      return data
+    queryFn: async (): Promise<ScoreBreakdown> => {
+      const { data } = await apiClient.get<ApiScoreBreakdown>(`/items/${itemId}/score-breakdown`)
+      const signals = Object.entries(data.signals ?? {}).map(([key, s]) => ({
+        label: SIGNAL_LABELS[key] ?? key,
+        value: s.score,
+        max_value: 1,
+        weight: s.weight,
+      }))
+      return {
+        score: data.composite_score,
+        signals,
+        computed_at: data.computed_at,
+        is_trending: data.is_trending,
+      }
     },
     enabled,
     staleTime: 5 * 60 * 1000

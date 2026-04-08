@@ -66,7 +66,7 @@ export function FeedPage() {
                  </div>
                  <div>
                    <h2 className="text-xl font-display font-bold text-white tracking-tight">
-                     {data.pages[0].items[0].source.name}
+                     {data?.pages[0]?.items[0]?.source?.name}
                    </h2>
                    <p className="text-[11px] text-text-muted font-medium uppercase tracking-[0.2em]">Source Intelligence Stream</p>
                  </div>
