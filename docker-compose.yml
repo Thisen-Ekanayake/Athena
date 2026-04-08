@@ -18,16 +18,19 @@ services:
 
   worker:
     build: .
-    command: celery -A athena.pipeline.tasks worker --loglevel=info --pool=threads
+    command: celery -A athena.pipeline.tasks worker --loglevel=info --pool=threads -B
     env_file: .env
     environment:
       DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
       REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
     depends_on:
       - redis
       - db
+      - qdrant
     volumes:
       - .:/app
+      - athena_staging:/tmp/athena/staging
 
   frontend:
     build: ./frontend
@@ -69,3 +72,4 @@ services:
 volumes:
   postgres_data:
   qdrant_data:
+  athena_staging:
