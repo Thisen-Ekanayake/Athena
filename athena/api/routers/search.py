@@ -50,9 +50,9 @@ def _qdrant_search(
             ]
         )
 
-    results = client.search(
+    response = client.query_points(
         collection_name=settings.QDRANT_COLLECTION,
-        query_vector=vector,
+        query=vector,
         limit=limit,
         query_filter=query_filter,
     )
@@ -63,7 +63,7 @@ def _qdrant_search(
             "similarity": round(point.score, 4),
             "payload": point.payload or {},
         }
-        for point in results
+        for point in response.points
     ]
 
 
