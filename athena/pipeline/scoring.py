@@ -8,7 +8,9 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 
+import numpy as np
 import redis as redis_lib
+import mlflow
 from celery import shared_task
 from loguru import logger
 from sqlalchemy import select, update, text
@@ -307,11 +309,24 @@ def process_scoring_queue():
 
     logger.info(f"Processing scoring queue batch of {len(item_ids)} items.")
 
-    with SessionLocal() as session:
-        for item_id in item_ids:
-            score_item(item_id, session)
+    mlflow.set_experiment("athena-scoring")
+    with mlflow.start_run(run_name="process_scoring_queue"):
+        scores = []
+        with SessionLocal() as session:
+            for item_id in item_ids:
+                s = score_item(item_id, session)
+                if s is not None:
+                    scores.append(s)
 
-    update_category_ranks()
+        update_category_ranks()
+
+        mlflow.log_metrics({
+            "batch_size": len(item_ids),
+            "scored_count": len(scores),
+            **({"mean_score": float(np.mean(scores)),
+                "max_score": float(np.max(scores)),
+                "trending_count": sum(1 for s in scores if s >= 0.75)} if scores else {}),
+        })
 
 
 @shared_task
@@ -324,11 +339,25 @@ def score_all_items():
             select(ContentItem.id)
         ).scalars().all()
 
-    for item_id in items:
-        score_item(str(item_id))
+    mlflow.set_experiment("athena-scoring")
+    with mlflow.start_run(run_name="score_all_items"):
+        scores = []
+        for item_id in items:
+            s = score_item(str(item_id))
+            if s is not None:
+                scores.append(s)
 
-    update_category_ranks()
-    logger.info(f"Full re-score complete. {len(items)} items processed.")
+        update_category_ranks()
+
+        mlflow.log_metrics({
+            "total_items": len(items),
+            "scored_count": len(scores),
+            **({"mean_score": float(np.mean(scores)),
+                "median_score": float(np.median(scores)),
+                "p90_score": float(np.percentile(scores, 90)),
+                "trending_count": sum(1 for s in scores if s >= 0.75)} if scores else {}),
+        })
+        logger.info(f"Full re-score complete. {len(items)} items processed.")
 
 
 @shared_task
@@ -341,11 +370,23 @@ def refresh_recency_scores():
             select(ContentItem.id).where(ContentItem.scored_at.isnot(None))
         ).scalars().all()
 
-    for item_id in items:
-        score_item(str(item_id))
+    mlflow.set_experiment("athena-scoring")
+    with mlflow.start_run(run_name="refresh_recency_scores"):
+        scores = []
+        for item_id in items:
+            s = score_item(str(item_id))
+            if s is not None:
+                scores.append(s)
 
-    update_category_ranks()
-    logger.info(f"Recency refresh complete. {len(items)} items re-scored.")
+        update_category_ranks()
+
+        mlflow.log_metrics({
+            "total_items": len(items),
+            "scored_count": len(scores),
+            **({"mean_score": float(np.mean(scores)),
+                "median_score": float(np.median(scores))} if scores else {}),
+        })
+        logger.info(f"Recency refresh complete. {len(items)} items re-scored.")
 
 
 @shared_task
