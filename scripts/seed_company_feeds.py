@@ -13,8 +13,7 @@ COMPANY_FEEDS = [
     {"name": "BAIR", "url": "https://bair.berkeley.edu/blog/feed.xml"},
     {"name": "Google Research", "url": "https://blog.research.google/feeds/posts/default"},
     {"name": "Meta AI", "url": "https://ai.meta.com/blog/rss/"},
-    {"name": "Anthropic", "url": "https://www.anthropic.com/feed.xml"},
-    {"name": "Apple Machine Learning", "url": "https://machinelearning.apple.com/feed.xml"},
+{"name": "Apple Machine Learning", "url": "https://machinelearning.apple.com/feed.xml"},
 ]
 
 
