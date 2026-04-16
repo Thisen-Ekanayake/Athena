@@ -29,3 +29,4 @@ pdfplumber
 umap-learn
 hdbscan
 scikit-learn
+mlflow
