@@ -7,10 +7,10 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 from openai import OpenAI, RateLimitError
 from sqlalchemy import select, update
-import redis as redis_lib
 
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem
+from athena.core.redis_client import get_redis
 from athena.pipeline.preprocessing import preprocess
 from athena.pipeline.celery_app import celery_app
 
@@ -51,8 +51,7 @@ def process_embedding_queue():
     """
     init_qdrant()
 
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    r = redis_lib.from_url(redis_url)
+    r = get_redis()
 
     item_ids = []
     # Pull up to BATCH_SIZE items
@@ -163,14 +162,14 @@ def process_batch(item_ids: List[str]):
             logger.info(f"Successfully embedded and updated {len(valid_items)} items.")
 
             # Push embedded items to scoring queue for Layer 3
-            r = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+            r = get_redis()
             for item in valid_items:
                 r.rpush("athena:scoring_queue", str(item.id))
             logger.info(f"Queued {len(valid_items)} items for scoring.")
 
         except Exception as e:
             logger.error(f"Failed to process embedding batch: {e}")
-            r = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+            r = get_redis()
             for item_id in item_ids:
                 r.rpush("athena:embedding_queue", item_id)
             session.rollback()
