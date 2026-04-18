@@ -9,7 +9,6 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 
 import numpy as np
-import redis as redis_lib
 import mlflow
 from celery import shared_task
 from loguru import logger
@@ -19,6 +18,7 @@ from athena.database.db import SessionLocal
 from athena.core.models import (
     ContentItem, ContentScore, ScoringConfig, MetricSnapshot, Source
 )
+from athena.core.redis_client import get_redis
 from athena.pipeline.signals import (
     compute_citation_score,
     compute_engagement_score,
@@ -34,6 +34,9 @@ from athena.pipeline.signals import (
 
 SCORING_QUEUE_KEY = "athena:scoring_queue"
 BATCH_SIZE = 20
+# Stream rows from the DB in bounded chunks so full-corpus tasks don't
+# materialise every ContentItem in RAM at once.
+CHUNK_SIZE = 500
 
 
 # ──────────────────────────────────────────────────────────
@@ -294,8 +297,7 @@ def _get_celery_app():
 @shared_task
 def process_scoring_queue():
     """Pull items from the scoring queue and score them."""
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    r = redis_lib.from_url(redis_url)
+    r = get_redis()
 
     item_ids = []
     for _ in range(BATCH_SIZE):
@@ -329,20 +331,29 @@ def process_scoring_queue():
         })
 
 
+def _iter_item_ids(stmt) -> Any:
+    """Yield ContentItem UUIDs from ``stmt`` in ``CHUNK_SIZE`` rows at a time.
+
+    Uses ``yield_per`` so the SQLAlchemy/psycopg2 driver streams rows in a
+    server-side cursor instead of loading the whole result set into memory.
+    """
+    with SessionLocal() as session:
+        result = session.execute(stmt).execution_options(yield_per=CHUNK_SIZE)
+        for row in result.scalars():
+            yield row
+
+
 @shared_task
 def score_all_items():
     """Batch re-score all items (triggered by config change or enrichment refresh)."""
     logger.info("Starting full corpus re-score...")
 
-    with SessionLocal() as session:
-        items = session.execute(
-            select(ContentItem.id)
-        ).scalars().all()
-
     mlflow.set_experiment("athena-scoring")
     with mlflow.start_run(run_name="score_all_items"):
         scores = []
-        for item_id in items:
+        total = 0
+        for item_id in _iter_item_ids(select(ContentItem.id)):
+            total += 1
             s = score_item(str(item_id))
             if s is not None:
                 scores.append(s)
@@ -350,14 +361,14 @@ def score_all_items():
         update_category_ranks()
 
         mlflow.log_metrics({
-            "total_items": len(items),
+            "total_items": total,
             "scored_count": len(scores),
             **({"mean_score": float(np.mean(scores)),
                 "median_score": float(np.median(scores)),
                 "p90_score": float(np.percentile(scores, 90)),
                 "trending_count": sum(1 for s in scores if s >= 0.75)} if scores else {}),
         })
-        logger.info(f"Full re-score complete. {len(items)} items processed.")
+        logger.info(f"Full re-score complete. {total} items processed.")
 
 
 @shared_task
@@ -365,15 +376,14 @@ def refresh_recency_scores():
     """Periodic task: recency scores drift as time passes — recompute for all scored items."""
     logger.info("Refreshing recency scores...")
 
-    with SessionLocal() as session:
-        items = session.execute(
-            select(ContentItem.id).where(ContentItem.scored_at.isnot(None))
-        ).scalars().all()
+    stmt = select(ContentItem.id).where(ContentItem.scored_at.isnot(None))
 
     mlflow.set_experiment("athena-scoring")
     with mlflow.start_run(run_name="refresh_recency_scores"):
         scores = []
-        for item_id in items:
+        total = 0
+        for item_id in _iter_item_ids(stmt):
+            total += 1
             s = score_item(str(item_id))
             if s is not None:
                 scores.append(s)
@@ -381,12 +391,12 @@ def refresh_recency_scores():
         update_category_ranks()
 
         mlflow.log_metrics({
-            "total_items": len(items),
+            "total_items": total,
             "scored_count": len(scores),
             **({"mean_score": float(np.mean(scores)),
                 "median_score": float(np.median(scores))} if scores else {}),
         })
-        logger.info(f"Recency refresh complete. {len(items)} items re-scored.")
+        logger.info(f"Recency refresh complete. {total} items re-scored.")
 
 
 @shared_task
@@ -395,17 +405,28 @@ def take_metric_snapshot():
     logger.info("Taking daily metric snapshot...")
     now = datetime.now(timezone.utc)
 
+    total = 0
     with SessionLocal() as session:
-        items = session.execute(
+        result = session.execute(
             select(ContentItem)
-        ).scalars().all()
+        ).execution_options(yield_per=CHUNK_SIZE)
 
-        for item in items:
+        source_url_cache: Dict[Any, str] = {}
+
+        for item in result.scalars():
             metadata = item.extra_data or {}
-            source = session.execute(
-                select(Source).where(Source.id == item.source_id)
-            ).scalar_one_or_none()
-            source_url = source.url if source else ""
+            # Cache source URLs per-run to avoid one SELECT per item when many items
+            # share the same source.
+            src_id = item.source_id
+            if src_id in source_url_cache:
+                source_url = source_url_cache[src_id]
+            else:
+                source = session.execute(
+                    select(Source).where(Source.id == src_id)
+                ).scalar_one_or_none()
+                source_url = source.url if source else ""
+                source_url_cache[src_id] = source_url
+
             eng_signals = _extract_engagement_signals(metadata, source_url)
             eng_raw = sum(eng_signals) / len(eng_signals) if eng_signals else 0.0
 
@@ -416,9 +437,13 @@ def take_metric_snapshot():
                 snapshot_date=now,
             )
             session.add(snapshot)
+            total += 1
+
+            if total % CHUNK_SIZE == 0:
+                session.commit()
 
         session.commit()
-        logger.info(f"Metric snapshot complete. {len(items)} snapshots saved.")
+        logger.info(f"Metric snapshot complete. {total} snapshots saved.")
 
 
 @shared_task
