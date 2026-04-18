@@ -3,6 +3,7 @@ import numpy as np
 from typing import List
 from loguru import logger
 from qdrant_client import QdrantClient
+from qdrant_client.http import models as qmodels
 from sqlalchemy import select, update
 import umap
 import mlflow
@@ -19,6 +20,10 @@ from athena.pipeline.celery_app import celery_app
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 COLLECTION_NAME = "athena_content"
 STABILITY_THRESHOLD = 0.85
+# How many neighbour queries to send Qdrant in a single round-trip.
+LINK_QUERY_BATCH = 64
+# How many neighbours (including self) to ask for per item.
+LINK_TOPK = 6
 
 
 @celery_app.task
@@ -227,53 +232,111 @@ def generate_tfidf_label(texts: List[str]) -> str:
 
 @celery_app.task
 def compute_item_links():
-    """
-    Populate item_links table using Qdrant ANN search.
-    Detects cross_cluster vs nearest_neighbour link types.
+    """Populate ``item_links`` using Qdrant ANN search.
+
+    Previous implementation issued two Qdrant round-trips per item (retrieve
+    + query_points), turning a 10k-item run into ~20k RPCs. We now:
+
+    1. Scroll all embedded points once (payload-free, vectors included).
+    2. Fire neighbour queries in batches of ``LINK_QUERY_BATCH`` via
+       ``query_batch_points`` so each network round-trip resolves many items.
     """
     logger.info("Computing nearest neighbour links...")
     qdrant = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+
+    # Guard: collection may not exist yet on a fresh install.
+    collections = {c.name for c in qdrant.get_collections().collections}
+    if COLLECTION_NAME not in collections:
+        logger.warning(
+            f"Qdrant collection '{COLLECTION_NAME}' does not exist yet. "
+            "Skipping link computation."
+        )
+        return
+
+    # 1. Scroll every point (with vectors) in one pass.
+    all_ids: List[str] = []
+    id_to_vector: dict = {}
+    offset = None
+    while True:
+        points, next_offset = qdrant.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=1000,
+            with_vectors=True,
+            with_payload=False,
+            offset=offset,
+        )
+        for p in points:
+            pid = str(p.id)
+            all_ids.append(pid)
+            id_to_vector[pid] = p.vector
+        if not next_offset:
+            break
+        offset = next_offset
+
+    if not all_ids:
+        logger.warning("No embedded points found — nothing to link.")
+        return
+
     with SessionLocal() as session:
-        # Get all embedded items with their cluster assignments
-        items = session.execute(
-            select(ContentItem).where(ContentItem.embedding_id.isnot(None))
-        ).scalars().all()
+        # Fetch only the columns we need (id + cluster_id) and restrict to the
+        # ids that actually exist in Qdrant.
+        rows = session.execute(
+            select(ContentItem.id, ContentItem.cluster_id)
+            .where(ContentItem.embedding_id.isnot(None))
+        ).all()
+        item_cluster_map = {str(r.id): r.cluster_id for r in rows}
 
-        # Build a cluster_id lookup for cross-cluster detection
-        item_cluster_map = {
-            str(item.id): item.cluster_id for item in items
-        }
+        # Filter to items that have both a DB row AND a Qdrant vector.
+        target_ids = [pid for pid in all_ids if pid in item_cluster_map]
+        logger.info(
+            f"Batch-querying Qdrant for {len(target_ids)} items "
+            f"({LINK_QUERY_BATCH} per round-trip)."
+        )
 
-        for item in items:
-            # Search Qdrant for top-6 (including self)
-            retrieved = qdrant.retrieve(COLLECTION_NAME, ids=[str(item.id)], with_vectors=True)
-            query_response = qdrant.query_points(
+        total_links = 0
+        for batch_start in range(0, len(target_ids), LINK_QUERY_BATCH):
+            batch_ids = target_ids[batch_start:batch_start + LINK_QUERY_BATCH]
+            requests = [
+                qmodels.QueryRequest(
+                    query=id_to_vector[pid],
+                    limit=LINK_TOPK,
+                    with_payload=False,
+                )
+                for pid in batch_ids
+            ]
+            responses = qdrant.query_batch_points(
                 collection_name=COLLECTION_NAME,
-                query=retrieved[0].vector,
-                limit=6
+                requests=requests,
             )
 
-            for res in query_response.points:
-                if str(res.id) == str(item.id):
-                    continue
+            for source_pid, response in zip(batch_ids, responses):
+                source_uuid = UUID(source_pid)
+                source_cluster = item_cluster_map.get(source_pid)
 
-                # Determine link type: cross_cluster if clusters differ
-                target_cluster = item_cluster_map.get(str(res.id))
-                if (
-                    item.cluster_id
-                    and target_cluster
-                    and item.cluster_id != target_cluster
-                ):
-                    link_type = 'cross_cluster'
-                else:
-                    link_type = 'nearest_neighbour'
+                for res in response.points:
+                    target_pid = str(res.id)
+                    if target_pid == source_pid:
+                        continue
 
-                link = ItemLink(
-                    source_item_id=item.id,
-                    target_item_id=UUID(res.id),
-                    similarity_score=res.score,
-                    link_type=link_type
-                )
-                session.add(link)
+                    target_cluster = item_cluster_map.get(target_pid)
+                    if (
+                        source_cluster
+                        and target_cluster
+                        and source_cluster != target_cluster
+                    ):
+                        link_type = 'cross_cluster'
+                    else:
+                        link_type = 'nearest_neighbour'
+
+                    session.add(ItemLink(
+                        source_item_id=source_uuid,
+                        target_item_id=UUID(target_pid),
+                        similarity_score=res.score,
+                        link_type=link_type,
+                    ))
+                    total_links += 1
+
+            # Commit per batch so long runs don't hold a single huge transaction.
             session.commit()
-    logger.info("Item links updated.")
+
+    logger.info(f"Item links updated — {total_links} rows written.")
