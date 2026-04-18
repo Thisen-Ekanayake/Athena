@@ -4,7 +4,6 @@ import time
 import asyncio
 import hashlib
 import re
-import redis as redis_lib
 from typing import Optional
 from athena.database.operations import get_active_sources, save_content_items
 from athena.scrapers.arxiv import ArXivScraper
@@ -13,11 +12,16 @@ from athena.scrapers.scraping import PlaywrightScraper
 from athena.scrapers.lesswrong import LessWrongScraper, AIAlignmentForumScraper
 from athena.scrapers.substack import SubstackScraper
 from athena.core.models import SourceType
+from athena.core.redis_client import get_redis
 from loguru import logger
 import athena.pipeline.embedding_worker
 import athena.pipeline.clustering
 import athena.pipeline.scoring
 from athena.core.logging import setup_redis_logging
+
+# Staging directory for full-text files (configurable via env; defaults to persistent
+# /var/lib path so that container restarts don't wipe pending work).
+STAGING_DIR = os.getenv("ATHENA_STAGING_DIR", "/var/lib/athena/staging")
 
 # Initialize Redis logging sink for live sync feedback
 setup_redis_logging()
@@ -30,8 +34,7 @@ DLQ_KEY = "athena:dlq"  # Redis list for permanently failed tasks
 def _push_to_dlq(source_id: str, exc: Exception):
     """Push a permanently failed task to the dead-letter queue in Redis."""
     import json
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    r = redis_lib.from_url(redis_url)
+    r = get_redis()
     payload = json.dumps({"source_id": source_id, "error": str(exc), "ts": time.time()})
     r.rpush(DLQ_KEY, payload)
     logger.critical(f"[DLQ] Permanent failure for source {source_id}: {exc}")
@@ -118,7 +121,7 @@ def _publish_sync_event(payload: dict):
     import json
     from athena.core.logging import SYNC_LOG_CHANNEL
     try:
-        r = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        r = get_redis()
         r.publish(SYNC_LOG_CHANNEL, json.dumps(payload))
     except Exception as e:
         logger.warning(f"Failed to publish sync event: {e}")
@@ -127,7 +130,7 @@ def _publish_sync_event(payload: dict):
 def _publish_crawl_progress(status: str):
     """Increment the sync counter and emit progress/done events."""
     try:
-        r = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        r = get_redis()
         if not r.exists('athena:sync:state'):
             return
 
@@ -166,7 +169,7 @@ def crawl_all_sources():
 
     total = len(sources)
     try:
-        r = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        r = get_redis()
         r.hset('athena:sync:state', mapping={'total': total, 'completed': 0, 'errors': 0})
         r.expire('athena:sync:state', 7200)
         _publish_sync_event({'type': 'sync_start', 'total': total})
@@ -357,13 +360,24 @@ def stage_content_item(self, url: str, text: str, title: str, item_id: Optional[
     Phase 5: Write full text to staging directory, update ContentItem.full_text_path,
     and push the item UUID onto the Redis embedding queue.
     """
-    import os
     from sqlalchemy import update, select
     from athena.database.db import SessionLocal
     from athena.core.models import ContentItem
 
-    staging_dir = "/tmp/athena/staging"
-    os.makedirs(staging_dir, exist_ok=True)
+    try:
+        os.makedirs(STAGING_DIR, exist_ok=True)
+    except OSError as mkdir_err:
+        # Fall back to /tmp if the configured dir isn't writable (e.g. dev machines
+        # where /var/lib/athena doesn't exist). Emit a warning so ops can fix it.
+        fallback = "/tmp/athena/staging"
+        logger.warning(
+            f"Staging dir {STAGING_DIR!r} not writable ({mkdir_err}); "
+            f"falling back to {fallback!r}"
+        )
+        os.makedirs(fallback, exist_ok=True)
+        staging_dir = fallback
+    else:
+        staging_dir = STAGING_DIR
 
     try:
         # Use item_id as filename if provided, else fall back to URL hash
@@ -390,8 +404,7 @@ def stage_content_item(self, url: str, text: str, title: str, item_id: Optional[
                 identifier = str(item.id)  # Use the real DB UUID for the queue
 
         # Push the UUID onto the Redis embedding queue
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        r = redis_lib.from_url(redis_url)
+        r = get_redis()
         r.rpush("athena:embedding_queue", identifier)
         logger.info(f"Staged item to {file_path}, updated DB, and queued UUID {identifier}.")
     except Exception as exc:
