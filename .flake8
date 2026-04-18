@@ -7,3 +7,9 @@ exclude =
     venv,
     .git,
     frontend/node_modules
+
+# Seed scripts are aligned dict-literal data tables: column alignment is the
+# readability feature, so the usual whitespace/line-length rules don't apply.
+per-file-ignores =
+    scripts/seed_100_sources.py:E231,E402,E501
+    scripts/seed_company_feeds.py:E122,E231,E402,E501

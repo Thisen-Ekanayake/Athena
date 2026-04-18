@@ -2,8 +2,8 @@ import json
 from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from athena.pipeline.tasks import crawl_all_sources
-from athena.core.logging import SYNC_LOG_CHANNEL, REDIS_URL
-import redis
+from athena.core.logging import SYNC_LOG_CHANNEL
+from athena.core.redis_client import get_redis
 import asyncio
 from loguru import logger
 
@@ -26,11 +26,8 @@ async def sync_events(request: Request):
     """
     Stream live sync logs to the client via Server-Sent Events (SSE).
     """
-    def get_redis_client():
-        return redis.from_url(REDIS_URL)
-
     async def log_generator():
-        r = get_redis_client()
+        r = get_redis()
         pubsub = r.pubsub()
         pubsub.subscribe(SYNC_LOG_CHANNEL)
 

@@ -10,7 +10,6 @@ import os
 import argparse
 from datetime import datetime, timedelta, timezone
 
-import redis
 from dotenv import load_dotenv
 from sqlalchemy import select
 
@@ -19,6 +18,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from athena.database.db import SessionLocal  # noqa: E402
 from athena.core.models import Source, FetchLog  # noqa: E402
+from athena.core.redis_client import get_redis  # noqa: E402
 
 
 def get_health_report(hours: int = 48):
@@ -50,8 +50,7 @@ def get_health_report(hours: int = 48):
             print(f"  {source.name:<30} {active_flag:<10} {total:>5}  {successes:>5}  {errors:>5}  {rate:>6.1f}%")
 
         # DLQ status
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        r = redis.from_url(redis_url)
+        r = get_redis()
         dlq_len = r.llen("athena:dlq")
         embed_queue = r.llen("athena:embedding_queue")
 

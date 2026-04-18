@@ -1,6 +1,7 @@
 import os
-import redis
 from loguru import logger
+
+from athena.core.redis_client import get_redis
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 SYNC_LOG_CHANNEL = "athena:sync:logs"
@@ -8,7 +9,7 @@ SYNC_LOG_CHANNEL = "athena:sync:logs"
 
 class RedisSink:
     def __init__(self):
-        self.redis_client = redis.from_url(REDIS_URL)
+        self.redis_client = get_redis()
 
     def write(self, message):
         # message is a string from loguru

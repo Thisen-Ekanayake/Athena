@@ -11,6 +11,7 @@ from jose import jwt
 
 from athena.database.db import SessionLocal
 from athena.api.config import settings
+from athena.core.redis_client import get_redis as _shared_get_redis
 
 # ── DB Session ──────────────────────────────────────────
 
@@ -26,22 +27,10 @@ def get_db():
 
 # ── Redis Client ────────────────────────────────────────
 
-_redis_pool: redis_lib.ConnectionPool | None = None
-
-
-def get_redis_pool() -> redis_lib.ConnectionPool:
-    global _redis_pool
-    if _redis_pool is None:
-        _redis_pool = redis_lib.ConnectionPool.from_url(
-            settings.REDIS_URL, decode_responses=True
-        )
-    return _redis_pool
-
 
 def get_redis() -> redis_lib.Redis:
-    """Return a Redis client from the connection pool."""
-    pool = get_redis_pool()
-    return redis_lib.Redis(connection_pool=pool)
+    """Return a Redis client from the shared connection pool."""
+    return _shared_get_redis(decode_responses=True)
 
 
 # ── JWT Auth (optional — single shared token for now) ───
