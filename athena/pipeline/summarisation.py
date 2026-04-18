@@ -9,15 +9,14 @@ import json
 from datetime import datetime, timezone
 from typing import List, Optional
 
-import redis as redis_lib
 from pydantic import BaseModel, validator
 from loguru import logger
 from sqlalchemy import select
 
 from athena.core.models import PromptVersion, SummaryUsageLog, JobType
+from athena.core.redis_client import get_redis
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-redis = redis_lib.from_url(REDIS_URL)
+redis = get_redis()
 SUMMARY_DAILY_BUDGET_USD = float(os.getenv("SUMMARY_DAILY_BUDGET_USD", "5.00"))
 
 
