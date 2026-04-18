@@ -195,10 +195,8 @@ def scoring_health(db: Session = Depends(get_db)):
     ).scalar()
 
     # Queue depth
-    import redis as redis_lib
-    import os
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    r = redis_lib.from_url(redis_url)
+    from athena.core.redis_client import get_redis
+    r = get_redis()
     queue_depth = r.llen("athena:scoring_queue")
 
     return {
