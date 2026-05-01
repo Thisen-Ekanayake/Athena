@@ -1,4 +1,5 @@
-import { Newspaper, Flame, Clock, Filter, List, Grid2X2 } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { Newspaper, Flame, Clock, Filter, List, Grid2X2, ChevronDown } from 'lucide-react'
 
 interface TopBarProps {
   sort: 'score' | 'date' | 'trending'
@@ -11,12 +12,31 @@ interface TopBarProps {
   setViewMode: (v: 'compact' | 'expanded') => void
 }
 
-export function FeedTopBar({ 
-  sort, setSort, 
+const DATE_OPTIONS = [
+  { value: '24h', label: '24H' },
+  { value: '7d',  label: '7D'  },
+  { value: '30d', label: '30D' },
+  { value: 'all', label: 'INF' },
+]
+
+export function FeedTopBar({
+  sort, setSort,
   category, setCategory,
   dateRange, setDateRange,
   viewMode, setViewMode
 }: TopBarProps) {
+  const [dateOpen, setDateOpen] = useState(false)
+  const dateRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (dateRef.current && !dateRef.current.contains(e.target as Node)) {
+        setDateOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [])
   
   const categories = [
     { id: null, label: 'All Intelligence' },
@@ -48,20 +68,35 @@ export function FeedTopBar({
       {/* Controls Container */}
       <div className="flex items-center gap-3">
         {/* Date Filter */}
-        <div className="relative group">
-          <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-text-ghost">
-            <Filter className="w-3 h-3" />
-          </div>
-          <select 
-            value={dateRange}
-            onChange={(e) => setDateRange(e.target.value as any)}
-            className="appearance-none bg-void/40 border border-white/5 text-text-secondary text-[11px] font-bold rounded-lg pl-8 pr-8 py-2 focus:outline-none focus:border-accent-primary/50 cursor-pointer hover:bg-white/5 transition-all uppercase tracking-tight"
+        <div className="relative" ref={dateRef}>
+          <button
+            onClick={() => setDateOpen(o => !o)}
+            className="flex items-center gap-2 glass-base text-text-secondary text-[11px] font-bold rounded-lg px-3 py-2 hover:glass-base-hover transition-all uppercase tracking-tight"
           >
-            <option value="24h">Sort: 24H</option>
-            <option value="7d">Sort: 7D</option>
-            <option value="30d">Sort: 30D</option>
-            <option value="all">Sort: INF</option>
-          </select>
+            <Filter className="w-3 h-3 text-text-ghost" />
+            {DATE_OPTIONS.find(o => o.value === dateRange)?.label}
+            <ChevronDown className={`w-3 h-3 text-text-ghost transition-transform duration-200 ${dateOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {dateOpen && (
+            <div
+              className="absolute right-0 mt-1 w-28 rounded-xl shadow-2xl z-50 overflow-hidden border border-[var(--border-default)]"
+              style={{ background: 'var(--color-void)' }}
+            >
+              {DATE_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => { setDateRange(opt.value as any); setDateOpen(false) }}
+                  className={`w-full text-left px-4 py-2.5 text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                    dateRange === opt.value
+                      ? 'text-accent-primary bg-accent-primary/10'
+                      : 'text-text-secondary hover:text-text-primary hover:bg-[var(--border-subtle)]'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         
         {/* Sort Switcher */}
