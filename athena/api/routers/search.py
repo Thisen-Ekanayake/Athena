@@ -19,8 +19,9 @@ router = APIRouter(prefix="/api/v1", tags=["Search"])
 def _embed_query(query_text: str) -> list[float]:
     """Embed a search query using OpenAI text-embedding-3-small."""
     import openai
+    from athena.core.config_store import get_setting
 
-    client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+    client = openai.OpenAI(api_key=get_setting("OPENAI_API_KEY"))
     response = client.embeddings.create(
         input=query_text,
         model="text-embedding-3-small",

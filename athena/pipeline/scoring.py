@@ -73,7 +73,8 @@ def _get_openai_client():
     """Lazy-load OpenAI client."""
     try:
         from openai import OpenAI
-        api_key = os.getenv("OPENAI_API_KEY")
+        from athena.core.config_store import get_setting
+        api_key = get_setting("OPENAI_API_KEY")
         if api_key:
             return OpenAI(api_key=api_key)
     except ImportError:

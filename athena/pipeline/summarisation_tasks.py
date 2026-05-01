@@ -19,7 +19,8 @@ from athena.pipeline.summarisation import (
 
 def _get_openai_client():
     from openai import OpenAI
-    api_key = os.getenv("OPENAI_API_KEY")
+    from athena.core.config_store import get_setting
+    api_key = get_setting("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY is not set.")
     return OpenAI(api_key=api_key)
