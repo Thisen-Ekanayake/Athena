@@ -1,4 +1,3 @@
-import os
 import httpx
 from typing import Dict, Any, Optional
 from loguru import logger
@@ -8,7 +7,8 @@ class SemanticScholarEnricher:
     BASE_URL = "https://api.semanticscholar.org/graph/v1"
 
     def __init__(self):
-        self.api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+        from athena.core.config_store import get_setting
+        self.api_key = get_setting("SEMANTIC_SCHOLAR_API_KEY")
         self.headers = {"x-api-key": self.api_key} if self.api_key else {}
 
     async def fetch_paper_metrics(self, arxiv_id: str) -> Optional[Dict[str, Any]]:

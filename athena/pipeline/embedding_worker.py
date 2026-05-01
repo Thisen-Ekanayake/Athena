@@ -23,7 +23,11 @@ BATCH_SIZE = 20
 
 # Clients
 qdrant = QdrantClient(url=QDRANT_URL)
-openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+
+def _get_openai_client() -> OpenAI:
+    from athena.core.config_store import get_setting
+    return OpenAI(api_key=get_setting("OPENAI_API_KEY"))
 
 
 def init_qdrant():
@@ -108,7 +112,7 @@ def process_batch(item_ids: List[str]):
             embeddings = None
             for attempt in range(MAX_RETRIES):
                 try:
-                    response = openai.embeddings.create(
+                    response = _get_openai_client().embeddings.create(
                         input=batch_texts,
                         model=EMBEDDING_MODEL
                     )
