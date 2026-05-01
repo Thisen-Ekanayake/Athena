@@ -83,3 +83,63 @@ export const useCluster = (clusterId: string, page: number = 1) => {
     staleTime: 5 * 60 * 1000
   })
 }
+
+export interface ClusterSummary {
+  id: string
+  label: string | null
+  summary: string | null
+  item_count: number
+  is_active: boolean
+}
+
+export const useClusters = () => {
+  return useQuery({
+    queryKey: ['clusters-list'],
+    queryFn: async () => {
+      const { data } = await apiClient.get<ClusterSummary[]>('/clusters', {
+        params: { min_items: 0 }
+      })
+      return data
+    },
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
+export interface ScoringHealth {
+  total_items: number
+  scored_items: number
+  unscored_items: number
+  trending_items: number
+  average_score: number
+  scoring_queue_depth: number
+  trending_percentage: number
+}
+
+export const useScoringHealth = () => {
+  return useQuery({
+    queryKey: ['health-scoring'],
+    queryFn: async () => {
+      const { data } = await apiClient.get<ScoringHealth>('/health/scoring')
+      return data
+    },
+    staleTime: 60 * 1000,
+  })
+}
+
+export interface FetchHealth {
+  total_fetches: number
+  successful_fetches: number
+  failed_fetches: number
+  success_rate: number
+}
+
+export const useFetchHealth = () => {
+  return useQuery({
+    queryKey: ['health-fetch'],
+    queryFn: async () => {
+      const { data } = await apiClient.get<FetchHealth>('/health/fetch')
+      return data
+    },
+    staleTime: 60 * 1000,
+  })
+}
