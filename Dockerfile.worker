@@ -1,0 +1,20 @@
+# Worker image — includes Playwright/Chromium for web scraping tasks.
+# Must use python:3.11-bookworm (not slim) because playwright install --with-deps
+# needs apt to pull in ~20 system libraries (libatk, libgbm, libnss, etc.).
+FROM python:3.11-bookworm
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN mkdir /ms-playwright && \
+    playwright install --with-deps chromium && \
+    mv /root/.cache/ms-playwright/* /ms-playwright/ || true
+COPY . .
+CMD ["celery", "-A", "athena.pipeline.tasks", "worker", "--loglevel=info", "--pool=threads", "-B"]

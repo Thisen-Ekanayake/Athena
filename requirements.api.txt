@@ -1,0 +1,19 @@
+# API-only dependencies — no ML libs, no Playwright, no scrapers.
+# Worker uses the full requirements.txt.
+httpx
+pydantic
+sqlalchemy
+psycopg2-binary
+celery[redis]
+redis
+python-dotenv
+loguru
+openai
+qdrant-client
+tenacity
+fastapi
+uvicorn
+tiktoken
+python-jose[cryptography]
+beautifulsoup4
+lxml_html_clean
