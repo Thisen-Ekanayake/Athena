@@ -325,3 +325,12 @@ class ScoreAuditLog(Base):
     delta = Column(Float, nullable=False)
     reason = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class AppSetting(Base):
+    """User-configurable key/value settings persisted in the database."""
+    __tablename__ = "app_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
