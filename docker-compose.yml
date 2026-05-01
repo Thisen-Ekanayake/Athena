@@ -17,7 +17,9 @@ services:
       - .:/app
 
   worker:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
     command: celery -A athena.pipeline.tasks worker --loglevel=info --pool=threads -B
     env_file: .env
     environment:
@@ -35,12 +37,9 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "5173:5173"
+      - "5173:80"
     depends_on:
       - web
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
 
   db:
     image: postgres:14
