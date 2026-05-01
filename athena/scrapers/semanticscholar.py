@@ -1,4 +1,3 @@
-import os
 import httpx
 from typing import Dict, Any, Optional
 from loguru import logger

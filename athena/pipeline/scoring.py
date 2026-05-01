@@ -4,12 +4,10 @@ Athena Layer 3 — Scoring Worker
 Celery tasks for computing, persisting, and updating content scores.
 Consumes items from the Redis scoring queue (emitted after Layer 2 embedding).
 """
-import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 
 import numpy as np
-import mlflow
 from celery import shared_task
 from loguru import logger
 from sqlalchemy import select, update, text
@@ -312,6 +310,7 @@ def process_scoring_queue():
 
     logger.info(f"Processing scoring queue batch of {len(item_ids)} items.")
 
+    import mlflow
     mlflow.set_experiment("athena-scoring")
     with mlflow.start_run(run_name="process_scoring_queue"):
         scores = []
@@ -349,6 +348,7 @@ def score_all_items():
     """Batch re-score all items (triggered by config change or enrichment refresh)."""
     logger.info("Starting full corpus re-score...")
 
+    import mlflow
     mlflow.set_experiment("athena-scoring")
     with mlflow.start_run(run_name="score_all_items"):
         scores = []
@@ -379,6 +379,7 @@ def refresh_recency_scores():
 
     stmt = select(ContentItem.id).where(ContentItem.scored_at.isnot(None))
 
+    import mlflow
     mlflow.set_experiment("athena-scoring")
     with mlflow.start_run(run_name="refresh_recency_scores"):
         scores = []
