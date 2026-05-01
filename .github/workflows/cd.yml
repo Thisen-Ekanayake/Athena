@@ -1,4 +1,4 @@
-name: CD — Build & Push Docker Image
+name: CD — Build & Publish
 
 on:
   push:
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Docker Image
+    name: Build & Push to GHCR
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,15 +48,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy-staging:
-    name: Deploy to Staging
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == 'refs/heads/main'
-    environment: staging
-    steps:
-      - name: Deploy notification
+      - name: Print pull command
         run: |
-          echo "🚀 Image built and pushed to ghcr.io/${{ github.repository }}"
-          echo "Ready for deployment to staging environment."
-          echo "Configure deployment steps for your infrastructure here."
+          echo "Image published. To run Athena:"
+          echo ""
+          echo "  docker pull ghcr.io/${{ github.repository }}:latest"
+          echo "  docker compose up -d"
