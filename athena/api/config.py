@@ -22,6 +22,11 @@ class Settings:
     JWT_SECRET: str = os.getenv("JWT_SECRET", "athena-dev-secret-change-me")
     JWT_ALGORITHM: str = "HS256"
 
+    # Swagger / ReDoc access control
+    DOCS_ENABLED: bool = os.getenv("DOCS_ENABLED", "true").lower() == "true"
+    DOCS_USERNAME: str = os.getenv("DOCS_USERNAME", "athena")
+    DOCS_PASSWORD: str = os.getenv("DOCS_PASSWORD", "")
+
     # Cache TTLs (seconds)
     CACHE_FEED_SCORE_TTL: int = 300       # 5 minutes
     CACHE_FEED_DATE_TTL: int = 900        # 15 minutes
