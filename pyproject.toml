@@ -1,0 +1,19 @@
+[project]
+name = "athena"
+version = "1.0.0"
+description = "AI research intelligence — aggregate, process, rank, and explore content from across the AI landscape."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+
+[project.urls]
+Homepage = "https://github.com/Thisen-Ekanayake/athena"
+Issues = "https://github.com/Thisen-Ekanayake/athena/issues"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.flake8]
+max-line-length = 120
+exclude = ["__pycache__", "*.pyc", ".venv", "venv", ".git", "frontend/node_modules"]
