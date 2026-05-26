@@ -1,9 +1,11 @@
 """
 Athena Layer 5 — Search Router
 
-GET /api/v1/search — semantic search via OpenAI embed + Qdrant ANN.
+GET /api/v1/search   — keyword/semantic search over the existing feed.
+POST /api/v1/search  — research search: local + Semantic Scholar + LLM lit review.
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select, or_
 from sqlalchemy.orm import Session
 from loguru import logger
@@ -12,6 +14,10 @@ from athena.api.deps import get_db
 from athena.api.config import settings
 from athena.api.routers.feed import _build_feed_item
 from athena.core.models import ContentItem, Source
+from athena.search.lit_review import generate_lit_review
+from athena.search.local import search_local
+from athena.search.merger import merge_results
+from athena.search.semantic_scholar import search_semantic_scholar
 
 router = APIRouter(prefix="/api/v1", tags=["Search"])
 
@@ -152,3 +158,62 @@ def search(
         "total": len(sorted_items),
         "method": "semantic"
     }
+
+
+# ── Research search (POST /api/v1/search) ────────────────────
+
+
+class SearchRequest(BaseModel):
+    query: str = Field(..., min_length=3, max_length=500)
+    limit: int = Field(20, ge=1, le=50)
+    generate_review: bool = True
+
+
+class PaperResult(BaseModel):
+    id: str
+    title: str
+    abstract: str | None = None
+    url: str | None = None
+    year: int | None = None
+    authors: list[str] = []
+    citation_count: int | None = None
+    score: float | None = None
+    source: str
+
+
+class SearchResponse(BaseModel):
+    papers: list[PaperResult]
+    lit_review: str | None
+    local_count: int
+    live_count: int
+    query: str
+
+
+@router.post("/search", response_model=SearchResponse)
+def research_search(payload: SearchRequest) -> SearchResponse:
+    """Research search: combine local Qdrant hits + Semantic Scholar + LLM lit review."""
+    query = payload.query.strip()
+    limit = payload.limit
+
+    local_papers = search_local(query, limit=limit)
+    live_papers = search_semantic_scholar(query, limit=15)
+    merged = merge_results(local_papers, live_papers, max_total=limit)
+
+    lit_review_text: str | None = None
+    if payload.generate_review and merged:
+        try:
+            lit_review_text = generate_lit_review(query, merged)
+        except Exception as exc:
+            logger.error(f"research_search: lit review failed — {exc}")
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to generate literature review",
+            )
+
+    return SearchResponse(
+        papers=[PaperResult(**p) for p in merged],
+        lit_review=lit_review_text,
+        local_count=len(local_papers),
+        live_count=len(live_papers),
+        query=query,
+    )
