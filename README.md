@@ -45,7 +45,7 @@ pip install -r requirements.txt && playwright install chromium
 cp .env.example .env
 
 # 2. Infrastructure
-docker-compose up -d
+docker compose -f docker/docker-compose.yml up -d
 
 # 3. Init & run
 python3 scripts/setup_project.py   # schema + seed sources

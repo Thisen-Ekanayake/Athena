@@ -47,7 +47,7 @@ class PlaywrightScraper(BaseScraper):
                     await browser.close()
                     raise RuntimeError(
                         "Playwright browsers missing. Rebuild docker container with "
-                        "'docker compose up --build'."
+                        "'docker compose -f docker/docker-compose.yml up --build'."
                     )
                 raise e
 

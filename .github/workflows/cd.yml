@@ -38,7 +38,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: Dockerfile
+          file: docker/Dockerfile.api
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -70,7 +70,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: Dockerfile.worker
+          file: docker/Dockerfile.worker
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -101,7 +101,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./frontend
+          context: .
+          file: docker/Dockerfile.frontend
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -120,4 +121,4 @@ jobs:
           echo "  docker pull ghcr.io/${{ github.repository }}/api:latest"
           echo "  docker pull ghcr.io/${{ github.repository }}/worker:latest"
           echo "  docker pull ghcr.io/${{ github.repository }}/frontend:latest"
-          echo "  docker compose up -d"
+          echo "  docker compose -f docker/docker-compose.release.yml up -d"
