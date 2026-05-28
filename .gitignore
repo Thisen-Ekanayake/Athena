@@ -153,3 +153,9 @@ doc.xml
 *.docx
 AI-News-RAG-System-Checklist.md
 athena_data_acquisition_plan.docx
+
+# Other
+*.json
+*.txt
+*.sh
+*.md
