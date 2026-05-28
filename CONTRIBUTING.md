@@ -31,7 +31,7 @@ cp .env.example .env
 ### 3. Start infrastructure
 
 ```bash
-docker compose up -d
+docker compose -f docker/docker-compose.yml up -d
 # Services: PostgreSQL (5432), Redis (6379), Qdrant (6333)
 ```
 

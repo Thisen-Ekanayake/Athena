@@ -13,7 +13,7 @@ Layer 2 consumes content staged by Layer 1 (Data Acquisition). It follows a mult
 ## 2. Prerequisites
 
 - **OpenAI API Key**: Must be set in the `.env` file as `OPENAI_API_KEY`.
-- **Qdrant**: Must be running (via `docker-compose up -d`).
+- **Qdrant**: Must be running (via `docker compose -f docker/docker-compose.yml up -d`).
 - **Python Dependencies**: Ensure you have installed the Layer 2 requirements:
   ```bash
   pip install qdrant-client umap-learn hdbscan scikit-learn beautifulsoup4 tiktoken openai

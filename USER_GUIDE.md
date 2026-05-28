@@ -35,13 +35,13 @@ cp .env.example .env
 Start the PostgreSQL, Redis, and Qdrant services using Docker Compose. This is **mandatory** for the backend and workers to function:
 
 ```bash
-docker compose up -d
+docker compose -f docker/docker-compose.yml up -d
 ```
 
 Verify that the services are running:
 
 ```bash
-docker compose ps
+docker compose -f docker/docker-compose.yml ps
 ```
 
 ## 3. Initialize and Seed
@@ -202,7 +202,7 @@ uvicorn athena.api.main:app --host 0.0.0.0 --port 8000 --reload
 The API will be available at `http://localhost:8000`. You can view the interactive API documentation at `http://localhost:8000/docs`.
 
 **Option B: Using Docker Compose**
-The `web` service in `docker-compose.yml` automatically starts the API when you run `docker-compose up -d`.
+The `web` service in `docker/docker-compose.yml` automatically starts the API when you run `docker compose -f docker/docker-compose.yml up -d`.
 
 ### 8.2. Start the Frontend Application
 
@@ -237,9 +237,9 @@ pytest tests/test_api.py
 ### Backend Returns 500 Error
 This is usually caused by the database services not running. Ensure you have run:
 ```bash
-docker compose up -d
+docker compose -f docker/docker-compose.yml up -d
 ```
-And verify with `docker compose ps` that `athena-db-1`, `athena-redis-1`, and `athena-qdrant-1` are all "Up".
+And verify with `docker compose -f docker/docker-compose.yml ps` that `athena-db-1`, `athena-redis-1`, and `athena-qdrant-1` are all "Up".
 
 ### Celery Worker Not Processing Enrichment
 1. Ensure Redis is running and accessible.
@@ -247,4 +247,4 @@ And verify with `docker compose ps` that `athena-db-1`, `athena-redis-1`, and `a
 3. ArXiv enrichment requires the worker to be running in a separate terminal with `--pool=threads`.
 
 ### Frontend Cannot Connect to Backend
-Ensure the backend is running on `http://localhost:8000`. If you are running the backend in Docker, check the port mapping in `docker-compose.yml`.
+Ensure the backend is running on `http://localhost:8000`. If you are running the backend in Docker, check the port mapping in `docker/docker-compose.yml`.

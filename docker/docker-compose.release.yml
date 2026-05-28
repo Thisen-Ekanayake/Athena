@@ -1,10 +1,10 @@
 services:
   web:
-    build: .
-    command: uvicorn athena.api.main:app --host 0.0.0.0 --port 8000 --reload
+    image: ghcr.io/thisen-ekanayake/athena/api:latest
+    restart: unless-stopped
     ports:
       - "8000:8000"
-    env_file: .env
+    env_file: ../.env
     environment:
       DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
       REDIS_URL: redis://redis:6379/0
@@ -13,15 +13,11 @@ services:
       - db
       - redis
       - qdrant
-    volumes:
-      - .:/app
 
   worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-    command: celery -A athena.pipeline.tasks worker --loglevel=info --pool=threads -B
-    env_file: .env
+    image: ghcr.io/thisen-ekanayake/athena/worker:latest
+    restart: unless-stopped
+    env_file: ../.env
     environment:
       DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
       REDIS_URL: redis://redis:6379/0
@@ -31,11 +27,11 @@ services:
       - db
       - qdrant
     volumes:
-      - .:/app
       - athena_staging:/tmp/athena/staging
 
   frontend:
-    build: ./frontend
+    image: ghcr.io/thisen-ekanayake/athena/frontend:latest
+    restart: unless-stopped
     ports:
       - "5173:80"
     depends_on:
@@ -43,28 +39,21 @@ services:
 
   db:
     image: postgres:14
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_USER: athena
       POSTGRES_PASSWORD: athena_password
       POSTGRES_DB: athena_db
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
   redis:
     image: redis:6-alpine
-    restart: always
-    ports:
-      - "6379:6379"
+    restart: unless-stopped
 
   qdrant:
     image: qdrant/qdrant:latest
-    restart: always
-    ports:
-      - "6333:6333"
-      - "6334:6334"
+    restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
 
