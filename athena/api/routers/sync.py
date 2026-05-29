@@ -1,7 +1,7 @@
 import json
 from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
-from athena.pipeline.tasks import crawl_all_sources
+from athena.pipeline.celery_app import celery_app
 from athena.core.logging import SYNC_LOG_CHANNEL
 from athena.core.redis_client import get_redis
 import asyncio
@@ -17,7 +17,7 @@ async def trigger_sync(background_tasks: BackgroundTasks):
     This runs the crawl_all_sources task in the background (via Celery).
     """
     logger.info("Manual sync triggered via API")
-    crawl_all_sources.delay()
+    celery_app.send_task("athena.pipeline.tasks.crawl_all_sources")
     return {"status": "Sync triggered", "message": "Scraping pipeline has been started in the background."}
 
 
