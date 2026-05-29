@@ -130,7 +130,7 @@ function LogicClustersPanel() {
   return (
     <div className="space-y-8">
       <section className="glass-opaque rounded-2xl p-8 border border-white/5 shadow-2xl overflow-hidden relative group">
-        <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+        <div className="pointer-events-none absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
           <GitBranch className="w-32 h-32 text-accent-primary" />
         </div>
         <h3 className="text-xl font-display font-bold text-white mb-2 flex items-center gap-3">
@@ -197,7 +197,7 @@ function SystemCorePanel() {
   return (
     <div className="space-y-8">
       <section className="glass-opaque rounded-2xl p-8 border border-white/5 shadow-2xl overflow-hidden relative group">
-        <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+        <div className="pointer-events-none absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
           <BarChart2 className="w-32 h-32 text-accent-primary" />
         </div>
         <h3 className="text-xl font-display font-bold text-white mb-2 flex items-center gap-3">
@@ -218,7 +218,7 @@ function SystemCorePanel() {
       </section>
 
       <section className="glass-opaque rounded-2xl p-8 border border-white/5 shadow-2xl overflow-hidden relative group">
-        <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+        <div className="pointer-events-none absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
           <RefreshCw className="w-32 h-32 text-accent-secondary" />
         </div>
         <h3 className="text-xl font-display font-bold text-white mb-2 flex items-center gap-3">
@@ -311,7 +311,7 @@ export function SettingsPage() {
           {/* API Keys */}
           {activeSection === 'apis' && (
             <section className="glass-opaque rounded-2xl p-8 border border-white/5 shadow-2xl overflow-hidden relative group">
-              <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+              <div className="pointer-events-none absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
                 <Key className="w-32 h-32 text-accent-primary" />
               </div>
               <h3 className="text-xl font-display font-bold text-white mb-2 flex items-center gap-3">
@@ -337,7 +337,7 @@ export function SettingsPage() {
           {/* Add Custom Source */}
           {activeSection === 'harvest' && <>
           <section className="glass-opaque rounded-2xl p-8 border border-white/5 shadow-2xl overflow-hidden relative group">
-             <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+             <div className="pointer-events-none absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
                <Orbit className="w-32 h-32 text-accent-primary" />
              </div>
              
