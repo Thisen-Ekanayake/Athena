@@ -8,7 +8,6 @@ import pdfplumber
 from datetime import datetime
 from typing import Optional
 from loguru import logger
-from playwright.async_api import async_playwright
 
 from athena.core.models import ContentItem
 
@@ -53,6 +52,7 @@ async def try_direct_fetch(url: str) -> Optional[FetchResult]:
 async def try_playwright_fetch(url: str) -> Optional[FetchResult]:
     logger.info(f"Trying playwright fetch for {url}")
     try:
+        from playwright.async_api import async_playwright
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(

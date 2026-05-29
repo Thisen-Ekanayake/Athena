@@ -17,3 +17,4 @@ tiktoken
 python-jose[cryptography]
 beautifulsoup4
 lxml_html_clean
+pdfplumber
