@@ -197,6 +197,7 @@ class TestResearchSearchEndpoint:
 
         with patch("athena.api.routers.search.search_local", return_value=local), \
              patch("athena.api.routers.search.search_semantic_scholar", return_value=live), \
+             patch("athena.api.routers.search.search_arxiv", return_value=[]), \
              patch("athena.api.routers.search.generate_lit_review", return_value="A review."):
             resp = client.post(
                 "/api/v1/search",
@@ -217,6 +218,7 @@ class TestResearchSearchEndpoint:
 
         with patch("athena.api.routers.search.search_local", return_value=local), \
              patch("athena.api.routers.search.search_semantic_scholar", return_value=[]), \
+             patch("athena.api.routers.search.search_arxiv", return_value=[]), \
              patch("athena.api.routers.search.generate_lit_review") as mock_llm:
             resp = client.post(
                 "/api/v1/search",
@@ -230,6 +232,7 @@ class TestResearchSearchEndpoint:
     def test_no_papers_no_lit_review(self, client):
         with patch("athena.api.routers.search.search_local", return_value=[]), \
              patch("athena.api.routers.search.search_semantic_scholar", return_value=[]), \
+             patch("athena.api.routers.search.search_arxiv", return_value=[]), \
              patch("athena.api.routers.search.generate_lit_review") as mock_llm:
             resp = client.post(
                 "/api/v1/search",
@@ -252,6 +255,7 @@ class TestResearchSearchEndpoint:
         local = [_paper("Paper A", source="local")]
         with patch("athena.api.routers.search.search_local", return_value=local), \
              patch("athena.api.routers.search.search_semantic_scholar", return_value=[]), \
+             patch("athena.api.routers.search.search_arxiv", return_value=[]), \
              patch("athena.api.routers.search.generate_lit_review", side_effect=RuntimeError("LLM down")):
             resp = client.post("/api/v1/search", json={"query": "neural search"})
 

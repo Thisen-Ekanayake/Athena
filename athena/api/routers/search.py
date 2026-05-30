@@ -14,6 +14,7 @@ from athena.api.deps import get_db
 from athena.api.config import settings
 from athena.api.routers.feed import _build_feed_item
 from athena.core.models import ContentItem, Source
+from athena.search.arxiv_live import search_arxiv
 from athena.search.lit_review import generate_lit_review
 from athena.search.local import search_local
 from athena.search.merger import merge_results
@@ -196,7 +197,9 @@ def research_search(payload: SearchRequest) -> SearchResponse:
     limit = payload.limit
 
     local_papers = search_local(query, limit=limit)
-    live_papers = search_semantic_scholar(query, limit=15)
+    # Live sources: Semantic Scholar (richer metadata, may be rate-limited) plus
+    # arXiv (free, key-less) as a fallback/supplement.
+    live_papers = search_semantic_scholar(query, limit=15) + search_arxiv(query, limit=15)
     merged = merge_results(local_papers, live_papers, max_total=limit)
 
     lit_review_text: str | None = None
