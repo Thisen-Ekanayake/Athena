@@ -152,6 +152,7 @@ class SourceResponse(BaseModel):
     is_active: bool = True
     added_by: str = "system"
     last_fetched_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
     consecutive_failures: int = 0
 
     model_config = ConfigDict(from_attributes=True)

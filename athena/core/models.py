@@ -1,6 +1,6 @@
 from datetime import datetime
 from uuid import uuid4
-from sqlalchemy import Column, String, DateTime, Integer, Float, Boolean, ARRAY, Enum as SQLEnum, ForeignKey
+from sqlalchemy import Column, String, DateTime, Integer, Float, Boolean, ARRAY, Enum as SQLEnum, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import declarative_base, relationship
 import enum
@@ -54,6 +54,7 @@ class Source(Base):
     added_by = Column(String, default="system")
     consecutive_failures = Column(Integer, default=0)
     authority_score = Column(Float, default=0.5)  # [0.0–1.0] source quality rating
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     content_items = relationship("ContentItem", back_populates="source")
     fetch_logs = relationship("FetchLog", back_populates="source")

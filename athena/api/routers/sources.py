@@ -32,6 +32,7 @@ def _to_response(s: Source) -> SourceResponse:
         is_active=s.is_active,
         added_by=s.added_by or "system",
         last_fetched_at=s.last_fetched_at,
+        created_at=s.created_at,
         consecutive_failures=s.consecutive_failures or 0,
     )
 

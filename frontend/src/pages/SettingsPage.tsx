@@ -1,13 +1,49 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useSources, useToggleSource, useAddSource, useUpdateSource } from '../api/queries/sources'
 import { useApiKeys, useSetApiKey, useDeleteApiKey } from '../api/queries/app_settings'
 import { useClusters, useScoringHealth, useFetchHealth } from '../api/queries/phase4'
+import type { Source } from '../api/client'
 import { Alert } from '../components/shared/Alert'
-import { Check, Orbit, ExternalLink, Shield, Cpu, Activity, Plus, Key, Eye, EyeOff, Trash2, GitBranch, BarChart2, RefreshCw, Pencil, X } from 'lucide-react'
+import { Check, Orbit, ExternalLink, Shield, Cpu, Activity, Plus, Key, Eye, EyeOff, Trash2, GitBranch, BarChart2, RefreshCw, Pencil, X, ArrowDownUp } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 function safeHostname(url: string): string {
   try { return new URL(url).hostname } catch { return url }
+}
+
+type SortKey = 'name' | 'created' | 'health' | 'protocol' | 'inertia'
+
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: 'name', label: 'Alphabetical' },
+  { value: 'created', label: 'Date Created' },
+  { value: 'health', label: 'Health Status' },
+  { value: 'protocol', label: 'Protocol' },
+  { value: 'inertia', label: 'Inertia' },
+]
+
+function sortSources(sources: Source[] | undefined, key: SortKey): Source[] {
+  if (!sources) return []
+  const byName = (a: Source, b: Source) => a.name.localeCompare(b.name)
+  const copy = [...sources]
+  switch (key) {
+    case 'created':
+      // Newest first; fall back to name when timestamps are equal/missing.
+      return copy.sort((a, b) =>
+        (b.created_at || '').localeCompare(a.created_at || '') || byName(a, b))
+    case 'health':
+      // Worst health first (most consecutive failures), then name.
+      return copy.sort((a, b) =>
+        (b.consecutive_failures - a.consecutive_failures) || byName(a, b))
+    case 'protocol':
+      return copy.sort((a, b) => a.type.localeCompare(b.type) || byName(a, b))
+    case 'inertia':
+      // Active sources first, then name.
+      return copy.sort((a, b) =>
+        (Number(b.is_active) - Number(a.is_active)) || byName(a, b))
+    case 'name':
+    default:
+      return copy.sort(byName)
+  }
 }
 
 const KEY_LABELS: Record<string, { label: string; hint: string }> = {
@@ -253,6 +289,9 @@ export function SettingsPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editUrl, setEditUrl] = useState('')
+  const [sortBy, setSortBy] = useState<SortKey>('name')
+
+  const sortedSources = useMemo(() => sortSources(sources, sortBy), [sources, sortBy])
 
   const startEdit = (source: { id: string, name: string, url: string }) => {
     setEditingId(source.id)
@@ -466,9 +505,28 @@ export function SettingsPage() {
 
           {/* Active Sources Table */}
           <section className="space-y-6">
-             <div className="flex items-center gap-3 px-1">
-               <Shield className="w-5 h-5 text-accent-primary" />
-               <h3 className="text-xl font-display font-bold text-white">Active Reservoirs</h3>
+             <div className="flex items-center justify-between gap-4 px-1 flex-wrap">
+               <div className="flex items-center gap-3">
+                 <Shield className="w-5 h-5 text-accent-primary" />
+                 <h3 className="text-xl font-display font-bold text-white">Active Reservoirs</h3>
+                 <span className="text-[10px] font-mono font-bold text-accent-primary bg-accent-primary/10 border border-accent-primary/20 px-2 py-1 rounded-md tracking-wider">
+                   {sources?.length ?? 0} SOURCE{(sources?.length ?? 0) === 1 ? '' : 'S'}
+                 </span>
+               </div>
+               <div className="flex items-center gap-2">
+                 <ArrowDownUp className="w-3.5 h-3.5 text-text-ghost" />
+                 <label htmlFor="source-sort" className="text-[10px] font-display font-bold text-text-ghost uppercase tracking-[0.15em]">Sort</label>
+                 <select
+                   id="source-sort"
+                   value={sortBy}
+                   onChange={e => setSortBy(e.target.value as SortKey)}
+                   className="glass-void border border-white/10 text-white rounded-lg px-3 py-1.5 text-xs font-display font-bold focus:outline-none focus:border-accent-primary transition-all cursor-pointer"
+                 >
+                   {SORT_OPTIONS.map(opt => (
+                     <option key={opt.value} value={opt.value} className="bg-void text-white">{opt.label}</option>
+                   ))}
+                 </select>
+               </div>
              </div>
 
              {updateSource.isError && (
@@ -492,7 +550,7 @@ export function SettingsPage() {
                        </tr>
                      </thead>
                      <tbody className="divide-y divide-white/5">
-                       {sources.map((source, idx) => (
+                       {sortedSources.map((source, idx) => (
                          <motion.tr 
                           key={source.id} 
                           initial={{ opacity: 0, y: 10 }}
