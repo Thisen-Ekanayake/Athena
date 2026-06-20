@@ -157,11 +157,20 @@ class SourceResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SourcePreviewItem(BaseModel):
+    title: str
+    url: str
+    published_at: Optional[str] = None
+    summary: Optional[str] = None
+
+
 class SourcePreviewResponse(BaseModel):
-    type: str
-    preview_count: Optional[int] = None
-    sample_titles: Optional[List[str]] = None
-    message: Optional[str] = None
+    source_type: str
+    source_name: str
+    sample_items: List[SourcePreviewItem] = []
+    # Present only on the confirm step.
+    id: Optional[str] = None
+    queued: Optional[bool] = None
     error: Optional[str] = None
 
 
@@ -169,6 +178,8 @@ class SourceCreateRequest(BaseModel):
     url: str
     name: Optional[str] = None
     category: str = "blog"
+    # False -> preview only (no DB write, no crawl). True -> persist + queue.
+    confirm: bool = False
 
 
 class SourceToggleResponse(BaseModel):

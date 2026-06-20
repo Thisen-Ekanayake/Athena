@@ -61,15 +61,20 @@ def add_source(
     db: Session = Depends(get_db),
 ):
     """
-    User adds a custom source URL.
-    Triggers auto-detection and test fetch. Returns preview.
+    Add a custom source via a two-step flow:
+
+    - `confirm=False` (default): auto-detect the type and return a preview
+      (`source_type`, `source_name`, `sample_items`) without writing anything.
+    - `confirm=True`: persist the source and queue its first crawl.
+
+    Both responses share the same shape so the frontend can render either.
     """
     from athena.database.user_sources import (
         preview_source, add_user_source,
     )
 
-    # Step 1: Preview
-    preview = preview_source(request.url)
+    # Step 1: Preview / auto-detect (no DB write).
+    preview = preview_source(request.url, request.name)
 
     if preview.get("error"):
         raise HTTPException(
@@ -77,7 +82,11 @@ def add_source(
             detail=f"Could not reach this URL — {preview['error']}",
         )
 
-    # Step 2: Add the source
+    # Preview-only request — let the user review before committing.
+    if not request.confirm:
+        return preview
+
+    # Step 2: Persist the source and queue its first crawl.
     result = add_user_source(
         url=request.url,
         name=request.name,
@@ -85,8 +94,11 @@ def add_source(
     )
 
     return {
-        "source": result,
-        "preview": preview,
+        "source_type": result["type"],
+        "source_name": result["name"],
+        "sample_items": preview.get("sample_items", []),
+        "id": result["id"],
+        "queued": result["queued"],
     }
 
 
