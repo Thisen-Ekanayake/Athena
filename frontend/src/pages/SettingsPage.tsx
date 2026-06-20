@@ -4,7 +4,7 @@ import { useApiKeys, useSetApiKey, useDeleteApiKey } from '../api/queries/app_se
 import { useClusters, useScoringHealth, useFetchHealth } from '../api/queries/phase4'
 import type { Source } from '../api/client'
 import { Alert } from '../components/shared/Alert'
-import { Check, Orbit, ExternalLink, Shield, Cpu, Activity, Plus, Key, Eye, EyeOff, Trash2, GitBranch, BarChart2, RefreshCw, Pencil, X, ArrowDownUp } from 'lucide-react'
+import { Check, Orbit, ExternalLink, Shield, Cpu, Activity, Plus, Key, Eye, EyeOff, Trash2, GitBranch, BarChart2, RefreshCw, Pencil, X, ArrowUpNarrowWide, ArrowDownWideNarrow } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 function safeHostname(url: string): string {
@@ -12,6 +12,7 @@ function safeHostname(url: string): string {
 }
 
 type SortKey = 'name' | 'created' | 'health' | 'protocol' | 'inertia'
+type SortDir = 'asc' | 'desc'
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'name', label: 'Alphabetical' },
@@ -21,29 +22,23 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'inertia', label: 'Inertia' },
 ]
 
-function sortSources(sources: Source[] | undefined, key: SortKey): Source[] {
+const byName = (a: Source, b: Source) => a.name.localeCompare(b.name)
+
+// Each comparator defines the ascending order for its key; descending just
+// negates it. Equal primary keys tie-break alphabetically by name.
+const SORT_COMPARATORS: Record<SortKey, (a: Source, b: Source) => number> = {
+  name: byName,
+  created: (a, b) => (a.created_at || '').localeCompare(b.created_at || ''),
+  health: (a, b) => a.consecutive_failures - b.consecutive_failures,
+  protocol: (a, b) => a.type.localeCompare(b.type),
+  inertia: (a, b) => Number(a.is_active) - Number(b.is_active),
+}
+
+function sortSources(sources: Source[] | undefined, key: SortKey, dir: SortDir): Source[] {
   if (!sources) return []
-  const byName = (a: Source, b: Source) => a.name.localeCompare(b.name)
-  const copy = [...sources]
-  switch (key) {
-    case 'created':
-      // Newest first; fall back to name when timestamps are equal/missing.
-      return copy.sort((a, b) =>
-        (b.created_at || '').localeCompare(a.created_at || '') || byName(a, b))
-    case 'health':
-      // Worst health first (most consecutive failures), then name.
-      return copy.sort((a, b) =>
-        (b.consecutive_failures - a.consecutive_failures) || byName(a, b))
-    case 'protocol':
-      return copy.sort((a, b) => a.type.localeCompare(b.type) || byName(a, b))
-    case 'inertia':
-      // Active sources first, then name.
-      return copy.sort((a, b) =>
-        (Number(b.is_active) - Number(a.is_active)) || byName(a, b))
-    case 'name':
-    default:
-      return copy.sort(byName)
-  }
+  const base = SORT_COMPARATORS[key]
+  const sign = dir === 'asc' ? 1 : -1
+  return [...sources].sort((a, b) => sign * base(a, b) || byName(a, b))
 }
 
 const KEY_LABELS: Record<string, { label: string; hint: string }> = {
@@ -290,8 +285,9 @@ export function SettingsPage() {
   const [editName, setEditName] = useState('')
   const [editUrl, setEditUrl] = useState('')
   const [sortBy, setSortBy] = useState<SortKey>('name')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
 
-  const sortedSources = useMemo(() => sortSources(sources, sortBy), [sources, sortBy])
+  const sortedSources = useMemo(() => sortSources(sources, sortBy, sortDir), [sources, sortBy, sortDir])
 
   const startEdit = (source: { id: string, name: string, url: string }) => {
     setEditingId(source.id)
@@ -514,7 +510,6 @@ export function SettingsPage() {
                  </span>
                </div>
                <div className="flex items-center gap-2">
-                 <ArrowDownUp className="w-3.5 h-3.5 text-text-ghost" />
                  <label htmlFor="source-sort" className="text-[10px] font-display font-bold text-text-ghost uppercase tracking-[0.15em]">Sort</label>
                  <select
                    id="source-sort"
@@ -526,6 +521,17 @@ export function SettingsPage() {
                      <option key={opt.value} value={opt.value} className="bg-void text-white">{opt.label}</option>
                    ))}
                  </select>
+                 <button
+                   type="button"
+                   onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                   title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+                   aria-label={`Sort direction: ${sortDir === 'asc' ? 'ascending' : 'descending'}`}
+                   className="glass-void border border-white/10 text-text-muted hover:text-accent-primary hover:border-accent-primary/40 rounded-lg p-2 transition-all"
+                 >
+                   {sortDir === 'asc'
+                     ? <ArrowUpNarrowWide className="w-4 h-4" />
+                     : <ArrowDownWideNarrow className="w-4 h-4" />}
+                 </button>
                </div>
              </div>
 
