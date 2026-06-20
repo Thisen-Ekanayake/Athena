@@ -1,8 +1,11 @@
 import html
-from typing import List
+from typing import List, Optional
 from datetime import datetime
+from urllib.parse import urljoin
 import time
 import feedparser
+import httpx
+from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from newspaper import Article
 from loguru import logger
@@ -10,6 +13,12 @@ from loguru import logger
 from athena.scrapers.base import BaseScraper
 from athena.core.schemas import ContentItemCreate
 from athena.core.models import ContentCategory
+
+# Common feed locations to probe when a source URL is an HTML page, not a feed.
+_FEED_FALLBACK_PATHS = (
+    "/rss/", "/rss", "/feed/", "/feed",
+    "/atom.xml", "/index.xml", "/feed.xml", "/rss.xml",
+)
 
 
 class PlaywrightScraper(BaseScraper):
@@ -19,6 +28,45 @@ class PlaywrightScraper(BaseScraper):
     clean body text of the articles.
     """
 
+    async def _discover_feed(self, url: str) -> Optional[str]:
+        """
+        Resolve an RSS/Atom feed from an HTML page URL.
+
+        Tries feed autodiscovery (<link rel="alternate">) first, then a set of
+        common feed paths. Returns the first candidate that yields entries, or
+        None if nothing usable is found.
+        """
+        candidates: List[str] = []
+
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
+                resp = await client.get(
+                    url,
+                    headers={"User-Agent": "Mozilla/5.0 (compatible; Athena/1.0)"},
+                )
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for link in soup.find_all("link", rel="alternate"):
+                ltype = (link.get("type") or "").lower()
+                href = link.get("href")
+                if href and ("rss" in ltype or "atom" in ltype or "xml" in ltype):
+                    candidates.append(urljoin(url, href))
+        except Exception as e:
+            logger.warning(f"Feed autodiscovery request failed for {url}: {e}")
+
+        candidates.extend(urljoin(url, path) for path in _FEED_FALLBACK_PATHS)
+
+        seen = set()
+        for cand in candidates:
+            if cand in seen:
+                continue
+            seen.add(cand)
+            try:
+                if feedparser.parse(cand).entries:
+                    return cand
+            except Exception:
+                continue
+        return None
+
     async def fetch(self, url: str) -> List[dict]:
         """
         Fetch RSS entries and for each, fetch the full page HTML using Playwright.
@@ -27,6 +75,17 @@ class PlaywrightScraper(BaseScraper):
         raw_items = []
         logger.info(f"Fetching feed for Playwright: {url}")
         feed = feedparser.parse(url)
+
+        if not feed.entries:
+            # The source URL is an HTML page, not a feed — try to discover one.
+            discovered = await self._discover_feed(url)
+            if discovered:
+                logger.info(f"Discovered feed for {url}: {discovered}")
+                feed = feedparser.parse(discovered)
+
+        if not feed.entries:
+            logger.warning(f"No RSS/Atom feed could be discovered for {url}; nothing to crawl.")
+            return raw_items
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
