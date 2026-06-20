@@ -182,6 +182,11 @@ class SourceCreateRequest(BaseModel):
     confirm: bool = False
 
 
+class SourceUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    url: Optional[str] = None
+
+
 class SourceToggleResponse(BaseModel):
     id: UUID
     is_active: bool

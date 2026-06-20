@@ -25,6 +25,19 @@ export const useToggleSource = () => {
   })
 }
 
+export const useUpdateSource = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, name, url }: { id: string, name?: string, url?: string }) => {
+      const { data } = await apiClient.patch<Source>(`/sources/${id}`, { name, url })
+      return data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sources'] })
+    }
+  })
+}
+
 export interface PreviewResponse {
   source_type: string
   source_name: string

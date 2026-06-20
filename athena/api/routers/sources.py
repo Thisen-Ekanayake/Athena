@@ -12,11 +12,28 @@ from sqlalchemy.orm import Session
 
 from athena.api.deps import get_db
 from athena.api.schemas import (
-    SourceResponse, SourceCreateRequest, SourceToggleResponse,
+    SourceResponse, SourceCreateRequest, SourceUpdateRequest,
+    SourceToggleResponse,
 )
 from athena.core.models import Source
 
 router = APIRouter(prefix="/api/v1", tags=["Sources"])
+
+
+def _to_response(s: Source) -> SourceResponse:
+    """Serialise a Source ORM row into the API response model."""
+    return SourceResponse(
+        id=s.id,
+        name=s.name,
+        url=str(s.url),
+        type=s.type.value if hasattr(s.type, 'value') else str(s.type),
+        category=s.category.value if hasattr(s.category, 'value') else str(s.category),  # noqa: E501
+        authority_score=s.authority_score or 0.5,
+        is_active=s.is_active,
+        added_by=s.added_by or "system",
+        last_fetched_at=s.last_fetched_at,
+        consecutive_failures=s.consecutive_failures or 0,
+    )
 
 
 @router.get("/sources", response_model=list[SourceResponse])
@@ -38,21 +55,7 @@ def list_sources(
     query = query.order_by(Source.name)
     sources = db.execute(query).scalars().all()
 
-    return [
-        SourceResponse(
-            id=s.id,
-            name=s.name,
-            url=str(s.url),
-            type=s.type.value if hasattr(s.type, 'value') else str(s.type),
-            category=s.category.value if hasattr(s.category, 'value') else str(s.category),  # noqa: E501
-            authority_score=s.authority_score or 0.5,
-            is_active=s.is_active,
-            added_by=s.added_by or "system",
-            last_fetched_at=s.last_fetched_at,
-            consecutive_failures=s.consecutive_failures or 0,
-        )
-        for s in sources
-    ]
+    return [_to_response(s) for s in sources]
 
 
 @router.post("/sources")
@@ -100,6 +103,71 @@ def add_source(
         "id": result["id"],
         "queued": result["queued"],
     }
+
+
+@router.patch("/sources/{source_id}", response_model=SourceResponse)
+def update_source(
+    source_id: str,
+    request: SourceUpdateRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Update a source's display name and/or URL.
+
+    Changing the URL re-detects the source type (best-effort) so the right
+    scraper is used on the next crawl, and is rejected if it collides with an
+    existing source.
+    """
+    try:
+        source_uuid = UUID(source_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=400, detail="Invalid source ID format"
+        )
+
+    source = db.execute(
+        select(Source).where(Source.id == source_uuid)
+    ).scalar_one_or_none()
+
+    if not source:
+        raise HTTPException(status_code=404, detail="Source not found")
+
+    if request.name is not None:
+        name = request.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Name cannot be empty")
+        source.name = name
+
+    if request.url is not None:
+        new_url = request.url.strip()
+        if not new_url:
+            raise HTTPException(status_code=400, detail="URL cannot be empty")
+
+        if new_url != source.url:
+            clash = db.execute(
+                select(Source).where(
+                    Source.url == new_url, Source.id != source_uuid
+                )
+            ).scalar_one_or_none()
+            if clash:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Another source already uses this URL ('{clash.name}').",  # noqa: E501
+                )
+
+            # Re-detect the type so the correct scraper runs next crawl.
+            try:
+                from athena.database.user_sources import detect_source_type
+                source.type = detect_source_type(new_url)
+            except Exception:
+                pass  # Keep the existing type if detection fails.
+
+            source.url = new_url
+
+    db.commit()
+    db.refresh(source)
+
+    return _to_response(source)
 
 
 @router.put("/sources/{source_id}/toggle", response_model=SourceToggleResponse)
