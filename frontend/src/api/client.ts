@@ -19,6 +19,7 @@ export interface Source {
   is_active: boolean
   added_by: string
   last_fetched_at?: string
+  created_at?: string
   consecutive_failures: number
 }
 

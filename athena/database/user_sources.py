@@ -50,36 +50,63 @@ def detect_source_type(url: str) -> SourceType:
     return SourceType.SCRAPE
 
 
-def preview_source(url: str) -> dict:
+def _derive_name(url: str) -> str:
+    """Best-effort human-friendly source name from a URL."""
+    from urllib.parse import urlparse
+    host = (urlparse(url).hostname or url).strip()
+    return host[4:] if host.startswith("www.") else host
+
+
+def preview_source(url: str, name: Optional[str] = None) -> dict:
     """
     Perform a test fetch and return a preview of what data would be retrieved.
     Used to let users confirm before a source is added.
+
+    Returns a payload shaped for the frontend:
+        {source_type, source_name, sample_items: [{title, url, published_at, summary}]}
+    On a hard failure (e.g. the URL cannot be reached) returns {"error": ...}
+    so the caller can surface a 400.
     """
     from athena.scrapers.rss import RSSScraper
     import asyncio
 
     source_type = detect_source_type(url)
+    source_name = name or _derive_name(url)
 
     # Create a temporary dummy source_id for preview
     dummy_id = "00000000-0000-0000-0000-000000000000"
 
+    sample_items: list[dict] = []
     try:
         if source_type == SourceType.RSS:
             scraper = RSSScraper(source_id=dummy_id)
             raws = asyncio.run(scraper.fetch(url))
-            items = [scraper.parse(r) for r in raws[:3]]
-        elif source_type == SourceType.API:
-            return {"type": "API", "message": "API sources are pre-configured. Cannot preview."}
-        else:
-            return {"type": "SCRAPE", "message": "Headless scraping preview not available. Source will be added and queued."}  # noqa: E501
-
-        return {
-            "type": source_type.value,
-            "preview_count": len(items),
-            "sample_titles": [str(i.title) for i in items]
-        }
+            for raw in raws[:3]:
+                item = scraper.parse(raw)
+                sample_items.append({
+                    "title": str(item.title),
+                    "url": str(item.url),
+                    "published_at": (
+                        item.published_at.isoformat()
+                        if item.published_at else None
+                    ),
+                    "summary": item.abstract,
+                })
+        # API and SCRAPE sources can't be cheaply previewed; we still let the
+        # user add them — the first crawl runs in the background once confirmed.
     except Exception as e:
-        return {"type": source_type.value, "error": str(e)}
+        return {
+            "source_type": source_type.value,
+            "source_name": source_name,
+            "sample_items": [],
+            "error": str(e),
+        }
+
+    return {
+        "source_type": source_type.value,
+        "source_name": source_name,
+        "sample_items": sample_items,
+    }
 
 
 def add_user_source(url: str, name: Optional[str] = None, category: str = "blog") -> dict:
@@ -133,13 +160,19 @@ def add_user_source(url: str, name: Optional[str] = None, category: str = "blog"
         source = session.execute(select(Source).where(Source.url == data['url'])).scalar_one()
         source_id = str(source.id)
 
-    # Queue first crawl immediately
-    crawl_source.delay(source_id)
-    logger.info(f"User source '{source_name}' added ({source_type}) and queued for first crawl.")
+    # Queue first crawl immediately. A broker outage shouldn't fail the add —
+    # the source is saved and the periodic crawl will pick it up regardless.
+    queued = True
+    try:
+        crawl_source.delay(source_id)
+        logger.info(f"User source '{source_name}' added ({source_type}) and queued for first crawl.")
+    except Exception as e:
+        queued = False
+        logger.warning(f"User source '{source_name}' added ({source_type}) but first crawl could not be queued: {e}")
 
     return {
         "id": source_id,
         "name": source_name,
         "type": source_type.value,
-        "queued": True
+        "queued": queued
     }

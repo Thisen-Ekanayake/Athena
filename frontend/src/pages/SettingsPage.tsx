@@ -1,13 +1,44 @@
-import { useState } from 'react'
-import { useSources, useToggleSource, useAddSource } from '../api/queries/sources'
+import { useState, useMemo } from 'react'
+import { useSources, useToggleSource, useAddSource, useUpdateSource } from '../api/queries/sources'
 import { useApiKeys, useSetApiKey, useDeleteApiKey } from '../api/queries/app_settings'
 import { useClusters, useScoringHealth, useFetchHealth } from '../api/queries/phase4'
+import type { Source } from '../api/client'
 import { Alert } from '../components/shared/Alert'
-import { Check, Orbit, ExternalLink, Shield, Cpu, Activity, Plus, Key, Eye, EyeOff, Trash2, GitBranch, BarChart2, RefreshCw } from 'lucide-react'
+import { Check, Orbit, ExternalLink, Shield, Cpu, Activity, Plus, Key, Eye, EyeOff, Trash2, GitBranch, BarChart2, RefreshCw, Pencil, X, ArrowUpNarrowWide, ArrowDownWideNarrow } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 
 function safeHostname(url: string): string {
   try { return new URL(url).hostname } catch { return url }
+}
+
+type SortKey = 'name' | 'created' | 'health' | 'protocol' | 'inertia'
+type SortDir = 'asc' | 'desc'
+
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: 'name', label: 'Alphabetical' },
+  { value: 'created', label: 'Date Created' },
+  { value: 'health', label: 'Health Status' },
+  { value: 'protocol', label: 'Protocol' },
+  { value: 'inertia', label: 'Inertia' },
+]
+
+const byName = (a: Source, b: Source) => a.name.localeCompare(b.name)
+
+// Each comparator defines the ascending order for its key; descending just
+// negates it. Equal primary keys tie-break alphabetically by name.
+const SORT_COMPARATORS: Record<SortKey, (a: Source, b: Source) => number> = {
+  name: byName,
+  created: (a, b) => (a.created_at || '').localeCompare(b.created_at || ''),
+  health: (a, b) => a.consecutive_failures - b.consecutive_failures,
+  protocol: (a, b) => a.type.localeCompare(b.type),
+  inertia: (a, b) => Number(a.is_active) - Number(b.is_active),
+}
+
+function sortSources(sources: Source[] | undefined, key: SortKey, dir: SortDir): Source[] {
+  if (!sources) return []
+  const base = SORT_COMPARATORS[key]
+  const sign = dir === 'asc' ? 1 : -1
+  return [...sources].sort((a, b) => sign * base(a, b) || byName(a, b))
 }
 
 const KEY_LABELS: Record<string, { label: string; hint: string }> = {
@@ -245,11 +276,38 @@ export function SettingsPage() {
   const { data: sources, isLoading: sourcesLoading } = useSources()
   const toggleSource = useToggleSource()
   const addSource = useAddSource()
+  const updateSource = useUpdateSource()
 
   const [activeSection, setActiveSection] = useState('harvest')
   const [urlInput, setUrlInput] = useState('')
   const [previewData, setPreviewData] = useState<any>(null)
-  
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editUrl, setEditUrl] = useState('')
+  const [sortBy, setSortBy] = useState<SortKey>('name')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
+
+  const sortedSources = useMemo(() => sortSources(sources, sortBy, sortDir), [sources, sortBy, sortDir])
+
+  const startEdit = (source: { id: string, name: string, url: string }) => {
+    setEditingId(source.id)
+    setEditName(source.name)
+    setEditUrl(source.url)
+    updateSource.reset()
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    updateSource.reset()
+  }
+
+  const saveEdit = (id: string) => {
+    updateSource.mutate(
+      { id, name: editName.trim(), url: editUrl.trim() },
+      { onSuccess: () => setEditingId(null) }
+    )
+  }
+
   const handleDetect = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!urlInput) return
@@ -443,11 +501,44 @@ export function SettingsPage() {
 
           {/* Active Sources Table */}
           <section className="space-y-6">
-             <div className="flex items-center gap-3 px-1">
-               <Shield className="w-5 h-5 text-accent-primary" />
-               <h3 className="text-xl font-display font-bold text-white">Active Reservoirs</h3>
+             <div className="flex items-center justify-between gap-4 px-1 flex-wrap">
+               <div className="flex items-center gap-3">
+                 <Shield className="w-5 h-5 text-accent-primary" />
+                 <h3 className="text-xl font-display font-bold text-white">Active Reservoirs</h3>
+                 <span className="text-[10px] font-mono font-bold text-accent-primary bg-accent-primary/10 border border-accent-primary/20 px-2 py-1 rounded-md tracking-wider">
+                   {sources?.length ?? 0} SOURCE{(sources?.length ?? 0) === 1 ? '' : 'S'}
+                 </span>
+               </div>
+               <div className="flex items-center gap-2">
+                 <label htmlFor="source-sort" className="text-[10px] font-display font-bold text-text-ghost uppercase tracking-[0.15em]">Sort</label>
+                 <select
+                   id="source-sort"
+                   value={sortBy}
+                   onChange={e => setSortBy(e.target.value as SortKey)}
+                   className="glass-void border border-white/10 text-white rounded-lg px-3 py-1.5 text-xs font-display font-bold focus:outline-none focus:border-accent-primary transition-all cursor-pointer"
+                 >
+                   {SORT_OPTIONS.map(opt => (
+                     <option key={opt.value} value={opt.value} className="bg-void text-white">{opt.label}</option>
+                   ))}
+                 </select>
+                 <button
+                   type="button"
+                   onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                   title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
+                   aria-label={`Sort direction: ${sortDir === 'asc' ? 'ascending' : 'descending'}`}
+                   className="glass-void border border-white/10 text-text-muted hover:text-accent-primary hover:border-accent-primary/40 rounded-lg p-2 transition-all"
+                 >
+                   {sortDir === 'asc'
+                     ? <ArrowUpNarrowWide className="w-4 h-4" />
+                     : <ArrowDownWideNarrow className="w-4 h-4" />}
+                 </button>
+               </div>
              </div>
-             
+
+             {updateSource.isError && (
+               <Alert type="error" title="Update Failed">{(updateSource.error as any)?.response?.data?.detail || 'Could not update this source.'}</Alert>
+             )}
+
              <div className="glass-opaque rounded-2xl overflow-hidden border border-white/5 shadow-xl">
                {sourcesLoading ? (
                  <div className="p-20 flex justify-center">
@@ -465,7 +556,7 @@ export function SettingsPage() {
                        </tr>
                      </thead>
                      <tbody className="divide-y divide-white/5">
-                       {sources.map((source, idx) => (
+                       {sortedSources.map((source, idx) => (
                          <motion.tr 
                           key={source.id} 
                           initial={{ opacity: 0, y: 10 }}
@@ -474,12 +565,31 @@ export function SettingsPage() {
                           className="hover:bg-white/[0.02] transition-colors"
                          >
                            <td className="px-6 py-5 whitespace-nowrap">
-                             <div className="flex flex-col">
-                               <span className="text-[15px] font-bold text-white group-hover:text-accent-primary transition-colors">{source.name}</span>
-                               <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-mono text-text-ghost hover:text-accent-primary flex items-center gap-1.5 mt-1 transition-colors">
-                                 {safeHostname(source.url)} <ExternalLink className="w-3 h-3" />
-                               </a>
-                             </div>
+                             {editingId === source.id ? (
+                               <div className="flex flex-col gap-2 min-w-[280px]">
+                                 <input
+                                   type="text"
+                                   value={editName}
+                                   onChange={e => setEditName(e.target.value)}
+                                   placeholder="Source name"
+                                   className="glass-void border border-white/10 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-accent-primary transition-all font-bold placeholder:text-text-ghost"
+                                 />
+                                 <input
+                                   type="url"
+                                   value={editUrl}
+                                   onChange={e => setEditUrl(e.target.value)}
+                                   placeholder="https://..."
+                                   className="glass-void border border-white/10 text-text-secondary rounded-lg px-3 py-1.5 text-[11px] font-mono focus:outline-none focus:border-accent-primary transition-all placeholder:text-text-ghost"
+                                 />
+                               </div>
+                             ) : (
+                               <div className="flex flex-col">
+                                 <span className="text-[15px] font-bold text-white group-hover:text-accent-primary transition-colors">{source.name}</span>
+                                 <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-mono text-text-ghost hover:text-accent-primary flex items-center gap-1.5 mt-1 transition-colors">
+                                   {safeHostname(source.url)} <ExternalLink className="w-3 h-3" />
+                                 </a>
+                               </div>
+                             )}
                            </td>
                            <td className="px-6 py-5 whitespace-nowrap">
                              <span className="text-[10px] font-mono font-bold text-text-muted bg-white/5 px-2 py-0.5 rounded border border-white/5 uppercase tracking-wider">{source.type}</span>
@@ -498,13 +608,42 @@ export function SettingsPage() {
                              )}
                            </td>
                            <td className="px-6 py-5 whitespace-nowrap text-right">
-                             <button
-                               onClick={() => toggleSource.mutate({ id: source.id, is_active: !source.is_active })}
-                               className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition-all duration-500 focus:outline-none ${source.is_active ? 'bg-accent-primary' : 'bg-void border border-white/10'}`}
-                             >
-                               <span className="sr-only">Toggle Inertia</span>
-                               <span className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-lg transition-transform duration-500 ease-glass ${source.is_active ? 'translate-x-[10px]' : 'translate-x-[-10px]'}`} />
-                             </button>
+                             {editingId === source.id ? (
+                               <div className="flex items-center justify-end gap-2">
+                                 <button
+                                   onClick={() => saveEdit(source.id)}
+                                   disabled={updateSource.isPending || !editName.trim() || !editUrl.trim()}
+                                   title="Save changes"
+                                   className="p-2 rounded-lg text-[#5AE07F] hover:bg-[#5AE07F]/10 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
+                                 >
+                                   {updateSource.isPending ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                                 </button>
+                                 <button
+                                   onClick={cancelEdit}
+                                   title="Cancel"
+                                   className="p-2 rounded-lg text-text-ghost hover:text-white hover:bg-white/5 transition-colors"
+                                 >
+                                   <X className="w-4 h-4" />
+                                 </button>
+                               </div>
+                             ) : (
+                               <div className="flex items-center justify-end gap-4">
+                                 <button
+                                   onClick={() => startEdit(source)}
+                                   title="Edit source"
+                                   className="text-text-ghost hover:text-accent-primary transition-colors"
+                                 >
+                                   <Pencil className="w-4 h-4" />
+                                 </button>
+                                 <button
+                                   onClick={() => toggleSource.mutate({ id: source.id, is_active: !source.is_active })}
+                                   className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition-all duration-500 focus:outline-none ${source.is_active ? 'bg-accent-primary' : 'bg-void border border-white/10'}`}
+                                 >
+                                   <span className="sr-only">Toggle Inertia</span>
+                                   <span className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-lg transition-transform duration-500 ease-glass ${source.is_active ? 'translate-x-[10px]' : 'translate-x-[-10px]'}`} />
+                                 </button>
+                               </div>
+                             )}
                            </td>
                          </motion.tr>
                        ))}
