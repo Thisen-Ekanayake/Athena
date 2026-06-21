@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { Newspaper, Flame, Clock, Filter, List, Grid2X2, ChevronDown } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Newspaper, Clock, Filter, List, Grid2X2, ChevronDown, Bookmark } from 'lucide-react'
 
 interface TopBarProps {
   sort: 'score' | 'date' | 'trending'
@@ -111,15 +112,6 @@ export function FeedTopBar({
             <Newspaper className="w-4 h-4" />
           </button>
           <button
-            onClick={() => setSort('trending')}
-            className={`p-1.5 rounded-md transition-all duration-300 ${
-              sort === 'trending' ? 'bg-white/10 text-accent-tertiary shadow-sm' : 'text-text-muted hover:text-text-primary'
-            }`}
-            title="Social Signal"
-          >
-            <Flame className="w-4 h-4" />
-          </button>
-          <button
             onClick={() => setSort('date')}
             className={`p-1.5 rounded-md transition-all duration-300 ${
               sort === 'date' ? 'bg-white/10 text-accent-secondary shadow-sm' : 'text-text-muted hover:text-text-primary'
@@ -129,6 +121,16 @@ export function FeedTopBar({
             <Clock className="w-4 h-4" />
           </button>
         </div>
+
+        {/* Saved Lists */}
+        <Link
+          to="/saved"
+          title="Saved lists"
+          className="flex items-center gap-1.5 glass-void rounded-lg px-2.5 py-2 border border-white/5 text-text-muted hover:text-accent-primary hover:border-accent-primary/30 transition-all"
+        >
+          <Bookmark className="w-4 h-4" />
+          <span className="text-[11px] font-display font-bold uppercase tracking-tight hidden sm:inline">Saved</span>
+        </Link>
 
         {/* View Mode Toggle */}
         <div className="flex items-center glass-void rounded-lg p-1 border border-white/5">

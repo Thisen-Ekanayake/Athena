@@ -15,6 +15,7 @@ from uuid import UUID
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem, Cluster, ItemLink, ClusterRunLog
 from athena.pipeline.celery_app import celery_app
+from athena.pipeline.mlflow_utils import mlflow_run, ml_log
 
 # Config
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
@@ -39,9 +40,8 @@ def run_clustering():
     """
     logger.info("Starting clustering run...")
 
-    mlflow.set_experiment("athena-clustering")
-    with mlflow.start_run(run_name="run_clustering"):
-        mlflow.log_params({
+    with mlflow_run("athena-clustering", "run_clustering"):
+        ml_log(mlflow.log_params, {
             "umap_n_neighbors": 15,
             "umap_n_components": 50,
             "umap_metric": "cosine",
@@ -84,14 +84,14 @@ def run_clustering():
         # 3. Topics Clustering (K-Means)
         num_items = len(all_points)
         k = max(5, min(20, num_items // 10))
-        mlflow.log_param("kmeans_k", k)
+        ml_log(mlflow.log_param, "kmeans_k", k)
         clusterer = KMeans(n_clusters=k, random_state=42, n_init='auto')
         cluster_labels = clusterer.fit_predict(reduced_vectors)
 
         unique_labels = set(cluster_labels)
         noise_count = list(cluster_labels).count(-1)
 
-        mlflow.log_metrics({
+        ml_log(mlflow.log_metrics, {
             "total_items": len(all_points),
             "num_clusters": len(unique_labels),
             "noise_count": noise_count,
@@ -121,7 +121,7 @@ def run_clustering():
                 run_log.finished_at = datetime.utcnow()
                 run_log.status = "success"
                 session.commit()
-                mlflow.log_metrics({
+                ml_log(mlflow.log_metrics, {
                     "new_clusters": stats.get('new', 0),
                     "merged_clusters": stats.get('merged', 0),
                     "deactivated_clusters": stats.get('deactivated', 0),
@@ -131,7 +131,7 @@ def run_clustering():
                 run_log.status = "failed"
                 run_log.error_message = str(e)[:500]
                 session.commit()
-                mlflow.set_tag("error", str(e)[:200])
+                ml_log(mlflow.set_tag, "error", str(e)[:200])
                 raise
 
 
@@ -207,8 +207,26 @@ def process_clusters(points, labels, raw_vectors, session):
 
         clusters_to_label.add(cluster_id)
 
+    # Deactivate active clusters that received no items this run so stale,
+    # now-empty topics don't linger in the UI.
+    if clusters_to_label:
+        stale_ids = session.execute(
+            select(Cluster.id).where(
+                Cluster.is_active.is_(True),
+                Cluster.id.notin_(clusters_to_label),
+            )
+        ).scalars().all()
+        if stale_ids:
+            session.execute(
+                update(Cluster).where(Cluster.id.in_(stale_ids)).values(is_active=False)
+            )
+            stats['deactivated'] = len(stale_ids)
+
     session.commit()
-    logger.info("Clustering results persisted to database.")
+    logger.info(
+        f"Clustering results persisted to database "
+        f"(new={stats['new']} merged={stats['merged']} deactivated={stats['deactivated']})."
+    )
 
     import athena.pipeline.summarisation_tasks
     for c_id in clusters_to_label:

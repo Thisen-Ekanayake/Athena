@@ -28,6 +28,8 @@ services:
       DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
+      # Keep container staging on the mounted volume regardless of .env's value.
+      ATHENA_STAGING_DIR: /tmp/athena/staging
     depends_on:
       - redis
       - db
@@ -60,8 +62,12 @@ services:
   redis:
     image: redis:6-alpine
     restart: always
+    # Enable AOF so queued work survives a redis restart.
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -73,6 +79,14 @@ services:
       - qdrant_data:/qdrant/storage
 
 volumes:
+  # Explicit names pin the data to these exact volumes regardless of the Compose
+  # project name / launch directory, so the stack can never silently start
+  # against a different, empty volume set.
   postgres_data:
+    name: docker_postgres_data
   qdrant_data:
+    name: docker_qdrant_data
+  redis_data:
+    name: docker_redis_data
   athena_staging:
+    name: docker_athena_staging

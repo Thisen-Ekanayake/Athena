@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { FeedPage } from './pages/FeedPage'
 import { TrendingPage } from './pages/TrendingPage'
+import { SavedPage } from './pages/SavedPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SearchResultsPage } from './pages/SearchResultsPage'
 import { ClusterBrowserPage } from './pages/ClusterBrowserPage'
@@ -18,6 +19,7 @@ function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<FeedPage />} />
           <Route path="trending" element={<TrendingPage />} />
+          <Route path="saved" element={<SavedPage />} />
           <Route path="sources/:sourceId" element={<FeedPage />} />
           <Route path="search" element={<SearchResultsPage />} />
           <Route path="research" element={<SearchPanel />} />
