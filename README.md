@@ -2,11 +2,11 @@
 
 > AI research intelligence — aggregate, score, cluster, summarise, and semantically search content from across the AI landscape.
 
-[![CI](https://github.com/Thisen-Ekanayake/Athena/actions/workflows/ci.yml/badge.svg)](https://github.com/Thisen-Ekanayake/Athena/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Athena ingests papers and posts from ArXiv, Semantic Scholar, Papers With Code, RSS feeds, Substack, LessWrong and Playwright-scraped sites, enriches them through a Celery pipeline (embed → score → cluster → summarise), and serves ranked, semantically searchable results — with AI summaries, Q&A, topic clusters, and saved lists — to a React UI.
 
@@ -107,4 +107,4 @@ Branch from `main` → [Conventional Commits](https://www.conventionalcommits.or
 
 ## License
 
-No license has been declared yet — all rights reserved by the author. Add a `LICENSE` file to set usage terms.
+[MIT](LICENSE) © 2025 Thisen Ekanayake
