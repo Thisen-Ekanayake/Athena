@@ -1,6 +1,7 @@
 import type { FeedItem } from '../api/client'
 import { formatDistanceToNow } from 'date-fns'
-import { Flame, Layers, Search, ChevronDown, ChevronUp, MessageSquare, ExternalLink, Sparkles, MoreHorizontal } from 'lucide-react'
+import { Flame, Layers, Search, ChevronDown, ChevronUp, MessageSquare, ExternalLink, Sparkles } from 'lucide-react'
+import { AddToListMenu } from './AddToListMenu'
 import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { ScoreTooltip } from './ScoreTooltip'
@@ -196,17 +197,15 @@ export function FeedCard({ item, viewMode = 'expanded', index = 0 }: FeedCardPro
               )}
               
               <div className="flex items-center gap-1">
-                <a 
-                  href={item.url} 
-                  target="_blank" 
+                <a
+                  href={item.url}
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="p-1.5 text-text-muted hover:text-text-primary transition-colors rounded-md hover:bg-white/5"
                 >
                   <ExternalLink className="w-4 h-4" />
                 </a>
-                <button className="p-1.5 text-text-muted hover:text-text-primary transition-colors rounded-md hover:bg-white/5">
-                  <MoreHorizontal className="w-4 h-4" />
-                </button>
+                <AddToListMenu itemId={item.id} />
               </div>
             </div>
           </div>

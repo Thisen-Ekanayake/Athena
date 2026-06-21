@@ -192,3 +192,28 @@ class SourceToggleResponse(BaseModel):
     id: UUID
     is_active: bool
     message: str
+
+
+# ── Saved lists ─────────────────────────────────────────
+
+class SavedListResponse(BaseModel):
+    id: UUID
+    name: str
+    item_count: int = 0
+    created_at: Optional[datetime] = None
+    # Populated only when a list is queried in the context of a specific item.
+    contains_item: Optional[bool] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SavedListCreateRequest(BaseModel):
+    name: str
+
+
+class SavedListUpdateRequest(BaseModel):
+    name: str
+
+
+class AddItemToListRequest(BaseModel):
+    item_id: UUID

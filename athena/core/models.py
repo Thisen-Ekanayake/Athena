@@ -1,6 +1,9 @@
 from datetime import datetime
 from uuid import uuid4
-from sqlalchemy import Column, String, DateTime, Integer, Float, Boolean, ARRAY, Enum as SQLEnum, ForeignKey, func
+from sqlalchemy import (
+    Column, String, DateTime, Integer, Float, Boolean, ARRAY,
+    Enum as SQLEnum, ForeignKey, UniqueConstraint, func,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import declarative_base, relationship
 import enum
@@ -302,6 +305,45 @@ class ClusterRunLog(Base):
     hdbscan_min_cluster_size = Column(Integer, default=5)
     status = Column(String, default="running")  # running, success, failed
     error_message = Column(String, nullable=True)
+
+
+class SavedList(Base):
+    """A user-created collection (e.g. 'NLP', 'Computer Vision') of content items."""
+    __tablename__ = "saved_lists"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    name = Column(String, nullable=False, unique=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    items = relationship(
+        "SavedListItem",
+        back_populates="list",
+        cascade="all, delete-orphan",
+    )
+
+
+class SavedListItem(Base):
+    """Membership row linking a ContentItem to a SavedList."""
+    __tablename__ = "saved_list_items"
+    __table_args__ = (
+        UniqueConstraint("list_id", "item_id", name="uq_saved_list_item"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    list_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("saved_lists.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    item_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("content_items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    added_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    list = relationship("SavedList", back_populates="items")
+    content_item = relationship("ContentItem")
 
 
 class ReferenceEmbedding(Base):
