@@ -6,6 +6,10 @@ Athena Layer 3 — Scoring Worker
 Celery tasks for computing, persisting, and updating content scores.
 Consumes items from the Redis scoring queue (emitted after Layer 2 embedding).
 
+MLflow tracking in the scoring tasks is best-effort via
+`athena.pipeline.mlflow_utils` — a tracking-server outage no longer blocks
+scoring (the tasks previously crashed on `mlflow.set_experiment`).
+
 ## Functions
 ### `_get_openai_client`
 Lazy-load OpenAI client.

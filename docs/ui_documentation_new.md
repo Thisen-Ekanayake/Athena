@@ -225,6 +225,9 @@ A **tall frosted glass panel** docked to the left edge. It does not have a hard 
 - **Logo mark**: Wordmark in Syne 700 with a small luminous indigo glyph icon. A faint horizontal rule with `--border-subtle` separates it from nav links.
 - **Global Search** (`components/SearchInput.tsx`): A pill-shaped glass input with `backdrop-filter: blur(20px)`. A faint pulsing ring animation plays on focus.
 - **Primary Navigation**: Icon + label links. Active state: label shifts to `--text-primary`, icon receives `--accent-primary` colour and a soft box-shadow glow. Inactive links fade to `--text-muted`.
+  - `DISCOVER`: **Feed** (`/`), **Saved** (`/saved`, Bookmark icon — replaced the former Trending tab), **Research** (`/research`)
+  - `MANAGE`: **Topics** (`/clusters`)
+  - Bottom: **Sync Data** (triggers a crawl + opens the sync-logs modal), **Settings**, theme toggle
 - **Section Labels**: `DISCOVER`, `MANAGE` etc. in Syne 500 at `0.68rem`, tracked widely, coloured `--text-ghost`.
 - **Bottom area**: User avatar, connection status pill, settings shortcut — all glassed.
 
@@ -260,13 +263,16 @@ The primary landing page. A ranked, filterable stream of research cards rendered
 
 ---
 
-### 2. Trending (`pages/TrendingPage.tsx`)
+### 2. Saved (`pages/SavedPage.tsx`)
 
-A higher-energy layout highlighting rapidly rising content. Differentiators from the Feed:
+User-curated lists (e.g. "NLP", "Computer Vision") for organising content.
 
-- **Hero Card**: The top-trending item is displayed at full width with an expanded layout — larger score ring, extended summary, citation velocity chart (sparkline).
-- **Velocity Badge**: A small animated badge (`↑ +142 citations / 24h`) in `--accent-tertiary` appears on qualifying cards.
-- **Background shift**: The atmosphere orbs subtly shift hue toward cerulean on this page to signal elevated energy.
+- **List rail** (left): the user's lists with item counts; create, rename, and delete lists inline.
+- **Items pane** (right): the selected list's saved items rendered as feed cards.
+- Items are added from any feed card via the **⋯ add-to-list menu**, which lets the user toggle list membership or create a new list on the spot.
+- Backed by `api/queries/saved.ts` → `/api/v1/lists` (see `routers/saved.py`).
+
+> The **Trending** page (`pages/TrendingPage.tsx`) still exists and is reachable at `/trending`, but it is no longer in the primary sidebar nav — Saved took its slot. Trending content is also surfaced inline via the 🔥 badge on feed cards.
 
 ---
 
@@ -303,11 +309,16 @@ A structured preferences interface divided into tabbed sections.
 
 **Tab Bar**: Horizontal glass pill selector at the top. Active tab: `--glass-fill-active`, `--border-glow`.
 
-**Sections**:
-- **Preferences**: Toggle switches (custom glass toggle component), dropdown selectors
-- **Sources**: Checkbox list of ingestion sources with status badges
-- **Background Tasks**: A live-updating task list with status indicators (pulsing dot for in-progress, checkmark for complete)
-- **Appearance**: Reserved for future theme customisation controls
+**Sections** (Content Harvest, API Keys, Logic Clusters, System Core):
+- **Add a source** ("Harvest Deployment"): paste any URL → MATERIALIZE runs a
+  preview (auto-detected type + sample items) → CONFIRM DEPLOYMENT persists it
+  and queues the first crawl. Two-step flow via `useAddSource` (`confirm` flag).
+- **Active Reservoirs** (sources table): shows a **total source count** badge and
+  a **Sort** control (Alphabetical · Date Created · Health Status · Protocol ·
+  Inertia) with an asc/desc toggle. Each row supports **edit** (inline name + URL,
+  PATCH /sources/{id}) and an **enable/disable** toggle (Inertia).
+- **API Keys**: set/update OpenAI and Semantic Scholar keys (stored in the DB).
+- **Logic Clusters / System Core**: clustering health and system stats.
 
 **Form Elements**: All inputs use the base glass recipe with `--border-subtle` at rest, `--border-glow` on focus, and a `box-shadow: var(--glow-primary)` focus ring.
 
@@ -329,9 +340,14 @@ The atomic unit of information display. Every card is a **Base Glass** surface.
 │  ▸ Key Takeaway 1                                       │
 │  ▸ Key Takeaway 2   [collapsed by default]              │
 │  ─────────────────────────────────────────────────      │
-│  [Ask AI ✦]  [Bookmark]  [Open ↗]        [···]         │
+│  [Ask AI ✦]              [Open ↗]        [···]         │
 └─────────────────────────────────────────────────────────┘
 ```
+
+**Footer actions**: `Ask AI` opens the Q&A panel; `Open ↗` is the external visit
+link; **`···` opens the add-to-list menu** (`components/AddToListMenu.tsx`) — a
+portalled dropdown (rendered to `document.body` so it escapes the card's
+transformed stacking context) to toggle list membership or create a new list.
 
 **Hover behaviour**: Card transitions to Float Glass tier, a faint `--glow-primary` appears, and the score ring border brightens.
 

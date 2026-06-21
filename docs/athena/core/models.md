@@ -20,7 +20,9 @@ No docstring provided.
 No docstring provided.
 
 ### `Source`
-No docstring provided.
+A content publisher (ArXiv, blog, RSS URL). Includes `created_at` (added so the
+Settings UI can sort sources by date created), `authority_score`, `is_active`,
+`added_by`, and `consecutive_failures`.
 
 ### `ContentItem`
 No docstring provided.

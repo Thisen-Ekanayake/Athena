@@ -55,10 +55,23 @@ No docstring provided.
 No docstring provided.
 
 ### `SourcePreviewResponse`
-No docstring provided.
+Preview payload for a source: `source_type`, `source_name`, `sample_items`
+(list of `SourcePreviewItem`), plus optional `id`/`queued` on the confirm step.
+
+### `SourcePreviewItem`
+A single preview row: `title`, `url`, `published_at`, `summary`.
+
+### `SourceResponse`
+Source list/detail row. Includes `created_at` (for date-created sorting),
+`authority_score`, `is_active`, `added_by`, `last_fetched_at`,
+`consecutive_failures`.
 
 ### `SourceCreateRequest`
-No docstring provided.
+Add-source request: `url`, optional `name`/`category`, and a `confirm` flag
+(false = preview only, true = persist + queue the first crawl).
+
+### `SourceUpdateRequest`
+Update a source's `name` and/or `url` (used by PATCH /sources/{id}).
 
 ### `SourceToggleResponse`
 No docstring provided.
