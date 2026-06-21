@@ -29,6 +29,7 @@ from athena.pipeline.signals import (
     check_trending_criteria,
     _extract_engagement_signals,
 )
+from athena.pipeline.mlflow_utils import mlflow_run, ml_log
 
 SCORING_QUEUE_KEY = "athena:scoring_queue"
 BATCH_SIZE = 20
@@ -311,8 +312,7 @@ def process_scoring_queue():
     logger.info(f"Processing scoring queue batch of {len(item_ids)} items.")
 
     import mlflow
-    mlflow.set_experiment("athena-scoring")
-    with mlflow.start_run(run_name="process_scoring_queue"):
+    with mlflow_run("athena-scoring", "process_scoring_queue"):
         scores = []
         with SessionLocal() as session:
             for item_id in item_ids:
@@ -322,7 +322,7 @@ def process_scoring_queue():
 
         update_category_ranks()
 
-        mlflow.log_metrics({
+        ml_log(mlflow.log_metrics, {
             "batch_size": len(item_ids),
             "scored_count": len(scores),
             **({"mean_score": float(np.mean(scores)),
@@ -349,8 +349,7 @@ def score_all_items():
     logger.info("Starting full corpus re-score...")
 
     import mlflow
-    mlflow.set_experiment("athena-scoring")
-    with mlflow.start_run(run_name="score_all_items"):
+    with mlflow_run("athena-scoring", "score_all_items"):
         scores = []
         total = 0
         for item_id in _iter_item_ids(select(ContentItem.id)):
@@ -361,7 +360,7 @@ def score_all_items():
 
         update_category_ranks()
 
-        mlflow.log_metrics({
+        ml_log(mlflow.log_metrics, {
             "total_items": total,
             "scored_count": len(scores),
             **({"mean_score": float(np.mean(scores)),
@@ -380,8 +379,7 @@ def refresh_recency_scores():
     stmt = select(ContentItem.id).where(ContentItem.scored_at.isnot(None))
 
     import mlflow
-    mlflow.set_experiment("athena-scoring")
-    with mlflow.start_run(run_name="refresh_recency_scores"):
+    with mlflow_run("athena-scoring", "refresh_recency_scores"):
         scores = []
         total = 0
         for item_id in _iter_item_ids(stmt):
@@ -392,7 +390,7 @@ def refresh_recency_scores():
 
         update_category_ranks()
 
-        mlflow.log_metrics({
+        ml_log(mlflow.log_metrics, {
             "total_items": total,
             "scored_count": len(scores),
             **({"mean_score": float(np.mean(scores)),

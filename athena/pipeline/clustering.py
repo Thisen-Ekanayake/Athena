@@ -1,6 +1,5 @@
 import os
 import numpy as np
-from contextlib import contextmanager
 from typing import List
 from loguru import logger
 from qdrant_client import QdrantClient
@@ -16,44 +15,7 @@ from uuid import UUID
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem, Cluster, ItemLink, ClusterRunLog
 from athena.pipeline.celery_app import celery_app
-
-# If the MLflow tracking server is unreachable, fail fast instead of retrying
-# for minutes (default backoff would otherwise stall the whole clustering job).
-os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "0")
-os.environ.setdefault("MLFLOW_HTTP_REQUEST_TIMEOUT", "3")
-
-
-@contextmanager
-def _mlflow_run(experiment: str, run_name: str):
-    """
-    Best-effort MLflow run. MLflow is observability only — if the tracking
-    server is unreachable (e.g. not running in a native/dev setup), this must
-    not block clustering. Yields True when tracking is active, False otherwise.
-    """
-    active = False
-    try:
-        mlflow.set_experiment(experiment)
-        mlflow.start_run(run_name=run_name)
-        active = True
-    except Exception as e:
-        logger.warning(f"MLflow tracking unavailable ({e}); continuing without it.")
-    try:
-        yield active
-    finally:
-        if active:
-            try:
-                mlflow.end_run()
-            except Exception:
-                pass
-
-
-def _ml_log(fn, *args, **kwargs):
-    """Call an mlflow.log_* / set_tag function, swallowing any failure."""
-    try:
-        fn(*args, **kwargs)
-    except Exception:
-        pass
-
+from athena.pipeline.mlflow_utils import mlflow_run, ml_log
 
 # Config
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
@@ -78,8 +40,8 @@ def run_clustering():
     """
     logger.info("Starting clustering run...")
 
-    with _mlflow_run("athena-clustering", "run_clustering"):
-        _ml_log(mlflow.log_params, {
+    with mlflow_run("athena-clustering", "run_clustering"):
+        ml_log(mlflow.log_params, {
             "umap_n_neighbors": 15,
             "umap_n_components": 50,
             "umap_metric": "cosine",
@@ -122,14 +84,14 @@ def run_clustering():
         # 3. Topics Clustering (K-Means)
         num_items = len(all_points)
         k = max(5, min(20, num_items // 10))
-        _ml_log(mlflow.log_param, "kmeans_k", k)
+        ml_log(mlflow.log_param, "kmeans_k", k)
         clusterer = KMeans(n_clusters=k, random_state=42, n_init='auto')
         cluster_labels = clusterer.fit_predict(reduced_vectors)
 
         unique_labels = set(cluster_labels)
         noise_count = list(cluster_labels).count(-1)
 
-        _ml_log(mlflow.log_metrics, {
+        ml_log(mlflow.log_metrics, {
             "total_items": len(all_points),
             "num_clusters": len(unique_labels),
             "noise_count": noise_count,
@@ -159,7 +121,7 @@ def run_clustering():
                 run_log.finished_at = datetime.utcnow()
                 run_log.status = "success"
                 session.commit()
-                _ml_log(mlflow.log_metrics, {
+                ml_log(mlflow.log_metrics, {
                     "new_clusters": stats.get('new', 0),
                     "merged_clusters": stats.get('merged', 0),
                     "deactivated_clusters": stats.get('deactivated', 0),
@@ -169,7 +131,7 @@ def run_clustering():
                 run_log.status = "failed"
                 run_log.error_message = str(e)[:500]
                 session.commit()
-                _ml_log(mlflow.set_tag, "error", str(e)[:200])
+                ml_log(mlflow.set_tag, "error", str(e)[:200])
                 raise
 
 
