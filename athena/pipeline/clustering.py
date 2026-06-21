@@ -207,8 +207,26 @@ def process_clusters(points, labels, raw_vectors, session):
 
         clusters_to_label.add(cluster_id)
 
+    # Deactivate active clusters that received no items this run so stale,
+    # now-empty topics don't linger in the UI.
+    if clusters_to_label:
+        stale_ids = session.execute(
+            select(Cluster.id).where(
+                Cluster.is_active.is_(True),
+                Cluster.id.notin_(clusters_to_label),
+            )
+        ).scalars().all()
+        if stale_ids:
+            session.execute(
+                update(Cluster).where(Cluster.id.in_(stale_ids)).values(is_active=False)
+            )
+            stats['deactivated'] = len(stale_ids)
+
     session.commit()
-    logger.info("Clustering results persisted to database.")
+    logger.info(
+        f"Clustering results persisted to database "
+        f"(new={stats['new']} merged={stats['merged']} deactivated={stats['deactivated']})."
+    )
 
     import athena.pipeline.summarisation_tasks
     for c_id in clusters_to_label:
