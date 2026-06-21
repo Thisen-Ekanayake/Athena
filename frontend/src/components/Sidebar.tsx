@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutGrid, Layers, Flame, Settings, RefreshCw, BookOpen } from 'lucide-react'
+import { LayoutGrid, Layers, Bookmark, Settings, RefreshCw, BookOpen } from 'lucide-react'
 import { SearchInput } from './SearchInput'
 import { apiClient } from '../api/client'
 import { SyncLogsModal } from './SyncLogsModal'
@@ -40,7 +40,7 @@ export function Sidebar({ onClose, isCondensed, onSearchClick }: SidebarProps) {
 
   const navItems = [
     { to: '/', icon: LayoutGrid, label: 'Feed', section: 'DISCOVER' },
-    { to: '/trending', icon: Flame, label: 'Trending', section: 'DISCOVER' },
+    { to: '/saved', icon: Bookmark, label: 'Saved', section: 'DISCOVER' },
     { to: '/research', icon: BookOpen, label: 'Research', section: 'DISCOVER' },
     { to: '/clusters', icon: Layers, label: 'Topics', section: 'MANAGE' },
   ]
