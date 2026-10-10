@@ -19,11 +19,15 @@ marked [[ like this ]].)
 Usage:
     python -m scripts.evolution_bench.strict_check              # write strict_check.csv (60 rows)
     python -m scripts.evolution_bench.strict_check --score      # after filling in `answer`
+    # a second, fresh sample that skips rows already on earlier sheets (a test set after tuning on the first)
+    python -m scripts.evolution_bench.strict_check --sheet strict_check_test.csv --strict 50 --other 0 \
+        --exclude strict_check.csv
 """
 import argparse
 import csv
 import math
 import random
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import aliased
@@ -54,16 +58,18 @@ def is_strict(ctx: EvoCitationContext) -> bool:
     return ctx.label in LIMITATION_LABELS and ctx.attributed is True
 
 
-def make():
-    if SHEET.exists() and any(r["answer"].strip() for r in csv.DictReader(open(SHEET, encoding="utf-8"))):
-        raise SystemExit(f"{SHEET} already has answers; delete it first to start over.")
-    rows = _contexts()
-    rng = random.Random(11)
+def make(sheet: Path = SHEET, strict_rows: int = STRICT_ROWS, other_rows: int = OTHER_ROWS,
+         exclude: list[Path] = (), seed: int = 11):
+    if sheet.exists() and any(r["answer"].strip() for r in csv.DictReader(open(sheet, encoding="utf-8"))):
+        raise SystemExit(f"{sheet} already has answers; delete it first to start over.")
+    seen = {r["id"] for path in exclude for r in csv.DictReader(open(path, encoding="utf-8"))}
+    rows = [r for r in _contexts() if str(r[0].id) not in seen]
+    rng = random.Random(seed)
     strict = [r for r in rows if is_strict(r[0])]
     other = [r for r in rows if not is_strict(r[0])]
-    picks = rng.sample(strict, min(STRICT_ROWS, len(strict))) + rng.sample(other, min(OTHER_ROWS, len(other)))
+    picks = rng.sample(strict, min(strict_rows, len(strict))) + rng.sample(other, min(other_rows, len(other)))
     rng.shuffle(picks)
-    with open(SHEET, "w", newline="", encoding="utf-8") as f:
+    with open(sheet, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=COLUMNS)
         writer.writeheader()
         for ctx, citing_title, cited_title in picks:
@@ -71,7 +77,7 @@ def make():
                              "section": ctx.section_type or "", "sentence": ctx.marked or ctx.sentence,
                              "answer": "", "notes": ""})
     print(f"Wrote {len(picks)} rows ({len(strict)} strict links and {len(other)} other labelled sentences "
-          f"available) to {SHEET}. Fill in `answer`, then run with --score.")
+          f"available) to {sheet}. Fill in `answer`, then run with --score.")
 
 
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -83,10 +89,10 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return centre - half, centre + half
 
 
-def score():
-    answers = {r["id"]: r for r in csv.DictReader(open(SHEET, encoding="utf-8")) if r["answer"].strip()}
+def score(sheet: Path = SHEET):
+    answers = {r["id"]: r for r in csv.DictReader(open(sheet, encoding="utf-8")) if r["answer"].strip()}
     if not answers:
-        raise SystemExit(f"No answers in {SHEET} yet.")
+        raise SystemExit(f"No answers in {sheet} yet.")
     bad = [i for i, r in answers.items() if r["answer"].strip().lower() not in ANSWERS]
     if bad:
         raise SystemExit(f"Rows {bad} have answers outside {sorted(ANSWERS)}.")
@@ -112,8 +118,17 @@ def score():
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--score", action="store_true")
+    ap.add_argument("--sheet", default=SHEET.name, help="file name inside scripts/evolution_bench")
+    ap.add_argument("--strict", type=int, default=STRICT_ROWS, help="strict links to sample")
+    ap.add_argument("--other", type=int, default=OTHER_ROWS, help="other labelled sentences to sample")
+    ap.add_argument("--exclude", nargs="*", default=[], help="earlier sheets whose rows must not repeat")
+    ap.add_argument("--seed", type=int, default=11)
     args = ap.parse_args()
-    score() if args.score else make()
+    sheet = BENCH_DIR / args.sheet
+    if args.score:
+        score(sheet)
+    else:
+        make(sheet, args.strict, args.other, [BENCH_DIR / e for e in args.exclude], args.seed)
 
 
 if __name__ == "__main__":
