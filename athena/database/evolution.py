@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, delete, select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -108,11 +108,11 @@ def list_topics(session: Session) -> list[dict]:
             effective_milestone(tp.is_milestone_auto, overrides[p.id].action if p.id in overrides else None)
             for tp, p in rows
         )
-        out.append(_topic_summary(topic) | {"paper_count": len(rows), "milestone_count": milestones})
+        out.append(topic_summary(topic) | {"paper_count": len(rows), "milestone_count": milestones})
     return out
 
 
-def _topic_summary(topic: EvoTopic) -> dict:
+def topic_summary(topic: EvoTopic) -> dict:
     return {
         "slug": topic.slug,
         "name": topic.name,
@@ -127,6 +127,39 @@ def _topic_summary(topic: EvoTopic) -> dict:
 # ── build results ──────────────────────────────────────────────────────
 
 
+def _merge_paper(oid: str, paper, existing: EvoPaper | None, now: datetime) -> dict:
+    """Combine a build's view of a paper with what is stored; papers are shared across topics.
+
+    Without this, the last topic built wins: building PEFT after object detection reset R-CNN's
+    seed-corrected year and arXiv ID. Seed metadata wins, the earliest credible year wins, and
+    links are only ever added.
+    """
+    w = paper.work
+    title, year, year_source = w.title[:1000], paper.year, paper.year_source
+    arxiv_id, oa_pdf_url, is_oa, abstract = w.arxiv_id, w.oa_pdf_url, w.is_oa, w.abstract
+    status = None
+    if existing is not None:
+        if existing.year_source == "seed" and year_source != "seed":
+            title, year, year_source = existing.title, existing.year, existing.year_source
+        elif year_source != "seed" and existing.year and (year is None or existing.year < year):
+            year, year_source = existing.year, existing.year_source
+        arxiv_id = arxiv_id or existing.arxiv_id
+        oa_pdf_url = oa_pdf_url or existing.oa_pdf_url
+        is_oa = bool(is_oa or existing.is_oa)
+        abstract = abstract or existing.abstract
+        if existing.full_text_status in ("parsed", "failed"):
+            status = existing.full_text_status  # a later phase already processed the full text
+    return {
+        "id": existing.id if existing is not None else uuid4(), "openalex_id": oid, "doi": w.doi,
+        "arxiv_id": arxiv_id, "title": title, "abstract": abstract, "year": year, "year_source": year_source,
+        "openalex_year": w.year, "venue": w.venue, "work_type": w.work_type, "authors": w.authors,
+        "cited_by_count": w.cited_by_count, "primary_topic": w.primary_topic, "is_oa": is_oa,
+        "oa_pdf_url": oa_pdf_url,
+        "full_text_status": status or ("available" if (arxiv_id or oa_pdf_url) else "unavailable"),
+        "merged_ids": paper.merged_ids, "updated_at": now,
+    }
+
+
 def save_topic_build(slug: str, corpus: "Corpus", scores: "TopicScores") -> None:
     """Replace a topic's papers, scores and main path with a fresh build. Overrides are kept."""
     now = datetime.now(timezone.utc)
@@ -135,26 +168,12 @@ def save_topic_build(slug: str, corpus: "Corpus", scores: "TopicScores") -> None
         if topic is None:
             raise ValueError(f"Unknown topic {slug!r}")
 
-        paper_rows = []
-        for oid, p in corpus.papers.items():
-            w = p.work
-            paper_rows.append({
-                "id": uuid4(), "openalex_id": oid, "doi": w.doi, "arxiv_id": w.arxiv_id, "title": w.title[:1000],
-                "abstract": w.abstract, "year": p.year, "year_source": p.year_source, "openalex_year": w.year,
-                "venue": w.venue, "work_type": w.work_type, "authors": w.authors,
-                "cited_by_count": w.cited_by_count, "primary_topic": w.primary_topic, "is_oa": w.is_oa,
-                "oa_pdf_url": w.oa_pdf_url,
-                "full_text_status": "available" if (w.arxiv_id or w.oa_pdf_url) else "unavailable",
-                "merged_ids": p.merged_ids, "updated_at": now,
-            })
+        existing = {e.openalex_id: e for e in session.execute(
+            select(EvoPaper).where(EvoPaper.openalex_id.in_(list(corpus.papers)))).scalars()}
+        paper_rows = [_merge_paper(oid, p, existing.get(oid), now) for oid, p in corpus.papers.items()]
         for chunk in _chunks(paper_rows):
             stmt = insert(EvoPaper).values(chunk)
-            updates = {c: stmt.excluded[c] for c in chunk[0] if c not in ("id", "openalex_id", "full_text_status")}
-            # Never downgrade a paper whose full text a later phase already parsed.
-            updates["full_text_status"] = case(
-                (EvoPaper.full_text_status.in_(["parsed", "failed"]), EvoPaper.full_text_status),
-                else_=stmt.excluded.full_text_status,
-            )
+            updates = {c: stmt.excluded[c] for c in chunk[0] if c not in ("id", "openalex_id")}
             session.execute(stmt.on_conflict_do_update(index_elements=["openalex_id"], set_=updates))
 
         ids = dict(session.execute(
@@ -244,7 +263,7 @@ def topic_graph(session: Session, topic: EvoTopic, limit: int = 250) -> dict:
     ]
     years = [n["year"] for n in nodes if n["year"]]
     return {
-        "topic": _topic_summary(topic),
+        "topic": topic_summary(topic),
         "nodes": nodes,
         "edges": edges,
         "total_papers": total,
@@ -267,7 +286,7 @@ def topic_timeline(session: Session, topic: EvoTopic, notable: int = 40) -> dict
         key=lambda n: n["milestone_score"], reverse=True,
     )
     return {
-        "topic": _topic_summary(topic),
+        "topic": topic_summary(topic),
         "years": [{"year": y, "papers": sorted(ps, key=lambda n: -n["milestone_score"])}
                   for y, ps in sorted(by_year.items())],
         "without_full_text": without_full_text,

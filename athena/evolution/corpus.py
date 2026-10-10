@@ -215,6 +215,12 @@ def select_corpus(seed_works: dict[str, Work], candidates: dict[str, Work], seed
     papers: dict[str, CorpusPaper] = {}
     for wid in keep:
         work = works[wid]
+        # The proceedings record often lacks the arXiv link its merged preprint record has.
+        for member in (works[m] for m in merged.get(wid, [])):
+            work.arxiv_id = work.arxiv_id or member.arxiv_id
+            work.oa_pdf_url = work.oa_pdf_url or member.oa_pdf_url
+            work.is_oa = work.is_oa or member.is_oa
+            work.abstract = work.abstract or member.abstract
         seed = seeds_by_id.get(wid)
         if seed and seed.title:
             work.title = seed.title
