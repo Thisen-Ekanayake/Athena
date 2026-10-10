@@ -30,3 +30,4 @@ umap-learn
 hdbscan
 scikit-learn
 mlflow
+python-igraph
