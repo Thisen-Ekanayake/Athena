@@ -259,3 +259,14 @@ class TestExternalEndpoints:
         monkeypatch.setattr(gpu, "managed_servers", lambda: False)
         text, cut = gpu._fit(None, "https://api.example.com", "word " * 700)
         assert cut and len(text.split()) == gpu.EXTERNAL_MAX_WORDS
+
+
+def test_theme_labels_are_short_or_refused():
+    answers = iter([{"label": "High cost of  full fine-tuning"}, {"label": " ".join(["word"] * 12)}])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(next(answers))}}]})
+
+    clf = Classifier(base_url="http://llm", model="m", http=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert clf.theme_label("PEFT", ["Full fine-tuning is costly."]) == "High cost of full fine-tuning"
+    assert clf.theme_label("PEFT", ["Full fine-tuning is costly."]) is None

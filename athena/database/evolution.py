@@ -861,3 +861,26 @@ def mark_abstracts(session: Session, paper_ids: list[UUID]) -> None:
     session.execute(update(EvoPaper).where(EvoPaper.id.in_(paper_ids))
                     .values(abstract_embedded_at=datetime.now(timezone.utc)))
     session.commit()
+
+
+def themes_to_label(session: Session) -> list[tuple[EvoGapTheme, str, list[str]]]:
+    """Gap themes without a 9B label, with their topic's name and up to six statements (own text first)."""
+    out = []
+    themes = session.execute(select(EvoGapTheme, EvoTopic.name)
+                             .join(EvoTopic, EvoGapTheme.topic_id == EvoTopic.id)).all()
+    for theme, topic_name in themes:
+        if (theme.detail or {}).get("label_model"):
+            continue
+        gaps = session.execute(select(EvoGapStatement)
+                               .join(EvoGapThemeMember, EvoGapThemeMember.gap_id == EvoGapStatement.id)
+                               .where(EvoGapThemeMember.theme_id == theme.id)).scalars().all()
+        gaps = sorted(gaps, key=lambda g: g.origin != "own")[:6]
+        out.append((theme, topic_name, [g.sentence[:400] for g in gaps]))
+    return out
+
+
+def save_theme_label(session: Session, theme_id: UUID, label: str, model: str) -> None:
+    theme = session.get(EvoGapTheme, theme_id)
+    theme.detail = {**(theme.detail or {}), "label_model": model, "terms_label": theme.label}
+    theme.label = label
+    session.commit()

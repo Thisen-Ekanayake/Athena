@@ -84,6 +84,20 @@ def gap_prompt(paper_title: str, section_type: str | None, sentence: str) -> str
     )
 
 
+def theme_label_prompt(topic_name: str, sentences: list[str]) -> str:
+    listed = "\n".join(f"- {s}" for s in sentences)
+    return (
+        f"Research topic: {topic_name}\nThese sentences from research papers state the same kind of research gap:\n"
+        f"{listed}\n\n"
+        # The examples come from other fields so they cannot be copied as labels for these topics.
+        "Name that gap in at most six words, as a short noun phrase (for example \"Noisy labels in crowdsourced "
+        "data\" or \"High latency of speech decoding\"). Use no author names.\n"
+        'Return {"label": "<at most six words>"}.'
+    )
+
+
+THEME_LABEL_SCHEMA = {"type": "object", "properties": {"label": {"type": "string", "maxLength": 60}},
+                      "required": ["label"], "additionalProperties": False}
 GAP_SCHEMA = {"type": "object", "properties": {"label": {"type": "string", "enum": ["gap", "not_gap"]}},
               "required": ["label"], "additionalProperties": False}
 LABEL_SCHEMA = {"type": "object", "properties": {"label": {"type": "string", "enum": LABELS}},
@@ -171,3 +185,9 @@ class Classifier:
     def is_gap(self, paper_title: str, section_type: str | None, sentence: str) -> str | None:
         answer = self.ask(gap_prompt(paper_title, section_type, sentence), GAP_SCHEMA, "gap") or {}
         return answer.get("label") if answer.get("label") in ("gap", "not_gap") else None
+
+    def theme_label(self, topic_name: str, sentences: list[str]) -> str | None:
+        """A short name for a gap theme (the plan's optional labels; TF-IDF terms are the fallback)."""
+        answer = self.ask(theme_label_prompt(topic_name, sentences), THEME_LABEL_SCHEMA, "theme_label") or {}
+        label = " ".join(str(answer.get("label") or "").split())
+        return label if 0 < len(label.split()) <= 8 else None

@@ -333,8 +333,27 @@ def build_all_themes() -> dict:
     return out
 
 
+def label_themes() -> int:
+    """Short 9B names for gap themes; a theme keeps its TF-IDF label when the answer is unusable."""
+    url, server = chat_server()
+    done = 0
+    with SessionLocal() as session:
+        pending = db.themes_to_label(session)
+        if not pending:
+            return 0
+        with server:
+            clf = Classifier(base_url=url)
+            for theme, topic_name, sentences in pending:
+                label = clf.theme_label(topic_name, sentences)
+                if label:
+                    db.save_theme_label(session, theme.id, label, clf.model)
+                    done += 1
+    logger.info(f"Labelled {done} gap themes")
+    return done
+
+
 def run_gpu_lane(embed: bool = True, classify: bool = True) -> dict:
-    """Everything pending, one model at a time: the 9B first, then the embedder, then themes on the CPU."""
+    """Everything pending, one model at a time: the 9B, the embedder, themes on the CPU, then the 9B names them."""
     summary = {}
     if classify:
         summary |= classify_pending()
@@ -343,4 +362,6 @@ def run_gpu_lane(embed: bool = True, classify: bool = True) -> dict:
     if embed:
         summary |= embed_pending()
         summary["themes"] = build_all_themes()
+        if classify:
+            summary["theme_labels"] = label_themes()
     return summary
