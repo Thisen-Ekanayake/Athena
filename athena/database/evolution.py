@@ -11,15 +11,16 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from athena.core.models import (
     EvoChunk, EvoCitation, EvoCitationContext, EvoMainPathEdge, EvoMilestoneOverride, EvoPaper, EvoSection,
     EvoTopic, EvoTopicPaper,
 )
 from athena.database.db import SessionLocal
+from athena.evolution.config import TopicConfig
 
 if TYPE_CHECKING:
     from athena.evolution.corpus import Corpus
@@ -458,3 +459,61 @@ def save_full_text(result: "FullTextResult") -> list[UUID]:
         paper.extra = {**(paper.extra or {}), "full_text": detail}
         session.commit()
         return stale
+
+
+def pending_chunks(session: Session, limit: int) -> list[tuple[EvoChunk, EvoPaper, EvoSection]]:
+    return session.execute(
+        select(EvoChunk, EvoPaper, EvoSection)
+        .join(EvoPaper, EvoChunk.paper_id == EvoPaper.id)
+        .join(EvoSection, EvoChunk.section_id == EvoSection.id)
+        .where(EvoChunk.embedded_at.is_(None))
+        .order_by(EvoChunk.paper_id, EvoChunk.position)
+        .limit(limit)
+    ).all()
+
+
+def mark_embedded(session: Session, chunk_ids: list[UUID]) -> None:
+    session.execute(update(EvoChunk).where(EvoChunk.id.in_(chunk_ids))
+                    .values(embedded_at=datetime.now(timezone.utc)))
+    session.commit()
+
+
+def paper_topics(session: Session, paper_ids: list[UUID]) -> dict[UUID, list[str]]:
+    """Topic slugs each paper belongs to, for Qdrant payloads."""
+    out: dict[UUID, list[str]] = defaultdict(list)
+    for pid, slug in session.execute(select(EvoTopicPaper.paper_id, EvoTopic.slug)
+                                     .join(EvoTopic, EvoTopicPaper.topic_id == EvoTopic.id)
+                                     .where(EvoTopicPaper.paper_id.in_(paper_ids))):
+        out[pid].append(slug)
+    return out
+
+
+def pending_contexts(session: Session, cited_ids: set[UUID],
+                     limit: int) -> list[tuple[EvoCitationContext, str, str]]:
+    """Unlabelled citing sentences with a contrast cue whose cited paper is in Tier 2, with both titles."""
+    citing, cited = aliased(EvoPaper), aliased(EvoPaper)
+    return session.execute(
+        select(EvoCitationContext, citing.title, cited.title)
+        .join(citing, EvoCitationContext.citing_id == citing.id)
+        .join(cited, EvoCitationContext.cited_id == cited.id)
+        .where(EvoCitationContext.label.is_(None), EvoCitationContext.cited_id.in_(cited_ids),
+               EvoCitationContext.cues != [])
+        .order_by(EvoCitationContext.citing_id)
+        .limit(limit)
+    ).all()
+
+
+def save_labels(session: Session, labels: list[dict]) -> None:
+    """``labels``: [{id, label, attributed, model}]."""
+    now = datetime.now(timezone.utc)
+    for row in labels:
+        session.execute(update(EvoCitationContext).where(EvoCitationContext.id == row["id"]).values(
+            label=row["label"], attributed=row["attributed"], model=row["model"], labelled_at=now))
+    session.commit()
+
+
+def all_tier2_ids(session: Session) -> set[UUID]:
+    ids: set[UUID] = set()
+    for topic in session.execute(select(EvoTopic).where(EvoTopic.status == "ready")).scalars():
+        ids |= tier2_ids(session, topic, TopicConfig.from_dict(topic.config).tier2_successors)
+    return ids

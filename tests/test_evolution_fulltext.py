@@ -1,8 +1,12 @@
-"""Tests for TEI parsing, chunking and reference resolution (no network, no GROBID)."""
+"""Tests for TEI parsing, chunking, reference resolution and the classifier client (no network, no GPU)."""
 from __future__ import annotations
 
+import json
 from uuid import uuid4
 
+import httpx
+
+from athena.evolution.classify import Classifier
 from athena.evolution.fulltext import (
     KnownPaper, PaperIndex, chunk_id, chunk_sentences, contexts_from_parse, cue_words, s2_marked,
     sections_and_chunks,
@@ -133,3 +137,22 @@ class TestResolution:
         mention, marked = s2_marked("Unlike LoRA [12], our method merges weights.")
         assert mention == "LoRA" and marked == "Unlike LoRA [[[12]]], our method merges weights."
         assert s2_marked("LoRA [12] and adapters [7] both add parameters.") == (None, None)
+
+
+class TestClassifier:
+    def test_attribution_is_asked_only_for_limitation_labels(self):
+        answers = iter([{"label": "criticises"}, {"attributed": True}, {"label": "background"}])
+        seen = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(json.loads(request.content))
+            return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(next(answers))}}]})
+
+        clf = Classifier(base_url="http://llm", model="m", http=httpx.Client(transport=httpx.MockTransport(handler)))
+        v = clf.classify("QLoRA", "LoRA", "LoRA is slow.", marked="LoRA [[[5]]] is slow.")
+        assert v.label == "criticises" and v.attributed is True and v.strict
+        assert "[[like this]]" in seen[0]["messages"][1]["content"]
+        assert seen[0]["chat_template_kwargs"] == {"enable_thinking": False}
+        v = clf.classify("QLoRA", "LoRA", "We build on LoRA.")
+        assert v.label == "background" and v.attributed is None and not v.strict
+        assert len(seen) == 3

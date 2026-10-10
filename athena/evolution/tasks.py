@@ -14,3 +14,10 @@ def process_full_text(slug: str, reparse: bool = False) -> dict:
     """Tier 2 PDFs -> GROBID -> sections, chunks, citing sentences. CPU only."""
     from athena.evolution.fulltext import run_full_text
     return run_full_text(slug, reparse=reparse)
+
+
+@celery_app.task
+def run_gpu_lane(embed: bool = True, classify: bool = True) -> dict:
+    """Embed pending chunks, then label pending citing sentences, one model on the GPU at a time."""
+    from athena.evolution.gpu import run_gpu_lane as run_lane
+    return run_lane(embed=embed, classify=classify)
