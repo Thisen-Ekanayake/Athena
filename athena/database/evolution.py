@@ -16,8 +16,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, aliased
 
 from athena.core.models import (
-    EvoChunk, EvoCitation, EvoCitationContext, EvoMainPathEdge, EvoMilestoneOverride, EvoPaper, EvoSection,
-    EvoTopic, EvoTopicPaper,
+    EvoChunk, EvoCitation, EvoCitationContext, EvoGapStatement, EvoGapTheme, EvoGapThemeMember, EvoLooseLink,
+    EvoMainPathEdge, EvoMilestoneOverride, EvoPaper, EvoSection, EvoTopic, EvoTopicPaper,
 )
 from athena.database.db import SessionLocal
 from athena.evolution.config import TopicConfig
@@ -533,6 +533,9 @@ def save_full_text(result: "FullTextResult") -> list[UUID]:
                 constraint="uq_evo_citation_context",
                 set_={c: stmt.excluded[c] for c in ("section_type", "marked", "mention", "cues")}))
 
+        if result.status == "parsed":
+            _save_own_gaps(session, result.paper_id, result.gaps)
+
         if result.new_refs:
             session.execute(insert(EvoCitation).values([
                 {"id": uuid4(), "citing_id": result.paper_id, "cited_id": cited, "source": "grobid"}
@@ -545,6 +548,23 @@ def save_full_text(result: "FullTextResult") -> list[UUID]:
         paper.extra = {**(paper.extra or {}), "full_text": detail}
         session.commit()
         return stale
+
+
+def _save_own_gaps(session: Session, paper_id: UUID, gaps: list[tuple[str, str]]) -> None:
+    """Gap candidates from a paper's own text; candidates already labelled keep their label."""
+    from athena.evolution.fulltext import sentence_hash
+    rows = {}
+    for section_type, sentence in gaps:
+        h = sentence_hash(sentence)
+        rows.setdefault(h, {"id": uuid4(), "paper_id": paper_id, "source_paper_id": paper_id, "origin": "own",
+                            "section_type": section_type, "sentence": sentence[:4000], "sentence_hash": h})
+    session.execute(delete(EvoGapStatement).where(
+        EvoGapStatement.source_paper_id == paper_id, EvoGapStatement.origin == "own",
+        EvoGapStatement.sentence_hash.notin_(list(rows) or [""])))
+    for chunk in _chunks(list(rows.values())):
+        stmt = insert(EvoGapStatement).values(chunk)
+        session.execute(stmt.on_conflict_do_update(constraint="uq_evo_gap_statement",
+                                                   set_={"section_type": stmt.excluded.section_type}))
 
 
 def pending_chunks(session: Session, limit: int) -> list[tuple[EvoChunk, EvoPaper, EvoSection]]:
@@ -603,3 +623,115 @@ def all_tier2_ids(session: Session) -> set[UUID]:
     for topic in session.execute(select(EvoTopic).where(EvoTopic.status == "ready")).scalars():
         ids |= tier2_ids(session, topic, TopicConfig.from_dict(topic.config).tier2_successors)
     return ids
+
+
+# ── Phase 3: gaps and loose links ──────────────────────────────────────
+
+
+def sync_citing_gaps(session: Session) -> int:
+    """Make every strict link a gap statement about the cited paper, and drop ones no longer strict."""
+    from athena.evolution.fulltext import sentence_hash
+    strict = {c.id: c for c in session.execute(
+        select(EvoCitationContext).where(EvoCitationContext.label.in_(LIMITATION_LABELS),
+                                         EvoCitationContext.attributed.is_(True))).scalars()}
+    session.execute(delete(EvoGapStatement).where(
+        EvoGapStatement.origin == "citing", EvoGapStatement.context_id.notin_(list(strict) or [uuid4()])))
+    rows = [{"id": uuid4(), "paper_id": c.cited_id, "source_paper_id": c.citing_id, "origin": "citing",
+             "context_id": c.id, "section_type": c.section_type, "sentence": c.sentence[:4000],
+             "sentence_hash": sentence_hash(c.sentence), "label": "gap", "model": c.model,
+             "labelled_at": c.labelled_at} for c in strict.values()]
+    for chunk in _chunks(rows):
+        session.execute(insert(EvoGapStatement).values(chunk).on_conflict_do_nothing(constraint="uq_evo_gap_statement"))
+    session.commit()
+    return len(rows)
+
+
+def pending_gap_candidates(session: Session, limit: int) -> list[tuple[EvoGapStatement, str]]:
+    return session.execute(
+        select(EvoGapStatement, EvoPaper.title)
+        .join(EvoPaper, EvoGapStatement.source_paper_id == EvoPaper.id)
+        .where(EvoGapStatement.label.is_(None))
+        .order_by(EvoGapStatement.source_paper_id)
+        .limit(limit)
+    ).all()
+
+
+def save_gap_labels(session: Session, labels: list[dict]) -> None:
+    """``labels``: [{id, label, model}]."""
+    now = datetime.now(timezone.utc)
+    for row in labels:
+        session.execute(update(EvoGapStatement).where(EvoGapStatement.id == row["id"]).values(
+            label=row["label"], model=row["model"], labelled_at=now))
+    session.commit()
+
+
+def pending_gap_vectors(session: Session, limit: int) -> list[tuple[EvoGapStatement, int | None]]:
+    """Gap statements without a vector, with the year the stating paper appeared."""
+    return session.execute(
+        select(EvoGapStatement, EvoPaper.year)
+        .join(EvoPaper, EvoGapStatement.source_paper_id == EvoPaper.id)
+        .where(EvoGapStatement.label == "gap", EvoGapStatement.embedded_at.is_(None))
+        .limit(limit)
+    ).all()
+
+
+def mark_gaps(session: Session, gap_ids: list[UUID], column: str) -> None:
+    session.execute(update(EvoGapStatement).where(EvoGapStatement.id.in_(gap_ids))
+                    .values({column: datetime.now(timezone.utc)}))
+    session.commit()
+
+
+def pending_loose(session: Session, limit: int) -> list[tuple[EvoGapStatement, int | None]]:
+    """Embedded gap statements whose loose links have not been searched."""
+    return session.execute(
+        select(EvoGapStatement, EvoPaper.year)
+        .join(EvoPaper, EvoGapStatement.source_paper_id == EvoPaper.id)
+        .where(EvoGapStatement.embedded_at.isnot(None), EvoGapStatement.loose_checked_at.is_(None))
+        .limit(limit)
+    ).all()
+
+
+def cited_by(session: Session, paper_ids: list[UUID]) -> dict[UUID, set[UUID]]:
+    """{paper: papers citing it}, for flagging loose links that coincide with a citation."""
+    out: dict[UUID, set[UUID]] = defaultdict(set)
+    for citing, cited in session.execute(select(EvoCitation.citing_id, EvoCitation.cited_id)
+                                         .where(EvoCitation.cited_id.in_(paper_ids))):
+        out[cited].add(citing)
+    return out
+
+
+def save_loose_links(session: Session, gap_id: UUID, links: list[dict]) -> None:
+    """Replace a gap statement's loose links. ``links``: [{paper_id, chunk_id, score, cites}]."""
+    session.execute(delete(EvoLooseLink).where(EvoLooseLink.gap_id == gap_id))
+    if links:
+        session.execute(insert(EvoLooseLink).values([{"id": uuid4(), "gap_id": gap_id, **link} for link in links]))
+
+
+def topic_gap_rows(session: Session, topic: EvoTopic) -> list[dict]:
+    """Gap statements about papers in the topic, stated by papers in the topic, with years and labels."""
+    in_topic = {p.id: p for _, p in _topic_rows(session, topic.id)}
+    source = aliased(EvoPaper)
+    rows = session.execute(
+        select(EvoGapStatement, source.year, EvoCitationContext.label)
+        .join(source, EvoGapStatement.source_paper_id == source.id)
+        .outerjoin(EvoCitationContext, EvoGapStatement.context_id == EvoCitationContext.id)
+        .where(EvoGapStatement.label == "gap", EvoGapStatement.embedded_at.isnot(None),
+               EvoGapStatement.paper_id.in_(list(in_topic)), EvoGapStatement.source_paper_id.in_(list(in_topic)))
+    ).all()
+    return [{"id": g.id, "paper_id": g.paper_id, "source_paper_id": g.source_paper_id, "origin": g.origin,
+             "sentence": g.sentence, "section_type": g.section_type, "year": year,
+             "fix": context_label == "addresses_limitation"} for g, year, context_label in rows]
+
+
+def save_themes(topic_id: UUID, themes: list[dict]) -> None:
+    """Replace a topic's gap themes. ``themes``: [{label, size, yearly, first_year, last_year, status, detail,
+    members}]."""
+    with SessionLocal() as session:
+        session.execute(delete(EvoGapTheme).where(EvoGapTheme.topic_id == topic_id))
+        for t in themes:
+            theme_id = uuid4()
+            session.execute(insert(EvoGapTheme).values(
+                id=theme_id, topic_id=topic_id, **{k: v for k, v in t.items() if k != "members"}))
+            session.execute(insert(EvoGapThemeMember).values([{"theme_id": theme_id, "gap_id": g}
+                                                              for g in t["members"]]))
+        session.commit()

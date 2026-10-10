@@ -67,6 +67,19 @@ def attribution_prompt(citing_title: str, cited_title: str, sentence: str, marke
     )
 
 
+def gap_prompt(paper_title: str, section_type: str | None, sentence: str) -> str:
+    """Phase 0 Task A: precision 1.00, recall 0.77 (F1 0.87) on 48 labelled sentences."""
+    return (
+        f"Paper: {paper_title}\nSection: {section_type or 'unknown'}\nSentence: {sentence}\n\n"
+        "Is this sentence a research gap statement? A gap statement describes a limitation, an unsolved "
+        "problem, or something existing methods (or this paper) cannot do. Claims about the paper's own "
+        "successful results are not gaps.\n"
+        'Return {"label": "gap"} or {"label": "not_gap"}.'
+    )
+
+
+GAP_SCHEMA = {"type": "object", "properties": {"label": {"type": "string", "enum": ["gap", "not_gap"]}},
+              "required": ["label"], "additionalProperties": False}
 LABEL_SCHEMA = {"type": "object", "properties": {"label": {"type": "string", "enum": LABELS}},
                 "required": ["label"], "additionalProperties": False}
 ATTRIBUTION_SCHEMA = {"type": "object", "properties": {"attributed": {"type": "boolean"}},
@@ -118,3 +131,7 @@ class Classifier:
                               "attribution") or {}
             attributed = answer.get("attributed") if isinstance(answer.get("attributed"), bool) else None
         return Verdict(label, attributed, time.time() - start)
+
+    def is_gap(self, paper_title: str, section_type: str | None, sentence: str) -> str | None:
+        answer = self.ask(gap_prompt(paper_title, section_type, sentence), GAP_SCHEMA, "gap") or {}
+        return answer.get("label") if answer.get("label") in ("gap", "not_gap") else None

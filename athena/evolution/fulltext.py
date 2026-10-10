@@ -57,6 +57,16 @@ CONTRAST_CUES = re.compile(
     r"|prohibitive|sub-?optimal|degrad|gap|overhead|instabil|unstable|sensitiv|restrict|requir|memory|latency)",
     re.IGNORECASE,
 )
+# Gap candidates: cue-word sentences from the sections where papers state gaps, plus every sentence
+# of a limitations or future-work section. The 9B decides which are gaps (Phase 0: precision 1.00).
+GAP_SECTIONS = {"abstract", "intro", "discussion", "limitations", "conclusion", "future_work"}
+GAP_ONLY_SECTIONS = {"limitations", "future_work"}
+GAP_CUES = re.compile(
+    r"\b(however|limitation|limited|fail|cannot|unable|remain|challeng|drawback|suffer|expensive|costly|slow"
+    r"|bottleneck|future work|open (problem|question)|lack|difficult|inefficien|prohibitive|struggle)",
+    re.IGNORECASE,
+)
+MAX_GAP_CANDIDATES = 40  # per paper
 _CHUNK_NAMESPACE = UUID("5b0f6e2a-9d43-4c1e-a7b5-3f1f0a9b2c6d")
 _VERSION = re.compile(r"v\d+$")
 _MARKER = re.compile(r"\[\d+(?:\s*[,–-]\s*\d+)*\]|\((?:[A-Z][^()]{0,60}?(?:19|20)\d{2}[a-z]?)\)")
@@ -182,6 +192,7 @@ class FullTextResult:
     chunks: list[dict] = field(default_factory=list)
     contexts: list[ContextRow] = field(default_factory=list)
     new_refs: set[UUID] = field(default_factory=set)  # cited papers no other source linked
+    gaps: list[tuple[str, str]] = field(default_factory=list)  # (section type, sentence) gap candidates
     detail: dict = field(default_factory=dict)
 
 
@@ -200,6 +211,17 @@ def contexts_from_parse(paper_id: UUID, parsed: ParsedPaper, index: PaperIndex,
                     rows.append(ContextRow(resolved[xml_id], s.text, section.section_type, s.mentions.get(xml_id),
                                            "grobid", s.marked.get(xml_id)))
     return rows, set(resolved.values()) - set(known_refs), len(resolved)
+
+
+def gap_candidates(parsed: ParsedPaper) -> list[tuple[str, str]]:
+    out = []
+    for section in parsed.sections:
+        if section.section_type not in GAP_SECTIONS:
+            continue
+        for s in section.sentences:
+            if section.section_type in GAP_ONLY_SECTIONS or GAP_CUES.search(s.text):
+                out.append((section.section_type, s.text))
+    return out[:MAX_GAP_CANDIDATES]
 
 
 def sections_and_chunks(paper_id: UUID, title: str, parsed: ParsedPaper) -> tuple[list[dict], list[dict]]:
@@ -350,10 +372,11 @@ def _from_tei(paper: Tier2Paper, tei: str, index: PaperIndex) -> FullTextResult:
         return FullTextResult(paper.id, "failed", detail={"error": "no body text"})
     sections, chunks = sections_and_chunks(paper.id, paper.title, parsed)
     contexts, new_refs, resolved = contexts_from_parse(paper.id, parsed, index, paper.known_refs)
+    gaps = gap_candidates(parsed)
     detail = {"sections": len(sections), "chunks": len(chunks), "contexts": len(contexts), "bib": len(parsed.bib),
               "bib_resolved": resolved, "fallback_links": parsed.fallback_links,
-              "dropped_sentences": parsed.dropped_sentences}
-    return FullTextResult(paper.id, "parsed", sections, chunks, contexts, new_refs, detail)
+              "dropped_sentences": parsed.dropped_sentences, "gap_candidates": len(gaps)}
+    return FullTextResult(paper.id, "parsed", sections, chunks, contexts, new_refs, gaps, detail)
 
 
 def _from_s2(paper: Tier2Paper, index: PaperIndex, s2: SemanticScholarClient | None, reason: str) -> FullTextResult:

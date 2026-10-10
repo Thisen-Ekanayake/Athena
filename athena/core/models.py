@@ -559,3 +559,79 @@ class EvoCitationContext(Base):
     attributed = Column(Boolean, nullable=True)      # asked only for limitation labels
     model = Column(String, nullable=True)
     labelled_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class EvoGapStatement(Base):
+    """A sentence stating a research gap: a paper's own limitation, or a later paper stating one of it.
+
+    ``paper_id`` is the paper the gap belongs to; ``source_paper_id`` the paper whose text states it.
+    Own statements (origin "own") are candidates until the 9B labels them; statements from strict
+    links (origin "citing") are gaps by construction.
+    """
+    __tablename__ = "evo_gap_statements"
+    __table_args__ = (
+        UniqueConstraint("source_paper_id", "paper_id", "sentence_hash", name="uq_evo_gap_statement"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    source_paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                             nullable=False, index=True)
+    origin = Column(String, nullable=False)          # own | citing
+    context_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_citation_contexts.id", ondelete="CASCADE"),
+                        nullable=True)
+    section_type = Column(String, nullable=True)
+    sentence = Column(String, nullable=False)
+    sentence_hash = Column(String, nullable=False)
+    label = Column(String, nullable=True)            # gap | not_gap; null until classified
+    model = Column(String, nullable=True)
+    labelled_at = Column(DateTime(timezone=True), nullable=True)
+    embedded_at = Column(DateTime(timezone=True), nullable=True)      # vector in Qdrant's gap_statements
+    loose_checked_at = Column(DateTime(timezone=True), nullable=True)  # loose links searched
+
+
+class EvoGapTheme(Base):
+    """A cluster of one topic's gap statements, with how often it was stated each year."""
+    __tablename__ = "evo_gap_themes"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    label = Column(String, nullable=False)           # distinctive terms of its statements
+    size = Column(Integer, nullable=False)
+    yearly = Column(JSONB, default={})               # {"2021": 3, ...}, by the year the stating paper appeared
+    first_year = Column(Integer, nullable=True)
+    last_year = Column(Integer, nullable=True)
+    status = Column(String, nullable=False)          # persisting | addressed | quiet
+    detail = Column(JSONB, default={})               # papers, fixes, counts by origin
+    built_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class EvoGapThemeMember(Base):
+    __tablename__ = "evo_gap_theme_members"
+
+    theme_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_gap_themes.id", ondelete="CASCADE"), primary_key=True)
+    gap_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_gap_statements.id", ondelete="CASCADE"),
+                    primary_key=True, index=True)
+
+
+class EvoLooseLink(Base):
+    """A later paper whose text matches an earlier paper's gap, with no citation needed. Shown dashed, on request.
+
+    ``chunk_id`` is not a foreign key: chunk IDs survive re-parsing, and a link to a chunk that is gone
+    simply drops out of reads.
+    """
+    __tablename__ = "evo_loose_links"
+    __table_args__ = (
+        UniqueConstraint("gap_id", "paper_id", name="uq_evo_loose_link"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    gap_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_gap_statements.id", ondelete="CASCADE"),
+                    nullable=False, index=True)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    chunk_id = Column(PG_UUID(as_uuid=True), nullable=False)
+    score = Column(Float, nullable=False)            # cosine similarity of the best matching chunk
+    cites = Column(Boolean, default=False)           # whether the later paper cites the gap's paper anyway
