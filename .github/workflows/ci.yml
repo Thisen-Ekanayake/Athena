@@ -52,7 +52,9 @@ jobs:
           QDRANT_URL: "http://localhost:6333"
           OPENAI_API_KEY: "test-key"
         run: |
-          python -m pytest tests/test_scoring.py tests/test_scoring_integration.py tests/test_preprocessing.py -v --tb=short
+          python -m pytest tests/test_scoring.py tests/test_scoring_integration.py tests/test_preprocessing.py \
+            tests/test_evolution_graph.py tests/test_evolution_corpus.py tests/test_evolution_openalex.py \
+            tests/test_evolution_api.py -v --tb=short
 
   test-connectors:
     name: Connector Tests
