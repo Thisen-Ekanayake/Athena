@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ExternalLink, Loader2, Pin, PinOff, RotateCcw, X } from 'lucide-react'
-import { usePaperDetail, useSetMilestone, type EvolutionNode, type StrictLink } from './api'
+import { usePaperDetail, useSetMilestone, type EvolutionNode, type LooseMatch, type PaperGap, type StrictLink } from './api'
 
 interface PaperPanelProps {
   slug: string
@@ -165,6 +165,9 @@ export function PaperPanel({ slug, paperId, onSelect, onClose }: PaperPanelProps
         onSelect={onSelect}
       />
 
+      <Gaps gaps={paper.gaps} onSelect={onSelect} />
+      <LooseMatches matches={paper.loose_matches} onSelect={onSelect} />
+
       <Lineage title="Builds on" papers={paper.builds_on} onSelect={onSelect} />
       <Lineage title="Built upon by" papers={paper.built_upon_by} onSelect={onSelect} />
     </aside>
@@ -233,6 +236,63 @@ function Links({ title, hint, links, onSelect }: {
             </blockquote>
           ))}
           {evidence.length > 2 && <span className="ml-[2.6rem] text-[11px] text-text-muted">and {evidence.length - 2} more sentences</span>}
+        </div>
+      ))}
+    </section>
+  )
+}
+
+function Gaps({ gaps, onSelect }: { gaps: PaperGap[]; onSelect: (id: string) => void }) {
+  const [all, setAll] = useState(false)
+  if (gaps.length === 0) return null
+  const own = gaps.filter((g) => g.origin === 'own')
+  const shown = [...own, ...gaps.filter((g) => g.origin === 'citing')].slice(0, all ? undefined : 4)
+  return (
+    <section className="flex flex-col gap-2">
+      <h4 className="text-[11px] font-display font-bold tracking-[0.12em] uppercase text-text-muted">
+        Gaps <span className="font-mono normal-case tracking-normal">{own.length} stated in it · {gaps.length - own.length} by later papers</span>
+      </h4>
+      {shown.map((g, i) => (
+        <blockquote key={i} className="pl-2 border-l-2 border-accent-warning/60 text-[12px] text-text-secondary leading-relaxed">
+          {g.sentence}
+          <span className="block mt-0.5 text-[10px] font-mono uppercase text-text-muted">
+            {g.origin === 'own' ? `its ${SECTION_NAMES[g.section_type ?? 'other'] ?? 'text'}` : 'stated by '}
+            {g.origin === 'citing' && g.stated_by && (
+              <button onClick={() => onSelect(g.stated_by!.id)} className="normal-case hover:text-accent-primary">
+                {g.stated_by.named_method ?? g.stated_by.title.slice(0, 40)} ({g.stated_by.year})
+              </button>
+            )}
+            {g.theme ? ` · theme: ${g.theme}` : ''}
+          </span>
+        </blockquote>
+      ))}
+      {gaps.length > 4 && (
+        <button onClick={() => setAll(!all)} className="self-start text-[11px] text-text-muted hover:text-text-primary">
+          {all ? 'Show fewer' : `Show all ${gaps.length}`}
+        </button>
+      )}
+    </section>
+  )
+}
+
+function LooseMatches({ matches, onSelect }: { matches: LooseMatch[]; onSelect: (id: string) => void }) {
+  if (matches.length === 0) return null
+  return (
+    <section className="flex flex-col gap-2">
+      <h4 className="text-[11px] font-display font-bold tracking-[0.12em] uppercase text-text-muted" title="A later paper whose text matches one of this paper's gaps; it may not cite it">
+        Loose matches
+      </h4>
+      {matches.map((m) => (
+        <div key={m.paper.id} className="flex flex-col gap-1">
+          <button onClick={() => onSelect(m.paper.id)} className="text-left text-[12px] text-text-primary hover:text-accent-primary flex gap-2">
+            <span className="font-mono text-text-muted tabular-nums shrink-0">{m.paper.year ?? '—'}</span>
+            <span>{m.paper.named_method ? `${m.paper.named_method}: ` : ''}{m.paper.title}</span>
+          </button>
+          <p className="ml-[2.6rem] text-[11px] text-text-muted leading-relaxed">
+            similarity <span className="font-mono tabular-nums">{m.score.toFixed(2)}</span>
+            {m.cites ? ' · also cites it' : ' · does not cite it'} · its {SECTION_NAMES[m.section_type] ?? m.section_type}:
+            {' '}<span className="text-text-secondary">“{m.passage.length > 220 ? `${m.passage.slice(0, 217)}…` : m.passage}”</span>
+          </p>
         </div>
       ))}
     </section>

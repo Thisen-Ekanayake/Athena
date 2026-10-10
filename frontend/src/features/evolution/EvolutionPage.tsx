@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { GitBranch, Loader2, Search } from 'lucide-react'
 import { Alert } from '../../components/shared/Alert'
 import { EvolutionGraph } from './EvolutionGraph'
+import { GapsView } from './GapsView'
 import { PaperPanel } from './PaperPanel'
 import { TimelineStrip } from './TimelineStrip'
 import {
@@ -133,7 +134,8 @@ function TopicList() {
 function TopicView({ slug }: { slug: string }) {
   const [limit, setLimit] = useState(250)
   const [showCitations, setShowCitations] = useState(false)
-  const [tab, setTab] = useState<'graph' | 'no-full-text'>('graph')
+  const [showLoose, setShowLoose] = useState(false)
+  const [tab, setTab] = useState<'graph' | 'gaps' | 'no-full-text'>('graph')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const graph = useTopicGraph(slug, limit)
   const timeline = useTopicTimeline(slug)
@@ -144,7 +146,7 @@ function TopicView({ slug }: { slug: string }) {
   if (graph.error || !graph.data || !timeline.data) {
     return <Alert type="error" title="Could not load this topic">It may not exist, or the API is not running.</Alert>
   }
-  const { topic, nodes, edges, total_papers } = graph.data
+  const { topic, nodes, edges, loose_edges, total_papers } = graph.data
   if (topic.status !== 'ready' || nodes.length === 0) {
     return (
       <Alert type="warning" title={`${topic.name} is ${topic.status}`}>
@@ -171,7 +173,7 @@ function TopicView({ slug }: { slug: string }) {
       </section>
 
       <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle">
-        {(['graph', 'no-full-text'] as const).map((t) => (
+        {(['graph', 'gaps', 'no-full-text'] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -179,7 +181,7 @@ function TopicView({ slug }: { slug: string }) {
               tab === t ? 'border-accent-primary text-text-primary' : 'border-transparent text-text-muted hover:text-text-secondary'
             }`}
           >
-            {t === 'graph' ? 'Citation graph' : `Without full text (${timeline.data.without_full_text.length})`}
+            {t === 'graph' ? 'Citation graph' : t === 'gaps' ? 'Gaps' : `Without full text (${timeline.data.without_full_text.length})`}
           </button>
         ))}
       </div>
@@ -203,9 +205,20 @@ function TopicView({ slug }: { slug: string }) {
                 <input id="evolution-citations" type="checkbox" checked={showCitations} onChange={(e) => setShowCitations(e.target.checked)} />
                 Show all citations
               </label>
+              <label className="flex items-center gap-2" title="A later paper whose text matches an earlier paper's stated gap, with no citation needed">
+                <input id="evolution-loose" type="checkbox" checked={showLoose} onChange={(e) => setShowLoose(e.target.checked)} />
+                Show loose links ({loose_edges.length})
+              </label>
               <Legend />
             </div>
-            <EvolutionGraph nodes={nodes} edges={edges} selectedId={selectedId} onSelect={setSelectedId} showCitations={showCitations} />
+            <EvolutionGraph
+              nodes={nodes}
+              edges={edges}
+              looseEdges={showLoose ? loose_edges : []}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              showCitations={showCitations}
+            />
           </div>
           {selectedId ? (
             <PaperPanel slug={slug} paperId={selectedId} onSelect={setSelectedId} onClose={() => setSelectedId(null)} />
@@ -215,6 +228,8 @@ function TopicView({ slug }: { slug: string }) {
             </aside>
           )}
         </div>
+      ) : tab === 'gaps' ? (
+        <GapsView slug={slug} onSelect={(id) => { setSelectedId(id); setTab('graph') }} />
       ) : (
         <NoFullTextList papers={timeline.data.without_full_text} onSelect={(id) => { setSelectedId(id); setTab('graph') }} />
       )}
@@ -237,6 +252,10 @@ function Legend() {
       <span className="flex items-center gap-1.5">
         <span className="inline-block w-4 h-0.5 bg-accent-critical" />
         Takes on a stated limitation
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="inline-block w-4 border-t-2 border-dashed border-accent-warning" />
+        Loose link
       </span>
     </span>
   )

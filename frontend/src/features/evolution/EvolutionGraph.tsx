@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import cytoscape from 'cytoscape'
 import { forceCollide, forceSimulation, forceX, forceY, type SimulationNodeDatum } from 'd3-force'
 import { useAppStore } from '../../store/appStore'
-import type { EvolutionEdge, EvolutionNode } from './api'
+import type { EvolutionEdge, EvolutionNode, LooseEdge } from './api'
 
 interface EvolutionGraphProps {
   nodes: EvolutionNode[]
   edges: EvolutionEdge[]
+  looseEdges: LooseEdge[]
   selectedId: string | null
   onSelect: (id: string | null) => void
   showCitations: boolean
@@ -85,6 +86,7 @@ function themeColors() {
     milestone: read('--color-accent-primary', '#4c5fff'),
     path: read('--color-accent-tertiary', '#38c5d4'),
     strict: read('--color-accent-critical', '#e05a6b'),
+    loose: read('--color-accent-warning', '#e0a94b'),
     seed: read('--color-accent-warning', '#e0a94b'),
     node: read('--text-muted', 'rgba(120, 135, 185, 0.55)'),
     edge: read('--text-ghost', 'rgba(90, 105, 160, 0.40)'),
@@ -162,13 +164,28 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
         opacity: 0.9,
       },
     },
+    {
+      // Loose link: no citation, only a text match between a gap and a later paper. Dashed, on request.
+      selector: 'edge.loose',
+      style: {
+        'curve-style': 'straight',
+        width: 1.4,
+        'line-style': 'dashed',
+        'line-dash-pattern': [5, 4],
+        'line-color': c.loose,
+        'target-arrow-shape': 'triangle',
+        'target-arrow-color': c.loose,
+        'arrow-scale': 0.7,
+        opacity: 0.85,
+      },
+    },
     { selector: 'edge.highlighted', style: { 'line-color': c.milestone, width: 1.5, opacity: 0.85 } },
     { selector: 'edge.strict.highlighted', style: { 'line-color': c.strict, width: 2.5, opacity: 1 } },
     { selector: 'edge.faded', style: { opacity: 0.03 } },
   ]
 }
 
-export function EvolutionGraph({ nodes, edges, selectedId, onSelect, showCitations }: EvolutionGraphProps) {
+export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations }: EvolutionGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const cyRef = useRef<cytoscape.Core | null>(null)
   const onSelectRef = useRef(onSelect)
@@ -205,6 +222,13 @@ export function EvolutionGraph({ nodes, edges, selectedId, onSelect, showCitatio
           group: 'edges' as const,
           data: { id: `${e.target}->${e.source}`, source: e.target, target: e.source },
           classes: [e.main_path && 'main-path', e.strict && 'strict'].filter(Boolean).join(' '),
+        })),
+      ...looseEdges
+        .filter((e) => shown.has(e.source) && shown.has(e.target))
+        .map((e) => ({
+          group: 'edges' as const,
+          data: { id: `loose:${e.target}->${e.source}`, source: e.target, target: e.source },
+          classes: 'loose',
         })),
     ]
     const cy = cytoscape({
@@ -250,7 +274,7 @@ export function EvolutionGraph({ nodes, edges, selectedId, onSelect, showCitatio
     }
     // Rebuild only when the data changes; style and selection are applied below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges, firstYear, lastYear])
+  }, [nodes, edges, looseEdges, firstYear, lastYear])
 
   // Re-colour on theme change or when citations are toggled.
   useEffect(() => {
