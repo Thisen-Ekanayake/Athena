@@ -444,8 +444,11 @@ def save_full_text(result: "FullTextResult") -> list[UUID]:
         if gone:
             session.execute(delete(EvoCitationContext).where(EvoCitationContext.id.in_(gone)))
         for chunk in _chunks(list(context_rows.values())):
-            session.execute(insert(EvoCitationContext).values(chunk)
-                            .on_conflict_do_nothing(constraint="uq_evo_citation_context"))
+            # A sentence already stored keeps its label; what the parser derives from it is refreshed.
+            stmt = insert(EvoCitationContext).values(chunk)
+            session.execute(stmt.on_conflict_do_update(
+                constraint="uq_evo_citation_context",
+                set_={c: stmt.excluded[c] for c in ("section_type", "marked", "mention", "cues")}))
 
         if result.new_refs:
             session.execute(insert(EvoCitation).values([

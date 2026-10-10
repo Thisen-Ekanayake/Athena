@@ -52,6 +52,9 @@ class TestTei:
     def test_mention_before(self):
         assert mention_before("adds Low-rank Adapter weights like LoRA [") == "LoRA"
         assert mention_before("as in LoRA (") == "LoRA"
+        assert mention_before("few-shot results of GPT-3 [") == "GPT-3"
+        assert mention_before("detectors like YOLOv3 [12, ") == "YOLOv3"
+        assert mention_before("Low-Rank Adaptation (LoRA) ") == "LoRA"
         assert mention_before("") is None
 
     def test_citations_mentions_and_marking(self):

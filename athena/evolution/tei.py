@@ -84,8 +84,12 @@ def is_junk_heading(heading: str) -> bool:
 
 
 def mention_before(prefix: str) -> str | None:
-    """The word right before a citation marker: '...adapters like LoRA [' -> 'LoRA'."""
-    tail = re.sub(r"[\[\](),;\s\d–-]+$", "", prefix[-80:])
+    """The word right before a citation marker: '...adapters like LoRA [' -> 'LoRA'.
+
+    Only an unfinished marker group is stripped ("LoRA [40, " for the second reference of a group),
+    so names ending in digits survive: "GPT-3 [5]", "YOLOv3 [12]".
+    """
+    tail = re.sub(r"[\[(][^\[\]()A-Za-z]*$", "", prefix[-80:].rstrip()).rstrip(" ,;")
     match = _LAST_WORD.search(tail)
     return match.group(1) if match else None
 
