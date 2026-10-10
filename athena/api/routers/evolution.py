@@ -8,6 +8,7 @@ GET  /api/v1/evolution/topics/{slug}/timeline                — milestones by y
                                                                openly available full text
 GET  /api/v1/evolution/topics/{slug}/papers/{paper_id}       — one paper with what it builds on, what built on it,
                                                                and strict gap -> resolution links with evidence
+GET  /api/v1/evolution/topics/{slug}/gaps                    — gap themes with yearly counts, persisting first
 POST /api/v1/evolution/topics/{slug}/milestones/{paper_id}   — pin, unpin, or reset a milestone
 """
 from typing import Literal
@@ -89,6 +90,18 @@ def topic_timeline(slug: str, session: Session = Depends(get_db), r: redis_lib.R
     if cached:
         return cached
     payload = db.topic_timeline(session, topic)
+    cache_set(r, key, payload, settings.CACHE_CLUSTERS_TTL)
+    return payload
+
+
+@router.get("/topics/{slug}/gaps")
+def topic_gaps(slug: str, session: Session = Depends(get_db), r: redis_lib.Redis = Depends(get_redis)):
+    topic = _topic_or_404(session, slug)
+    key = _cache_key(session, topic, "gaps")
+    cached = cache_get(r, key)
+    if cached:
+        return cached
+    payload = db.topic_gaps(session, topic)
     cache_set(r, key, payload, settings.CACHE_CLUSTERS_TTL)
     return payload
 

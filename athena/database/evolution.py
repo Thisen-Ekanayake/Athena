@@ -6,6 +6,7 @@ only requirements.api.txt, can import it.
 """
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -29,6 +30,9 @@ if TYPE_CHECKING:
     from athena.evolution.milestones import TopicScores
 
 OVERRIDE_ACTIONS = {"pin", "unpin", "reset"}
+# Loose links below this cosine similarity are not shown. Stored links go down to the lane's floor (0.3),
+# so the cutoff can change without recomputing them.
+LOOSE_MIN_SCORE = float(os.getenv("EVOLUTION_LOOSE_MIN_SCORE", "0.6"))
 # Citing-sentence labels that state a limitation of the cited paper; with ``attributed`` they make a strict link.
 LIMITATION_LABELS = ("addresses_limitation", "criticises")
 _BATCH = 500
@@ -258,10 +262,12 @@ def _node(tp: EvoTopicPaper, p: EvoPaper, override: EvoMilestoneOverride | None,
 
 
 def labels_version(session: Session) -> str:
-    """Changes whenever full text or labels change, which happens without a topic rebuild."""
+    """Changes whenever full text, labels or gap themes change, which happens without a topic rebuild."""
     count, last = session.execute(select(func.count(EvoCitationContext.id),
                                          func.max(EvoCitationContext.labelled_at))).one()
-    return f"{count}-{int(last.timestamp()) if last else 0}"
+    themes = session.execute(select(func.max(EvoGapTheme.built_at))).scalar()
+    stamp = lambda t: int(t.timestamp()) if t else 0  # noqa: E731
+    return f"{count}-{stamp(last)}-{stamp(themes)}"
 
 
 def method_names(session: Session, papers: dict[UUID, str]) -> dict[UUID, str]:
@@ -327,11 +333,20 @@ def topic_graph(session: Session, topic: EvoTopic, limit: int = 250) -> dict:
             .where(EvoCitation.citing_id.in_(shown), EvoCitation.cited_id.in_(shown))
         ).all()
     ]
+    loose: dict[tuple[UUID, UUID], float] = {}
+    for gap_paper, later, score in session.execute(
+            select(EvoGapStatement.paper_id, EvoLooseLink.paper_id, EvoLooseLink.score)
+            .join(EvoGapStatement, EvoLooseLink.gap_id == EvoGapStatement.id)
+            .where(EvoGapStatement.paper_id.in_(shown), EvoLooseLink.paper_id.in_(shown),
+                   EvoLooseLink.score >= LOOSE_MIN_SCORE)):
+        loose[(later, gap_paper)] = max(score, loose.get((later, gap_paper), 0.0))
     years = [n["year"] for n in nodes if n["year"]]
     return {
         "topic": topic_summary(topic),
         "nodes": nodes,
         "edges": edges,
+        # Later paper -> earlier paper whose stated gap its text matches; no citation needed. Drawn dashed.
+        "loose_edges": [{"source": str(a), "target": str(b), "score": round(v, 3)} for (a, b), v in loose.items()],
         "total_papers": total,
         "strict_links": len(strict),
         "year_range": [min(years), max(years)] if years else None,
@@ -396,6 +411,27 @@ def paper_detail(session: Session, topic: EvoTopic, paper_id: UUID) -> dict | No
         return sorted(out, key=lambda x: (x["paper"]["year"] or 0, -x["paper"]["milestone_score"]))
 
     full_text = (p.extra or {}).get("full_text") or {}
+    gap_rows = session.execute(
+        select(EvoGapStatement, EvoGapTheme.label)
+        .outerjoin(EvoGapThemeMember, EvoGapThemeMember.gap_id == EvoGapStatement.id)
+        .outerjoin(EvoGapTheme, (EvoGapTheme.id == EvoGapThemeMember.theme_id) & (EvoGapTheme.topic_id == topic.id))
+        .where(EvoGapStatement.paper_id == p.id, EvoGapStatement.label == "gap")
+    ).all()
+    gaps = [{"sentence": g.sentence, "origin": g.origin, "section_type": g.section_type, "theme": theme,
+             "stated_by": node(g.source_paper_id) if g.origin == "citing" and g.source_paper_id in in_topic else None}
+            for g, theme in gap_rows if g.origin == "own" or g.source_paper_id in in_topic]
+    loose_rows = session.execute(
+        select(EvoLooseLink, EvoGapStatement.sentence, EvoChunk.text, EvoChunk.section_type)
+        .join(EvoGapStatement, EvoLooseLink.gap_id == EvoGapStatement.id)
+        .join(EvoChunk, EvoChunk.id == EvoLooseLink.chunk_id)
+        .where(EvoGapStatement.paper_id == p.id, EvoLooseLink.score >= LOOSE_MIN_SCORE)
+        .order_by(EvoLooseLink.score.desc())
+    ).all()
+    best: dict[UUID, dict] = {}
+    for link, gap_sentence, chunk_text, section_type in loose_rows:
+        if link.paper_id in in_topic and link.paper_id not in best:
+            best[link.paper_id] = {"paper": node(link.paper_id), "score": round(link.score, 3), "cites": link.cites,
+                                   "gap": gap_sentence, "passage": chunk_text[:600], "section_type": section_type}
     return node(p.id) | {
         "abstract": p.abstract,
         "doi": p.doi,
@@ -409,6 +445,9 @@ def paper_detail(session: Session, topic: EvoTopic, paper_id: UUID) -> dict | No
         "addresses": links(addresses, "cited_id"),
         "addressed_by": links(addressed_by, "citing_id"),
         "full_text": {k: full_text.get(k) for k in ("status", "sections", "contexts", "error") if k in full_text},
+        # Phase 3: gaps stated in its own text or by later papers, and later papers whose text matches them.
+        "gaps": gaps,
+        "loose_matches": list(best.values())[:8],
     }
 
 
@@ -735,3 +774,60 @@ def save_themes(topic_id: UUID, themes: list[dict]) -> None:
             session.execute(insert(EvoGapThemeMember).values([{"theme_id": theme_id, "gap_id": g}
                                                               for g in t["members"]]))
         session.commit()
+
+
+def topic_gaps(session: Session, topic: EvoTopic, examples: int = 3) -> dict:
+    """The topic's gap themes, persisting ones first, each with yearly counts, papers and example sentences."""
+    overrides = _overrides(session, topic.id)
+    rows = {p.id: (tp, p) for tp, p in _topic_rows(session, topic.id)}
+    themes = list(session.execute(select(EvoGapTheme).where(EvoGapTheme.topic_id == topic.id)).scalars())
+    members: dict[UUID, list[EvoGapStatement]] = defaultdict(list)
+    for theme_id, gap in session.execute(
+            select(EvoGapThemeMember.theme_id, EvoGapStatement)
+            .join(EvoGapStatement, EvoGapThemeMember.gap_id == EvoGapStatement.id)
+            .where(EvoGapThemeMember.theme_id.in_([t.id for t in themes]))):
+        members[theme_id].append(gap)
+    loose: dict[UUID, list[EvoLooseLink]] = defaultdict(list)
+    gap_ids = [g.id for gs in members.values() for g in gs]
+    for link in session.execute(select(EvoLooseLink).where(EvoLooseLink.gap_id.in_(gap_ids),
+                                                           EvoLooseLink.score >= LOOSE_MIN_SCORE)).scalars():
+        loose[link.gap_id].append(link)
+    names = method_names(session, {pid: p.title for pid, (_, p) in rows.items()})
+
+    def mini(pid) -> dict | None:
+        if pid not in rows:
+            return None
+        tp, p = rows[pid]
+        action = overrides[pid].action if pid in overrides else None
+        return {"id": str(pid), "title": p.title, "year": p.year, "named_method": names.get(pid) or tp.named_method,
+                "is_milestone": effective_milestone(tp.is_milestone_auto, action)}
+
+    out = []
+    for t in themes:
+        gs = members.get(t.id, [])
+        # Examples: own statements first (the paper on its own gap), then the most recent.
+        picks = sorted(gs, key=lambda g: (g.origin != "own", -(rows[g.source_paper_id][1].year or 0)
+                                          if g.source_paper_id in rows else 0))[:examples]
+        candidates: dict[UUID, float] = {}
+        for g in gs:
+            for link in loose.get(g.id, []):
+                if link.paper_id in rows:
+                    candidates[link.paper_id] = max(link.score, candidates.get(link.paper_id, 0.0))
+        detail = t.detail or {}
+        out.append({
+            "id": str(t.id), "label": t.label, "size": t.size, "status": t.status,
+            "first_year": t.first_year, "last_year": t.last_year,
+            "yearly": [{"year": int(y), "count": n} for y, n in sorted((t.yearly or {}).items())],
+            "own": detail.get("own", 0), "citing": detail.get("citing", 0),
+            "papers": [m for m in (mini(UUID(pid)) for pid in detail.get("papers", [])) if m],
+            "fixed_by": [m for m in (mini(UUID(pid)) for pid in detail.get("fixed_by", [])) if m],
+            "examples": [{"sentence": g.sentence, "origin": g.origin, "section_type": g.section_type,
+                          "paper": mini(g.paper_id), "stated_by": mini(g.source_paper_id)} for g in picks],
+            "loose_candidates": [{"paper": mini(pid), "score": round(score, 3)}
+                                 for pid, score in sorted(candidates.items(), key=lambda kv: -kv[1])[:5]],
+        })
+    order = {"persisting": 0, "addressed": 1, "quiet": 2}
+    out.sort(key=lambda t: (order.get(t["status"], 3), -t["size"]))
+    latest = max((t["detail"] or {}).get("latest_topic_year") or 0 for t in themes) if themes else None
+    return {"topic": topic_summary(topic), "latest_year": latest or None, "themes": out,
+            "loose_min_score": LOOSE_MIN_SCORE}

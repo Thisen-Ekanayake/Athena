@@ -118,3 +118,14 @@ def test_milestone_override_for_a_paper_outside_the_topic_is_404(client):
     with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), patch(f"{ROUTER_DB}.set_override", return_value=False):
         resp = c.post(f"/api/v1/evolution/topics/object-detection/milestones/{uuid4()}", json={"action": "unpin"})
     assert resp.status_code == 404
+
+
+def test_gaps_are_served_and_cached(client):
+    c, _ = client
+    payload = {"topic": SUMMARY, "latest_year": 2024, "themes": [], "loose_min_score": 0.6}
+    with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), \
+            patch(f"{ROUTER_DB}.labels_version", return_value="0-0-0"), \
+            patch(f"{ROUTER_DB}.topic_gaps", return_value=payload) as build:
+        assert c.get("/api/v1/evolution/topics/object-detection/gaps").json()["latest_year"] == 2024
+        c.get("/api/v1/evolution/topics/object-detection/gaps")
+    assert build.call_count == 1
