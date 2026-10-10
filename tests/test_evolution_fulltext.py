@@ -51,12 +51,19 @@ class TestTei:
         assert not is_junk_heading("Double Quantization")
 
     def test_mention_before(self):
-        assert mention_before("adds Low-rank Adapter weights like LoRA [") == "LoRA"
-        assert mention_before("as in LoRA (") == "LoRA"
-        assert mention_before("few-shot results of GPT-3 [") == "GPT-3"
-        assert mention_before("detectors like YOLOv3 [12, ") == "YOLOv3"
+        assert mention_before("adds Low-rank Adapter weights like LoRA [") == "weights like LoRA"
+        assert mention_before("as in LoRA (") == "as in LoRA"
+        assert mention_before("few-shot results of GPT-3 [") == "results of GPT-3"
+        assert mention_before("compared with Faster R-CNN ") == "with Faster R-CNN"  # at most three words
         assert mention_before("Low-Rank Adaptation (LoRA) ") == "LoRA"
+        assert mention_before("variants such as LoRA+ [") == "such as LoRA+"
         assert mention_before("") is None
+
+    def test_later_references_in_a_group_get_no_mention(self):
+        # "R-CNN [12, 34]": the words name reference 12, not 34.
+        assert mention_before("detectors like R-CNN [12, ") is None
+        assert mention_before("such as R-CNN [12] [") is None
+        assert mention_before("such as R-CNN [") == "such as R-CNN"
 
     def test_citations_mentions_and_marking(self):
         body = div("Introduction", 'Adapters such as LoRA <ref type="bibr" target="#b27">[28]</ref> are slow to '
@@ -65,7 +72,7 @@ class TestTei:
         [section] = [s for s in parsed.sections if s.section_type == "intro"]
         [sentence] = section.sentences
         assert sentence.refs == ["b27"]
-        assert sentence.mentions["b27"] == "LoRA"
+        assert sentence.mentions["b27"] == "such as LoRA"
         assert "LoRA [[[28]]] are slow" in sentence.marked["b27"]
         assert parsed.bib["b27"].arxiv_id == "2106.09685"
 
@@ -139,7 +146,7 @@ class TestResolution:
 
     def test_s2_snippets_are_marked_only_with_one_marker(self):
         mention, marked = s2_marked("Unlike LoRA [12], our method merges weights.")
-        assert mention == "LoRA" and marked == "Unlike LoRA [[[12]]], our method merges weights."
+        assert mention == "Unlike LoRA" and marked == "Unlike LoRA [[[12]]], our method merges weights."
         assert s2_marked("LoRA [12] and adapters [7] both add parameters.") == (None, None)
 
 
@@ -163,16 +170,30 @@ class TestClassifier:
 
 
 class TestMethodNames:
+    @staticmethod
+    def pairs(*phrases):
+        return [(i, p) for i, p in enumerate(phrases)]
+
     def test_the_name_most_citing_papers_use_wins(self):
-        mentions = {"LoRA": 9, "adapters": 4, "al": 12, "method": 3}
-        assert detect_method_name(mentions, "LoRA: Low-Rank Adaptation of Large Language Models", 12) == "LoRA"
+        mentions = self.pairs("such as LoRA", "with LoRA", "Unlike LoRA", "of LoRA", "et al", "many adapters")
+        assert detect_method_name(mentions, "LoRA: Low-Rank Adaptation of Large Language Models", 6) == "LoRA"
+
+    def test_multi_word_names(self):
+        mentions = self.pairs("baseline Faster R-CNN", "with Faster R-CNN", "as Faster R-CNN", "of R-CNN")
+        assert detect_method_name(mentions, "Towards Real-Time Object Detection", 4) == "Faster R-CNN"
+        # Sentence openers are not part of a name.
+        mentions = self.pairs("Unlike R-CNN", "Unlike R-CNN", "Unlike R-CNN")
+        assert detect_method_name(mentions, "Rich feature hierarchies", 3) == "R-CNN"
 
     def test_a_title_word_counts_as_a_name(self):
-        assert detect_method_name({"Prefix-tuning": 5}, "Prefix-Tuning: Optimizing Continuous Prompts", 8) \
-            == "Prefix-tuning"
+        mentions = self.pairs("of Prefix-tuning", "with Prefix-tuning", "uses Prefix-tuning")
+        assert detect_method_name(mentions, "Prefix-Tuning: Optimizing Continuous Prompts", 5) == "Prefix-tuning"
+
+    def test_one_paper_counts_once(self):
+        mentions = [("a", "with BitFit"), ("a", "as BitFit"), ("a", "of BitFit"), ("b", "BitFit")]
+        assert detect_method_name(mentions, "BitFit: Simple Parameter-efficient Fine-tuning", 2) is None
 
     def test_generic_or_rare_words_are_not_names(self):
-        assert detect_method_name({"CNN": 30}, "ImageNet Classification with Deep CNNs", 40) is None
-        assert detect_method_name({"BitFit": 2}, "BitFit: Simple Parameter-efficient Fine-tuning", 3) is None
+        assert detect_method_name(self.pairs(*["deep CNN"] * 30), "ImageNet Classification", 40) is None
         # Used by too small a share of the citing papers.
-        assert detect_method_name({"YOLO": 4}, "You Only Look Once", 30) is None
+        assert detect_method_name(self.pairs(*["with YOLO"] * 4), "You Only Look Once", 30) is None

@@ -49,8 +49,10 @@ _CHECKLIST_HEADING = re.compile(r"checklist", re.IGNORECASE)
 _CHECKLIST_LINE = re.compile(r"^\s*(answer|justification|guidelines)\s*:|\[(yes|no|n/?a)\]", re.IGNORECASE)
 _CAPTION = re.compile(r"^\s*(fig(ure)?\.?|table|tab\.)\s*\d+\s*[:.|]", re.IGNORECASE)
 _WORD = re.compile(r"[A-Za-z][A-Za-z\-']*[.,;:)?!]?")
-# The last word before a citation marker, once brackets, numbers and commas are stripped.
-_LAST_WORD = re.compile(r"([A-Za-z][\w\-.]*[\w])\W*$")
+# Up to three words right before a citation marker ("Faster R-CNN", "Swin Transformer", "LoRA+").
+_WORD_RE = r"[A-Za-z][\w\-.+]*[\w+]"
+_LAST_WORDS = re.compile(rf"((?:{_WORD_RE}\s+){{0,2}}{_WORD_RE})\W*$")
+_OPEN_GROUP = re.compile(r"[\[(][^\[\]()A-Za-z]*$")
 
 
 def classify_heading(heading: str) -> str | None:
@@ -84,13 +86,19 @@ def is_junk_heading(heading: str) -> bool:
 
 
 def mention_before(prefix: str) -> str | None:
-    """The word right before a citation marker: '...adapters like LoRA [' -> 'LoRA'.
+    """Up to three words right before a citation marker: '...adapters like Faster R-CNN [' -> 'like Faster R-CNN'.
 
-    Only an unfinished marker group is stripped ("LoRA [40, " for the second reference of a group),
-    so names ending in digits survive: "GPT-3 [5]", "YOLOv3 [12]".
+    ``athena.evolution.names`` picks the name out of these. Only the first reference of a marker group
+    gets words: in "R-CNN [12, 34]" they name reference 12, not 34. Names ending in digits survive:
+    "GPT-3 [5]", "YOLOv3 [12]".
     """
-    tail = re.sub(r"[\[(][^\[\]()A-Za-z]*$", "", prefix[-80:].rstrip()).rstrip(" ,;")
-    match = _LAST_WORD.search(tail)
+    tail = prefix[-80:].rstrip()
+    group = _OPEN_GROUP.search(tail)
+    if group:
+        if re.search(r"\d", group.group(0)):
+            return None  # a later reference in a group like "[12, 34]"
+        tail = tail[:group.start()]
+    match = _LAST_WORDS.search(tail.rstrip(" ,;"))
     return match.group(1) if match else None
 
 

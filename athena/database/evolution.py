@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, distinct, func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, aliased
 
@@ -268,20 +268,17 @@ def method_names(session: Session, papers: dict[UUID, str]) -> dict[UUID, str]:
     """Names citing sentences use for each paper ({id: title} in, {id: name} out)."""
     if not papers:
         return {}
-    ids = list(papers)
-    mentions: dict[UUID, dict[str, int]] = defaultdict(dict)
-    for cited, word, n in session.execute(
-            select(EvoCitationContext.cited_id, EvoCitationContext.mention,
-                   func.count(distinct(EvoCitationContext.citing_id)))
-            .where(EvoCitationContext.cited_id.in_(ids), EvoCitationContext.mention.isnot(None))
-            .group_by(EvoCitationContext.cited_id, EvoCitationContext.mention)):
-        mentions[cited][word] = n
-    citers = dict(session.execute(
-        select(EvoCitationContext.cited_id, func.count(distinct(EvoCitationContext.citing_id)))
-        .where(EvoCitationContext.cited_id.in_(list(mentions))).group_by(EvoCitationContext.cited_id)).all())
+    mentions: dict[UUID, list[tuple[UUID, str]]] = defaultdict(list)
+    citers: dict[UUID, set[UUID]] = defaultdict(set)
+    for cited, citing, words in session.execute(
+            select(EvoCitationContext.cited_id, EvoCitationContext.citing_id, EvoCitationContext.mention)
+            .where(EvoCitationContext.cited_id.in_(list(papers))).distinct()):
+        citers[cited].add(citing)
+        if words:
+            mentions[cited].append((citing, words))
     out = {}
-    for pid, words in mentions.items():
-        name = detect_method_name(words, papers[pid], citers.get(pid, 0))
+    for pid, pairs in mentions.items():
+        name = detect_method_name(pairs, papers[pid], len(citers[pid]))
         if name:
             out[pid] = name
     return out
