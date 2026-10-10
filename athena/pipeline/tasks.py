@@ -17,6 +17,7 @@ from loguru import logger
 import athena.pipeline.embedding_worker
 import athena.pipeline.clustering
 import athena.pipeline.scoring
+import athena.evolution.tasks  # noqa: F401  (registers the evolution queue's tasks)
 from athena.core.logging import setup_redis_logging
 
 # Staging directory for full-text files (configurable via env; defaults to persistent
