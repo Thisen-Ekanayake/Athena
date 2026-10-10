@@ -468,8 +468,11 @@ def tier2_papers(session: Session, ids: set[UUID], reparse: bool = False) -> lis
     from athena.evolution.fulltext import Tier2Paper  # fulltext needs igraph, which the API image lacks
     query = select(EvoPaper).where(EvoPaper.id.in_(ids))
     if not reparse:
+        # Never tried, or tried without a PDF and an arXiv ID has turned up since (a rebuild can
+        # bring one from Semantic Scholar; a download that timed out is retried too).
         query = query.where(EvoPaper.full_text_status.in_(["available", "unavailable"]),
-                            or_(EvoPaper.extra.is_(None), ~EvoPaper.extra.has_key("full_text")))
+                            or_(EvoPaper.extra.is_(None), ~EvoPaper.extra.has_key("full_text"),
+                                EvoPaper.arxiv_id.isnot(None)))
     papers = list(session.execute(query).scalars())
     refs: dict[UUID, list[UUID]] = defaultdict(list)
     for citing, cited in session.execute(select(EvoCitation.citing_id, EvoCitation.cited_id)
