@@ -112,10 +112,11 @@ def export(neo: Neo4j | None = None) -> dict:
                       "fix": c.label == "addresses_limitation"} for c in strict])
         counts["strict_links"] = len(strict)
 
+        methods = {tp.paper_id for tp, _ in in_topic if tp.kind == "method"}
         loose = session.execute(select(EvoLooseLink, EvoGapStatement)
                                 .join(EvoGapStatement, EvoLooseLink.gap_id == EvoGapStatement.id)
                                 .where(EvoLooseLink.score >= db.LOOSE_MIN_SCORE,
-                                       EvoLooseLink.paper_id.in_(paper_ids),
+                                       EvoLooseLink.paper_id.in_(methods),
                                        EvoGapStatement.paper_id.in_(paper_ids))).all()
         neo.batched("""UNWIND $rows AS r MATCH (a:Paper {id: r.a}), (b:Paper {id: r.b})
                        CREATE (a)-[:LOOSELY_MATCHES {score: r.score, gap: r.gap}]->(b)""",

@@ -31,8 +31,9 @@ if TYPE_CHECKING:
 
 OVERRIDE_ACTIONS = {"pin", "unpin", "reset"}
 # Loose links below this cosine similarity are not shown. Stored links go down to the lane's floor (0.3),
-# so the cutoff can change without recomputing them.
-LOOSE_MIN_SCORE = float(os.getenv("EVOLUTION_LOOSE_MIN_SCORE", "0.6"))
+# so the cutoff can change without recomputing them. Set by eye on samples of the first run: below 0.55
+# matches were mostly unrelated, 0.65-0.70 about half right, 0.70 and above mostly right.
+LOOSE_MIN_SCORE = float(os.getenv("EVOLUTION_LOOSE_MIN_SCORE", "0.68"))
 # Citing-sentence labels that state a limitation of the cited paper; with ``attributed`` they make a strict link.
 LIMITATION_LABELS = ("addresses_limitation", "criticises")
 _BATCH = 500
@@ -334,12 +335,14 @@ def topic_graph(session: Session, topic: EvoTopic, limit: int = 250) -> dict:
         ).all()
     ]
     loose: dict[tuple[UUID, UUID], float] = {}
+    kinds = {tp.paper_id: tp.kind for tp, _ in rows}
     for gap_paper, later, score in session.execute(
             select(EvoGapStatement.paper_id, EvoLooseLink.paper_id, EvoLooseLink.score)
             .join(EvoGapStatement, EvoLooseLink.gap_id == EvoGapStatement.id)
             .where(EvoGapStatement.paper_id.in_(shown), EvoLooseLink.paper_id.in_(shown),
                    EvoLooseLink.score >= LOOSE_MIN_SCORE)):
-        loose[(later, gap_paper)] = max(score, loose.get((later, gap_paper), 0.0))
+        if kinds.get(later) == "method":  # a survey or dataset paper addresses nothing
+            loose[(later, gap_paper)] = max(score, loose.get((later, gap_paper), 0.0))
     years = [n["year"] for n in nodes if n["year"]]
     return {
         "topic": topic_summary(topic),
@@ -429,7 +432,7 @@ def paper_detail(session: Session, topic: EvoTopic, paper_id: UUID) -> dict | No
     ).all()
     best: dict[UUID, dict] = {}
     for link, gap_sentence, chunk_text, section_type in loose_rows:
-        if link.paper_id in in_topic and link.paper_id not in best:
+        if link.paper_id in in_topic and in_topic[link.paper_id][0].kind == "method" and link.paper_id not in best:
             best[link.paper_id] = {"paper": node(link.paper_id), "score": round(link.score, 3), "cites": link.cites,
                                    "gap": gap_sentence, "passage": chunk_text[:600], "section_type": section_type}
     return node(p.id) | {
@@ -824,7 +827,7 @@ def topic_gaps(session: Session, topic: EvoTopic, examples: int = 3) -> dict:
         candidates: dict[UUID, float] = {}
         for g in gs:
             for link in loose.get(g.id, []):
-                if link.paper_id in rows:
+                if link.paper_id in rows and rows[link.paper_id][0].kind == "method":
                     candidates[link.paper_id] = max(link.score, candidates.get(link.paper_id, 0.0))
         detail = t.detail or {}
         out.append({
