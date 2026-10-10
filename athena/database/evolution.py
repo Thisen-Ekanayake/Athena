@@ -648,6 +648,19 @@ def pending_contexts(session: Session, cited_ids: set[UUID],
     ).all()
 
 
+def unconfirmed_strict(session: Session, model_tag: str, limit: int) -> list[tuple[EvoCitationContext, str, str]]:
+    """Strict links labelled by an earlier classifier version, with both titles."""
+    citing, cited = aliased(EvoPaper), aliased(EvoPaper)
+    return session.execute(
+        select(EvoCitationContext, citing.title, cited.title)
+        .join(citing, EvoCitationContext.citing_id == citing.id)
+        .join(cited, EvoCitationContext.cited_id == cited.id)
+        .where(EvoCitationContext.label.in_(LIMITATION_LABELS), EvoCitationContext.attributed.is_(True),
+               or_(EvoCitationContext.model.is_(None), EvoCitationContext.model != model_tag))
+        .limit(limit)
+    ).all()
+
+
 def save_labels(session: Session, labels: list[dict]) -> None:
     """``labels``: [{id, label, attributed, model}]."""
     now = datetime.now(timezone.utc)

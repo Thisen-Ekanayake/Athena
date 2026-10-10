@@ -151,8 +151,23 @@ class TestResolution:
 
 
 class TestClassifier:
+    def test_a_yes_to_attribution_is_confirmed_with_thinking(self):
+        answers = iter([{"label": "criticises"}, {"attributed": True}, {"attributed": False}])
+        seen = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(json.loads(request.content))
+            return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(next(answers))}}]})
+
+        clf = Classifier(base_url="http://llm", model="m", http=httpx.Client(transport=httpx.MockTransport(handler)),
+                         local=True)
+        v = clf.classify("QLoRA", "LoRA", "LoRA is slow.", marked="LoRA [[[5]]] is slow.")
+        assert v.attributed is False and not v.strict
+        assert [b["chat_template_kwargs"]["enable_thinking"] for b in seen] == [False, False, True]
+        assert seen[2]["max_tokens"] > 64 and clf.model_tag == "m+think"
+
     def test_attribution_is_asked_only_for_limitation_labels(self):
-        answers = iter([{"label": "criticises"}, {"attributed": True}, {"label": "background"}])
+        answers = iter([{"label": "criticises"}, {"attributed": True}, {"attributed": True}, {"label": "background"}])
         seen = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -166,7 +181,7 @@ class TestClassifier:
         assert seen[0]["chat_template_kwargs"] == {"enable_thinking": False}
         v = clf.classify("QLoRA", "LoRA", "We build on LoRA.")
         assert v.label == "background" and v.attributed is None and not v.strict
-        assert len(seen) == 3
+        assert len(seen) == 4
 
 
 class TestMethodNames:

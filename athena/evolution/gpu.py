@@ -273,10 +273,20 @@ def embed_pending(limit: int | None = None) -> dict:
 def classify_pending(limit: int | None = None) -> dict:
     """Label cue-bearing citing sentences whose cited paper is in some topic's Tier 2, then gap candidates."""
     url, server = chat_server()
-    labelled = strict = gaps = candidates = 0
+    labelled = strict = gaps = candidates = rechecked = confirmed = 0
     with server, SessionLocal() as session:
         clf = Classifier(base_url=url)
         cited_ids = db.all_tier2_ids(session)
+        if clf.local:
+            # Strict links labelled before the thinking confirmation existed: confirm them now.
+            while rows := db.unconfirmed_strict(session, clf.model_tag, 32):
+                out = [{"id": ctx.id, "label": ctx.label, "model": clf.model_tag,
+                        "attributed": clf.attribution(citing_title, cited_title, ctx.sentence, ctx.marked,
+                                                      think=True)} for ctx, citing_title, cited_title in rows]
+                db.save_labels(session, out)
+                confirmed += sum(bool(o["attributed"]) for o in out)
+                rechecked += len(out)
+                logger.info(f"Rechecked {rechecked} strict links with thinking, {confirmed} confirmed")
         start = time.time()
         while limit is None or labelled < limit:
             rows = db.pending_contexts(session, cited_ids, 64 if limit is None else min(64, limit - labelled))
@@ -287,7 +297,7 @@ def classify_pending(limit: int | None = None) -> dict:
                 v = clf.classify(citing_title, cited_title, ctx.sentence, ctx.marked)
                 # A failed answer is stored as "unknown" so it is not retried forever.
                 out.append({"id": ctx.id, "label": v.label or "unknown", "attributed": v.attributed,
-                            "model": clf.model})
+                            "model": clf.model_tag})
                 strict += v.strict
             db.save_labels(session, out)
             labelled += len(out)
@@ -302,8 +312,8 @@ def classify_pending(limit: int | None = None) -> dict:
             db.save_gap_labels(session, out)
             candidates += len(out)
             logger.info(f"Labelled {candidates} gap candidates, {gaps} gaps")
-    return {"contexts_labelled": labelled, "strict_links": strict, "gap_candidates_labelled": candidates,
-            "gaps": gaps}
+    return {"strict_rechecked": rechecked, "strict_confirmed": confirmed, "contexts_labelled": labelled,
+            "strict_links": strict, "gap_candidates_labelled": candidates, "gaps": gaps}
 
 
 def build_all_themes() -> dict:

@@ -14,8 +14,13 @@ slower):
    something else.
 
 A strict gap -> resolution link needs a limitation label and a yes to
-question 2. Talks to any OpenAI-compatible chat endpoint, so another model
-can stand in for the local one.
+question 2, asked twice: as above, then again with thinking on. Hand-checking
+all 148 strict links of the first run (Claude's blind answers): question 2
+alone gave precision 0.69; confirmed with thinking, 0.85 (95% interval
+0.77-0.91), keeping 88 of the 97 true links. Thinking costs ~15 s, so it is
+spent only on sentences that already passed. Talks to any OpenAI-compatible
+chat endpoint, so another model can stand in for the local one (thinking is a
+local Qwen switch, so there the confirmation is skipped).
 """
 from __future__ import annotations
 
@@ -140,6 +145,17 @@ class Classifier:
         except json.JSONDecodeError:
             return None
 
+    @property
+    def model_tag(self) -> str:
+        """Stored with each label, so labels made without the thinking confirmation can be found."""
+        return f"{self.model}+think" if self.local else self.model
+
+    def attribution(self, citing_title: str, cited_title: str, sentence: str, marked: str | None,
+                    think: bool = False) -> bool | None:
+        answer = self.ask(attribution_prompt(citing_title, cited_title, sentence, marked), ATTRIBUTION_SCHEMA,
+                          "attribution", think=think) or {}
+        return answer.get("attributed") if isinstance(answer.get("attributed"), bool) else None
+
     def classify(self, citing_title: str, cited_title: str, sentence: str, marked: str | None = None) -> Verdict:
         start = time.time()
         answer = self.ask(label_prompt(citing_title, cited_title, sentence, marked), LABEL_SCHEMA,
@@ -147,9 +163,9 @@ class Classifier:
         label = answer.get("label") if answer.get("label") in LABELS else None
         attributed = None
         if label in LIMITATION_LABELS:
-            answer = self.ask(attribution_prompt(citing_title, cited_title, sentence, marked), ATTRIBUTION_SCHEMA,
-                              "attribution") or {}
-            attributed = answer.get("attributed") if isinstance(answer.get("attributed"), bool) else None
+            attributed = self.attribution(citing_title, cited_title, sentence, marked)
+            if attributed and self.local:
+                attributed = self.attribution(citing_title, cited_title, sentence, marked, think=True)
         return Verdict(label, attributed, time.time() - start)
 
     def is_gap(self, paper_title: str, section_type: str | None, sentence: str) -> str | None:
