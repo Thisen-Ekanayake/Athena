@@ -62,6 +62,44 @@ TOPICS = [
         ],
         "config": {"keywords": ["detect", "region proposal", "object proposal", "bounding box", "yolo", "r-cnn"]},
     },
+    {
+        "slug": "diffusion-models",
+        "name": "Diffusion models",
+        "aliases": ["diffusion models", "denoising diffusion", "score-based generative models", "ddpm",
+                    "stable diffusion", "latent diffusion", "text-to-image diffusion"],
+        "description": "Generative models that learn to reverse a gradual noising process, from the first "
+                       "thermodynamics-inspired formulation to score-based SDEs, latent and text-to-image diffusion.",
+        "seeds": [
+            {"arxiv_id": "1503.03585", "title": "Deep Unsupervised Learning using Nonequilibrium Thermodynamics",
+             "year": 2015},
+            {"arxiv_id": "2006.11239", "title": "Denoising Diffusion Probabilistic Models", "year": 2020},
+            {"arxiv_id": "2011.13456",
+             "title": "Score-Based Generative Modeling through Stochastic Differential Equations", "year": 2020},
+        ],
+        # "diffusion" alone would also match information diffusion in networks and diffusion MRI.
+        "config": {"keywords": ["diffusion model", "diffusion probabilistic", "denoising diffusion", "score-based",
+                                "score matching", "latent diffusion", "diffusion-based", "text-to-image", "ddpm",
+                                "ddim", "classifier-free guidance", "consistency model", "flow matching"]},
+    },
+    {
+        "slug": "retrieval-augmented-generation",
+        "name": "Retrieval-augmented generation",
+        "aliases": ["retrieval-augmented generation", "retrieval augmented generation", "rag", "dense retrieval",
+                    "open-domain question answering", "retrieval-augmented language models"],
+        "description": "Language models that retrieve passages from an external corpus and condition on them, "
+                       "from open-domain question answering and dense retrievers to retrieval-augmented LLMs.",
+        "seeds": [
+            {"arxiv_id": "2005.11401", "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+             "year": 2020},
+            {"arxiv_id": "2002.08909", "title": "REALM: Retrieval-Augmented Language Model Pre-Training",
+             "year": 2020},
+            {"arxiv_id": "2004.04906", "title": "Dense Passage Retrieval for Open-Domain Question Answering",
+             "year": 2020},
+        ],
+        "config": {"keywords": ["retrieval-augmented", "retrieval augmented", "retrieval-enhanced", "dense retrieval",
+                                "dense passage", "passage retrieval", "open-domain question", "open domain question",
+                                "retriever", "knowledge-intensive", "retrieval-based"]},
+    },
 ]
 
 

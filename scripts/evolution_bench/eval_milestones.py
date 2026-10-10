@@ -8,6 +8,8 @@ Reference lists exclude each topic's seeds, otherwise recall would be circular.
   the list against the paper before quoting the numbers.
 - peft: widely recognised parameter-efficient fine-tuning methods. Not one
   survey's figure, so treat it as a sanity check rather than ground truth.
+- diffusion-models, retrieval-augmented-generation: the same kind of sanity
+  check, written when the topics were added and before their first build.
 
 For each reference paper this reports whether it is in the corpus, its score
 rank among on-topic method papers, and whether it was picked as a milestone.
@@ -52,6 +54,32 @@ REFERENCE = {
         "DoRA": ["DoRA: Weight-Decomposed Low-Rank Adaptation"],
         "VeRA": ["VeRA: Vector-based Random Matrix Adaptation"],
         "PiSSA": ["PiSSA: Principal Singular Values and Singular Vectors Adaptation of Large Language Models"],
+    },
+    "diffusion-models": {
+        "NCSN": ["Generative Modeling by Estimating Gradients of the Data Distribution"],
+        "DDIM": ["Denoising Diffusion Implicit Models"],
+        "Improved DDPM": ["Improved Denoising Diffusion Probabilistic Models"],
+        "ADM": ["Diffusion Models Beat GANs on Image Synthesis"],
+        "Classifier-free guidance": ["Classifier-Free Diffusion Guidance"],
+        "GLIDE": ["GLIDE: Towards Photorealistic Image Generation and Editing with Text-Guided Diffusion Models"],
+        "Latent diffusion": ["High-Resolution Image Synthesis with Latent Diffusion Models"],
+        "DALL-E 2": ["Hierarchical Text-Conditional Image Generation with CLIP Latents"],
+        "Imagen": ["Photorealistic Text-to-Image Diffusion Models with Deep Language Understanding"],
+        "EDM": ["Elucidating the Design Space of Diffusion-Based Generative Models"],
+        "DiT": ["Scalable Diffusion Models with Transformers"],
+        "Consistency models": ["Consistency Models"],
+    },
+    "retrieval-augmented-generation": {
+        "ORQA": ["Latent Retrieval for Weakly Supervised Open Domain Question Answering"],
+        "kNN-LM": ["Generalization through Memorization: Nearest Neighbor Language Models"],
+        "ColBERT": ["ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT"],
+        "FiD": ["Leveraging Passage Retrieval with Generative Models for Open Domain Question Answering"],
+        "RETRO": ["Improving language models by retrieving from trillions of tokens"],
+        "Contriever": ["Unsupervised Dense Information Retrieval with Contrastive Learning"],
+        "Atlas": ["Atlas: Few-shot Learning with Retrieval Augmented Language Models"],
+        "REPLUG": ["REPLUG: Retrieval-Augmented Black-Box Language Models"],
+        "In-Context RALM": ["In-Context Retrieval-Augmented Language Models"],
+        "Self-RAG": ["Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"],
     },
 }
 
