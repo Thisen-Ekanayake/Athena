@@ -831,3 +831,17 @@ def topic_gaps(session: Session, topic: EvoTopic, examples: int = 3) -> dict:
     latest = max((t["detail"] or {}).get("latest_topic_year") or 0 for t in themes) if themes else None
     return {"topic": topic_summary(topic), "latest_year": latest or None, "themes": out,
             "loose_min_score": LOOSE_MIN_SCORE}
+
+
+def pending_abstracts(session: Session, limit: int) -> list[EvoPaper]:
+    """Topic papers whose title and abstract are not yet in Qdrant's paper_abstracts (Tier 1)."""
+    return list(session.execute(
+        select(EvoPaper).where(EvoPaper.abstract_embedded_at.is_(None),
+                               EvoPaper.id.in_(select(EvoTopicPaper.paper_id)))
+        .limit(limit)).scalars())
+
+
+def mark_abstracts(session: Session, paper_ids: list[UUID]) -> None:
+    session.execute(update(EvoPaper).where(EvoPaper.id.in_(paper_ids))
+                    .values(abstract_embedded_at=datetime.now(timezone.utc)))
+    session.commit()

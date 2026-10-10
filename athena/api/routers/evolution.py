@@ -2,7 +2,8 @@
 Athena Layer 5 — Research Evolution Router
 
 GET  /api/v1/evolution/topics                                — curated topics and their build status
-GET  /api/v1/evolution/search?q=                             — match a query to a topic, or say it is not covered
+GET  /api/v1/evolution/search?q=                             — match a query to a topic by alias or by its
+                                                               papers' content, or say it is not covered
 GET  /api/v1/evolution/topics/{slug}/graph                   — papers and citation edges for the timeline graph
 GET  /api/v1/evolution/topics/{slug}/timeline                — milestones by year, and notable papers without
                                                                openly available full text
@@ -23,6 +24,7 @@ from athena.api.cache import cache_get, cache_invalidate, cache_set
 from athena.api.config import settings
 from athena.api.deps import get_db, get_redis
 from athena.database import evolution as db
+from athena.evolution.search import find_topic_by_content
 
 router = APIRouter(prefix="/api/v1/evolution", tags=["Evolution"])
 
@@ -53,7 +55,11 @@ def list_topics(session: Session = Depends(get_db)):
 
 @router.get("/search")
 def search_topics(q: str = Query(..., min_length=1, max_length=200), session: Session = Depends(get_db)):
+    """Names and aliases first; then the topic whose papers best match the query (semantic, else full text)."""
     topic = db.find_topic(session, q)
+    match = {"method": "alias"}
+    if topic is None:
+        topic, match = find_topic_by_content(session, q)
     if topic is None:
         available = [t["name"] for t in db.list_topics(session)]
         return {
@@ -61,8 +67,9 @@ def search_topics(q: str = Query(..., min_length=1, max_length=200), session: Se
             "query": q,
             "message": f"'{q}' is not in the system yet.",
             "available": available,
+            "match": match,
         }
-    return {"found": True, "query": q, "topic": db.topic_summary(topic)}
+    return {"found": True, "query": q, "topic": db.topic_summary(topic), "match": match}
 
 
 @router.get("/topics/{slug}/graph")

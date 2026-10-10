@@ -86,3 +86,14 @@ def test_gap_candidates_need_a_cue_except_in_limitations():
     ])
     assert gap_candidates(parsed) == [("intro", "However, adapters add latency at inference."),
                                       ("limitations", "Our study covers only English data.")]
+
+
+def test_text_search_needs_a_topic_keyword():
+    from types import SimpleNamespace
+
+    from athena.evolution.search import _mentions_keywords
+    peft = SimpleNamespace(config={"keywords": ["lora", "adapter", "soft prompt"]})
+    assert _mentions_keywords("LoRA variants", peft)
+    assert _mentions_keywords("soft prompts for small models", peft)
+    assert not _mentions_keywords("speech recognition", peft)
+    assert _mentions_keywords("anything", SimpleNamespace(config={}))  # no keywords: no gate

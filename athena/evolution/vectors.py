@@ -19,6 +19,7 @@ from qdrant_client.http import models as qm
 
 COLLECTION = "paper_chunks"
 GAP_COLLECTION = "gap_statements"   # Phase 3: one vector per gap statement, for themes and loose links
+ABSTRACT_COLLECTION = "paper_abstracts"  # Tier 1: title and abstract of every topic paper, for topic search
 DIM = 1024
 
 
@@ -31,6 +32,7 @@ _PAYLOAD_INDEXES = {
                  ("section_type", qm.PayloadSchemaType.KEYWORD), ("year", qm.PayloadSchemaType.INTEGER)],
     GAP_COLLECTION: [("paper_id", qm.PayloadSchemaType.KEYWORD), ("origin", qm.PayloadSchemaType.KEYWORD),
                      ("year", qm.PayloadSchemaType.INTEGER)],
+    ABSTRACT_COLLECTION: [("paper_id", qm.PayloadSchemaType.KEYWORD), ("year", qm.PayloadSchemaType.INTEGER)],
 }
 
 

@@ -426,6 +426,7 @@ class EvoPaper(Base):
     is_oa = Column(Boolean, default=False)
     oa_pdf_url = Column(String, nullable=True)
     full_text_status = Column(String, default="unavailable")  # unavailable | available | parsed | failed
+    abstract_embedded_at = Column(DateTime(timezone=True), nullable=True)  # Tier 1: in Qdrant's paper_abstracts
     merged_ids = Column(ARRAY(String), default=[])   # duplicate OpenAlex records folded into this one
     content_item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=True)
     extra = Column(JSONB, default={})

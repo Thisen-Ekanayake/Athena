@@ -210,6 +210,22 @@ def _embed_gaps(http: httpx.Client, url: str, session) -> int:
     return done
 
 
+def _embed_abstracts(http: httpx.Client, url: str, session) -> int:
+    """Tier 1: every topic paper's title and abstract, for topic search."""
+    vectors.ensure_collection(name=vectors.ABSTRACT_COLLECTION)
+    done = 0
+    while papers := db.pending_abstracts(session, FETCH):
+        for i in range(0, len(papers), EMBED_BATCH):
+            batch = papers[i:i + EMBED_BATCH]
+            vecs = _embed(http, url, [_fit(http, url, f"{p.title}\n{p.abstract or ''}")[0] for p in batch])
+            vectors.upsert([(p.id, vec, {"paper_id": str(p.id), "year": p.year}) for p, vec in zip(batch, vecs)],
+                           name=vectors.ABSTRACT_COLLECTION)
+            db.mark_abstracts(session, [p.id for p in batch])
+            done += len(batch)
+    logger.info(f"Embedded {done} abstracts")
+    return done
+
+
 def _loose_links(http: httpx.Client, url: str, session) -> int:
     """For each gap statement, the later papers whose abstract, introduction or method matches it best."""
     found = 0
@@ -239,7 +255,7 @@ def _loose_links(http: httpx.Client, url: str, session) -> int:
 
 
 def embed_pending(limit: int | None = None) -> dict:
-    """Embed chunks and gap statements that have no vector yet, then search loose links."""
+    """Embed chunks and gap statements that have no vector yet, search loose links, then embed abstracts."""
     vectors.ensure_collection()
     url, server = embed_server()
     with server, httpx.Client(timeout=600.0, headers=auth_headers()) as http, SessionLocal() as session:
@@ -247,6 +263,7 @@ def embed_pending(limit: int | None = None) -> dict:
         if limit is None:
             summary["gaps_embedded"] = _embed_gaps(http, url, session)
             summary["loose_links"] = _loose_links(http, url, session)
+            summary["abstracts_embedded"] = _embed_abstracts(http, url, session)
     return summary
 
 
