@@ -23,7 +23,7 @@ from pathlib import Path
 
 import httpx
 from loguru import logger
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, stop_after_delay, wait_exponential
 
 from athena.core.config_store import get_setting
 
@@ -242,8 +242,10 @@ class SemanticScholarClient:
             self.min_interval = max(self.min_interval, MIN_INTERVAL_NO_KEY)
             return self._request(method, path, params, body)
 
-    @retry(retry=retry_if_exception(_is_transient), wait=wait_exponential(multiplier=2, min=4, max=60),
-           stop=stop_after_attempt(8), reraise=True)
+    # The keyless pool is shared by everyone and can refuse for minutes at a time, so rate limits are
+    # waited out for up to 15 minutes rather than a fixed number of attempts.
+    @retry(retry=retry_if_exception(_is_transient), wait=wait_exponential(multiplier=2, min=4, max=90),
+           stop=stop_after_attempt(40) | stop_after_delay(900), reraise=True)
     def _send(self, method: str, path: str, params: dict, body: dict | None):
         wait = self.min_interval - (time.monotonic() - self._last_request)
         if wait > 0:
