@@ -74,10 +74,23 @@ def test_graph_is_cached(client):
     c, _ = client
     payload = {"topic": SUMMARY, "nodes": [], "edges": [], "total_papers": 0, "year_range": None}
     with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), \
+            patch(f"{ROUTER_DB}.labels_version", return_value="0-0"), \
             patch(f"{ROUTER_DB}.topic_graph", return_value=payload) as build:
         c.get("/api/v1/evolution/topics/object-detection/graph")
         c.get("/api/v1/evolution/topics/object-detection/graph")
     assert build.call_count == 1
+
+
+def test_new_labels_refresh_the_cached_graph(client):
+    # Strict links arrive from the GPU lane without a rebuild, so built_at alone would serve stale edges.
+    c, _ = client
+    payload = {"topic": SUMMARY, "nodes": [], "edges": [], "total_papers": 0, "year_range": None}
+    with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), \
+            patch(f"{ROUTER_DB}.labels_version", side_effect=["10-100", "12-160"]), \
+            patch(f"{ROUTER_DB}.topic_graph", return_value=payload) as build:
+        c.get("/api/v1/evolution/topics/object-detection/graph")
+        c.get("/api/v1/evolution/topics/object-detection/graph")
+    assert build.call_count == 2
 
 
 def test_pin_invalidates_the_topic_cache(client):

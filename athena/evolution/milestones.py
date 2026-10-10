@@ -21,13 +21,13 @@ from dataclasses import dataclass, field
 from athena.evolution import graph as g
 from athena.evolution.config import TopicConfig
 from athena.evolution.corpus import Corpus, relevance
+from athena.evolution.names import NAME_TOKEN
 
 _SURVEY = re.compile(r"\b(survey|review|overview|tutorial|primer|taxonomy)\b", re.IGNORECASE)
 _DATASET = re.compile(r"\b(dataset|data set|corpus|database)\b", re.IGNORECASE)
 _BENCHMARK = re.compile(r"\b(benchmark|leaderboard|challenge)\b", re.IGNORECASE)
 _NAMED = re.compile(r"^\s*([^:]{1,40}?)\s*:\s+\S")
-# A token that looks like a coined name: internal capital, two capitals, or a digit ("LoRA", "R-CNN", "YOLOv3").
-_NAME_TOKEN = re.compile(r"[a-z][A-Z]|[A-Z].*[A-Z]|\d")
+_NAME_TOKEN = NAME_TOKEN
 
 
 def classify_kind(title: str, work_type: str | None = None) -> str:
@@ -41,7 +41,7 @@ def classify_kind(title: str, work_type: str | None = None) -> str:
 
 
 def named_method(title: str) -> str | None:
-    """'LoRA: Low-Rank Adaptation...' -> 'LoRA'. Title-only proxy; Phase 2 uses citing sentences instead."""
+    """'LoRA: Low-Rank Adaptation...' -> 'LoRA'. Title-only; ``names.detect_method_name`` uses citing sentences."""
     match = _NAMED.match(title)
     if not match:
         return None

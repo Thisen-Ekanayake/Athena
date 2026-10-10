@@ -6,7 +6,8 @@ GET  /api/v1/evolution/search?q=                             — match a query t
 GET  /api/v1/evolution/topics/{slug}/graph                   — papers and citation edges for the timeline graph
 GET  /api/v1/evolution/topics/{slug}/timeline                — milestones by year, and notable papers without
                                                                openly available full text
-GET  /api/v1/evolution/topics/{slug}/papers/{paper_id}       — one paper with what it builds on and what built on it
+GET  /api/v1/evolution/topics/{slug}/papers/{paper_id}       — one paper with what it builds on, what built on it,
+                                                               and strict gap -> resolution links with evidence
 POST /api/v1/evolution/topics/{slug}/milestones/{paper_id}   — pin, unpin, or reset a milestone
 """
 from typing import Literal
@@ -37,10 +38,11 @@ def _topic_or_404(session: Session, slug: str):
     return topic
 
 
-def _cache_key(topic, *parts) -> str:
-    # built_at in the key: a rebuild gets fresh entries without waiting for the TTL.
+def _cache_key(session: Session, topic, *parts) -> str:
+    # built_at in the key: a rebuild gets fresh entries without waiting for the TTL. The labels
+    # version does the same for full text and strict links, which arrive without a rebuild.
     built = topic.built_at.isoformat() if topic.built_at else "unbuilt"
-    return ":".join(["evo", topic.slug, *map(str, parts), built])
+    return ":".join(["evo", topic.slug, *map(str, parts), built, db.labels_version(session)])
 
 
 @router.get("/topics")
@@ -70,7 +72,7 @@ def topic_graph(
     r: redis_lib.Redis = Depends(get_redis),
 ):
     topic = _topic_or_404(session, slug)
-    key = _cache_key(topic, "graph", limit)
+    key = _cache_key(session, topic, "graph", limit)
     cached = cache_get(r, key)
     if cached:
         return cached
@@ -82,7 +84,7 @@ def topic_graph(
 @router.get("/topics/{slug}/timeline")
 def topic_timeline(slug: str, session: Session = Depends(get_db), r: redis_lib.Redis = Depends(get_redis)):
     topic = _topic_or_404(session, slug)
-    key = _cache_key(topic, "timeline")
+    key = _cache_key(session, topic, "timeline")
     cached = cache_get(r, key)
     if cached:
         return cached

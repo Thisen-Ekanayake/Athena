@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, distinct, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, aliased
 
@@ -21,6 +21,7 @@ from athena.core.models import (
 )
 from athena.database.db import SessionLocal
 from athena.evolution.config import TopicConfig
+from athena.evolution.names import detect_method_name
 
 if TYPE_CHECKING:
     from athena.evolution.corpus import Corpus
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
     from athena.evolution.milestones import TopicScores
 
 OVERRIDE_ACTIONS = {"pin", "unpin", "reset"}
+# Citing-sentence labels that state a limitation of the cited paper; with ``attributed`` they make a strict link.
+LIMITATION_LABELS = ("addresses_limitation", "criticises")
 _BATCH = 500
 
 
@@ -221,7 +224,8 @@ def save_topic_build(slug: str, corpus: "Corpus", scores: "TopicScores") -> None
 # ── reads for the API ──────────────────────────────────────────────────
 
 
-def _node(tp: EvoTopicPaper, p: EvoPaper, override: EvoMilestoneOverride | None) -> dict:
+def _node(tp: EvoTopicPaper, p: EvoPaper, override: EvoMilestoneOverride | None,
+          method_name: str | None = None) -> dict:
     action = override.action if override else None
     return {
         "id": str(p.id),
@@ -234,7 +238,8 @@ def _node(tp: EvoTopicPaper, p: EvoPaper, override: EvoMilestoneOverride | None)
         "cited_by_count": max(p.cited_by_count or 0, p.s2_cited_by_count or 0),
         "kind": tp.kind,
         "role": tp.role,
-        "named_method": tp.named_method,
+        # What citing sentences call it ("LoRA [28]"), else the "Name: description" title prefix.
+        "named_method": method_name or tp.named_method,
         "in_degree": tp.in_degree,
         "pagerank": tp.pagerank,
         "citation_percentile": tp.citation_percentile,
@@ -252,10 +257,60 @@ def _node(tp: EvoTopicPaper, p: EvoPaper, override: EvoMilestoneOverride | None)
     }
 
 
+def labels_version(session: Session) -> str:
+    """Changes whenever full text or labels change, which happens without a topic rebuild."""
+    count, last = session.execute(select(func.count(EvoCitationContext.id),
+                                         func.max(EvoCitationContext.labelled_at))).one()
+    return f"{count}-{int(last.timestamp()) if last else 0}"
+
+
+def method_names(session: Session, papers: dict[UUID, str]) -> dict[UUID, str]:
+    """Names citing sentences use for each paper ({id: title} in, {id: name} out)."""
+    if not papers:
+        return {}
+    ids = list(papers)
+    mentions: dict[UUID, dict[str, int]] = defaultdict(dict)
+    for cited, word, n in session.execute(
+            select(EvoCitationContext.cited_id, EvoCitationContext.mention,
+                   func.count(distinct(EvoCitationContext.citing_id)))
+            .where(EvoCitationContext.cited_id.in_(ids), EvoCitationContext.mention.isnot(None))
+            .group_by(EvoCitationContext.cited_id, EvoCitationContext.mention)):
+        mentions[cited][word] = n
+    citers = dict(session.execute(
+        select(EvoCitationContext.cited_id, func.count(distinct(EvoCitationContext.citing_id)))
+        .where(EvoCitationContext.cited_id.in_(list(mentions))).group_by(EvoCitationContext.cited_id)).all())
+    out = {}
+    for pid, words in mentions.items():
+        name = detect_method_name(words, papers[pid], citers.get(pid, 0))
+        if name:
+            out[pid] = name
+    return out
+
+
+def _strict(session: Session, citing: list[UUID] | None = None, cited: list[UUID] | None = None,
+            within: set[UUID] | None = None) -> list[EvoCitationContext]:
+    query = select(EvoCitationContext).where(EvoCitationContext.label.in_(LIMITATION_LABELS),
+                                             EvoCitationContext.attributed.is_(True))
+    if citing is not None:
+        query = query.where(EvoCitationContext.citing_id.in_(citing))
+    if cited is not None:
+        query = query.where(EvoCitationContext.cited_id.in_(cited))
+    rows = list(session.execute(query).scalars())
+    if within is not None:
+        rows = [r for r in rows if r.citing_id in within and r.cited_id in within]
+    return rows
+
+
+def _evidence(ctx: EvoCitationContext) -> dict:
+    return {"sentence": ctx.sentence, "section_type": ctx.section_type, "label": ctx.label, "source": ctx.source}
+
+
 def topic_graph(session: Session, topic: EvoTopic, limit: int = 250) -> dict:
     """Milestones, main-path papers and seeds, then the highest-scoring papers up to ``limit``."""
     overrides = _overrides(session, topic.id)
-    nodes = [_node(tp, p, overrides.get(p.id)) for tp, p in _topic_rows(session, topic.id)]
+    rows = _topic_rows(session, topic.id)
+    names = method_names(session, {p.id: p.title for _, p in rows})
+    nodes = [_node(tp, p, overrides.get(p.id), names.get(p.id)) for tp, p in rows]
     total = len(nodes)
     nodes.sort(key=lambda n: (n["is_milestone"] or n["on_main_path"] or n["role"] == "seed",
                               n["milestone_score"]), reverse=True)
@@ -264,8 +319,12 @@ def topic_graph(session: Session, topic: EvoTopic, limit: int = 250) -> dict:
 
     main = {(r.citing_id, r.cited_id) for r in session.execute(
         select(EvoMainPathEdge).where(EvoMainPathEdge.topic_id == topic.id)).scalars()}
+    strict = defaultdict(list)
+    for ctx in _strict(session, citing=list(shown), within=shown):
+        strict[(ctx.citing_id, ctx.cited_id)].append(ctx)
     edges = [
-        {"source": str(c), "target": str(d), "main_path": (c, d) in main}
+        {"source": str(c), "target": str(d), "main_path": (c, d) in main, "strict": (c, d) in strict,
+         "fixes": any(x.label == "addresses_limitation" for x in strict.get((c, d), []))}
         for c, d in session.execute(
             select(EvoCitation.citing_id, EvoCitation.cited_id)
             .where(EvoCitation.citing_id.in_(shown), EvoCitation.cited_id.in_(shown))
@@ -277,6 +336,7 @@ def topic_graph(session: Session, topic: EvoTopic, limit: int = 250) -> dict:
         "nodes": nodes,
         "edges": edges,
         "total_papers": total,
+        "strict_links": len(strict),
         "year_range": [min(years), max(years)] if years else None,
     }
 
@@ -284,7 +344,9 @@ def topic_graph(session: Session, topic: EvoTopic, limit: int = 250) -> dict:
 def topic_timeline(session: Session, topic: EvoTopic, notable: int = 40) -> dict:
     """Milestones by year, plus notable papers whose full text is not openly available."""
     overrides = _overrides(session, topic.id)
-    nodes = [_node(tp, p, overrides.get(p.id)) for tp, p in _topic_rows(session, topic.id)]
+    rows = _topic_rows(session, topic.id)
+    names = method_names(session, {p.id: p.title for _, p in rows})
+    nodes = [_node(tp, p, overrides.get(p.id), names.get(p.id)) for tp, p in rows]
     by_year: dict[int, list[dict]] = {}
     for n in nodes:
         if n["is_milestone"] and n["year"]:
@@ -314,14 +376,30 @@ def paper_detail(session: Session, topic: EvoTopic, paper_id: UUID) -> dict | No
     tp, p = row
     overrides = _overrides(session, topic.id)
     in_topic = {pp.id: (t, pp) for t, pp in _topic_rows(session, topic.id)}
-
-    def neighbours(ids: list[UUID]) -> list[dict]:
-        found = [_node(*in_topic[i], overrides.get(i)) for i in ids if i in in_topic]
-        return sorted(found, key=lambda n: n["milestone_score"], reverse=True)[:10]
-
     refs = [r for (r,) in session.execute(select(EvoCitation.cited_id).where(EvoCitation.citing_id == p.id))]
     citers = [c for (c,) in session.execute(select(EvoCitation.citing_id).where(EvoCitation.cited_id == p.id))]
-    return _node(tp, p, overrides.get(p.id)) | {
+    addresses = _strict(session, citing=[p.id], within=set(in_topic))
+    addressed_by = _strict(session, cited=[p.id], within=set(in_topic))
+    involved = {p.id} | {c.cited_id for c in addresses} | {c.citing_id for c in addressed_by}
+    names = method_names(session, {i: in_topic[i][1].title for i in involved | set(refs) | set(citers)
+                                   if i in in_topic})
+
+    def node(i: UUID) -> dict:
+        return _node(*in_topic[i], overrides.get(i), names.get(i))
+
+    def neighbours(ids: list[UUID]) -> list[dict]:
+        found = [node(i) for i in ids if i in in_topic]
+        return sorted(found, key=lambda n: n["milestone_score"], reverse=True)[:10]
+
+    def links(rows: list[EvoCitationContext], other: str) -> list[dict]:
+        grouped: dict[UUID, list[EvoCitationContext]] = defaultdict(list)
+        for ctx in rows:
+            grouped[getattr(ctx, other)].append(ctx)
+        out = [{"paper": node(pid), "evidence": [_evidence(c) for c in ctxs]} for pid, ctxs in grouped.items()]
+        return sorted(out, key=lambda x: (x["paper"]["year"] or 0, -x["paper"]["milestone_score"]))
+
+    full_text = (p.extra or {}).get("full_text") or {}
+    return node(p.id) | {
         "abstract": p.abstract,
         "doi": p.doi,
         "arxiv_id": p.arxiv_id,
@@ -329,6 +407,11 @@ def paper_detail(session: Session, topic: EvoTopic, paper_id: UUID) -> dict | No
         "merged_ids": p.merged_ids or [],
         "builds_on": neighbours(refs),
         "built_upon_by": neighbours(citers),
+        # Strict gap -> resolution links: earlier papers whose stated limitation this one takes on,
+        # and later papers that take on this one's.
+        "addresses": links(addresses, "cited_id"),
+        "addressed_by": links(addressed_by, "citing_id"),
+        "full_text": {k: full_text.get(k) for k in ("status", "sections", "contexts", "error") if k in full_text},
     }
 
 

@@ -11,6 +11,7 @@ from athena.evolution.fulltext import (
     KnownPaper, PaperIndex, chunk_id, chunk_sentences, contexts_from_parse, cue_words, s2_marked,
     sections_and_chunks,
 )
+from athena.evolution.names import detect_method_name
 from athena.evolution.tei import (
     classify_heading, is_junk_heading, is_junk_sentence, mention_before, parse_tei,
 )
@@ -159,3 +160,19 @@ class TestClassifier:
         v = clf.classify("QLoRA", "LoRA", "We build on LoRA.")
         assert v.label == "background" and v.attributed is None and not v.strict
         assert len(seen) == 3
+
+
+class TestMethodNames:
+    def test_the_name_most_citing_papers_use_wins(self):
+        mentions = {"LoRA": 9, "adapters": 4, "al": 12, "method": 3}
+        assert detect_method_name(mentions, "LoRA: Low-Rank Adaptation of Large Language Models", 12) == "LoRA"
+
+    def test_a_title_word_counts_as_a_name(self):
+        assert detect_method_name({"Prefix-tuning": 5}, "Prefix-Tuning: Optimizing Continuous Prompts", 8) \
+            == "Prefix-tuning"
+
+    def test_generic_or_rare_words_are_not_names(self):
+        assert detect_method_name({"CNN": 30}, "ImageNet Classification with Deep CNNs", 40) is None
+        assert detect_method_name({"BitFit": 2}, "BitFit: Simple Parameter-efficient Fine-tuning", 3) is None
+        # Used by too small a share of the citing papers.
+        assert detect_method_name({"YOLO": 4}, "You Only Look Once", 30) is None
