@@ -24,6 +24,7 @@ import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from loguru import logger
 
@@ -69,14 +70,21 @@ class Corpus:
     edge_sources: dict[tuple[str, str], str] = field(default_factory=dict)  # openalex | s2; missing means openalex
 
 
+@lru_cache(maxsize=64)
+def _keyword_pattern(keywords: tuple[str, ...]) -> re.Pattern:
+    # Keywords match at the start of a word: "lora" finds "LoRA" and "LoRAs" but not "exploration",
+    # and the stem "detect" finds "detection" and "detector".
+    return re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(k.lower()) for k in keywords) + ")")
+
+
 def relevance(title: str, abstract: str | None, keywords: list[str]) -> float:
     """1.0 if the title mentions a topic keyword, 0.5 if only the abstract does, else 0."""
     if not keywords:
         return 1.0
-    words = [k.lower() for k in keywords]
-    if any(k in title.lower() for k in words):
+    pattern = _keyword_pattern(tuple(keywords))
+    if pattern.search(title.lower()):
         return 1.0
-    if abstract and any(k in abstract.lower() for k in words):
+    if abstract and pattern.search(abstract.lower()):
         return 0.5
     return 0.0
 

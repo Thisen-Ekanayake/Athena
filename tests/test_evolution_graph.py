@@ -130,6 +130,11 @@ class TestMilestoneHelpers:
         assert relevance("Deep Residual Learning", "image recognition", keywords) == 0.0
         assert relevance("Anything", None, []) == 1.0
 
+    def test_relevance_matches_keywords_at_word_starts(self):
+        assert relevance("LoRA: Low-Rank Adaptation", None, ["lora"]) == 1.0
+        assert relevance("Curiosity-driven exploration", "Exploration in floral fields", ["lora"]) == 0.0
+        assert relevance("Faster R-CNN", None, ["r-cnn"]) == 1.0
+
     def test_era_bounds_split_long_sparse_eras(self):
         years = [1990] + [2015] * 10 + [2016] * 10
         bounds = era_bounds(years, eras=2, max_era_years=6)
