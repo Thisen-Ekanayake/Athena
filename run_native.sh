@@ -131,6 +131,9 @@ echo ">> Starting local services..."
 start_proc api      uvicorn athena.api.main:app --host 127.0.0.1 --port 8000 --reload
 start_proc worker   celery -A athena.pipeline.tasks worker -l info --pool=threads \
                       -B --schedule "$RUN_DIR/celerybeat-schedule"
+# Research-evolution topic builds: own queue, one at a time (later phases share a single GPU).
+start_proc evolution celery -A athena.pipeline.tasks worker -l info -Q evolution -c 1 --pool=solo \
+                      -n "evolution@%h"
 ( cd frontend && start_proc frontend npm run dev )
 
 wait_for_http "API"      "${API_URL}/health" 90 || {
