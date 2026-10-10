@@ -90,10 +90,24 @@ class TestClient:
         assert ctx.contexts == ["LoRA [12] freezes the weights."]
         assert ctx.is_influential
 
-    def test_rejected_key_raises(self):
+    def test_rejected_key_falls_back_to_the_keyless_pool(self, monkeypatch):
+        monkeypatch.setattr("athena.evolution.semantic_scholar.MIN_INTERVAL_NO_KEY", 0)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "x-api-key" in request.headers:
+                return httpx.Response(403, json={"message": "Forbidden"})
+            return httpx.Response(200, json=[s2_raw("p1", "QLoRA")])
+
+        http = httpx.Client(base_url="https://api.semanticscholar.org/graph/v1", headers={"x-api-key": "expired"},
+                            transport=httpx.MockTransport(handler))
+        client = SemanticScholarClient(api_key="expired", cache_dir="", http=http, min_interval=0)
+        assert client.get_papers(["ARXIV:1"])["ARXIV:1"].title == "QLoRA"
+        assert client.api_key == ""
+
+    def test_403_without_a_key_raises(self):
         http = httpx.Client(base_url="https://api.semanticscholar.org/graph/v1",
                             transport=httpx.MockTransport(lambda r: httpx.Response(403, json={"message": "Forbidden"})))
-        client = SemanticScholarClient(api_key="bad", cache_dir="", http=http, min_interval=0)
+        client = SemanticScholarClient(api_key="", cache_dir="", http=http, min_interval=0)
         with pytest.raises(SemanticScholarAuthError):
             client.get_papers(["ARXIV:1"])
 

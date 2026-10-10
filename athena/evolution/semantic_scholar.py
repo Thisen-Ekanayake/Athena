@@ -230,12 +230,17 @@ class SemanticScholarClient:
         try:
             return self._send(method, path, params, body)
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 403:
-                raise SemanticScholarAuthError(
-                    "Semantic Scholar rejected the API key (403). Check SEMANTIC_SCHOLAR_API_KEY, "
-                    "or unset it to use the slower keyless pool."
-                ) from exc
-            raise
+            if exc.response.status_code != 403:
+                raise
+            if not self.api_key:
+                raise SemanticScholarAuthError("Semantic Scholar refused the request (403) without a key") from exc
+            # An expired or revoked key gets 403 on every call, while the keyless pool still answers.
+            logger.warning("Semantic Scholar rejected the API key (403); continuing without it, more slowly. "
+                           "Replace SEMANTIC_SCHOLAR_API_KEY in the Settings page.")
+            self.api_key = ""
+            self.http.headers.pop("x-api-key", None)
+            self.min_interval = max(self.min_interval, MIN_INTERVAL_NO_KEY)
+            return self._request(method, path, params, body)
 
     @retry(retry=retry_if_exception(_is_transient), wait=wait_exponential(multiplier=2, min=4, max=60),
            stop=stop_after_attempt(8), reraise=True)
