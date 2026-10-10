@@ -604,7 +604,7 @@ class EvoGapTheme(Base):
     yearly = Column(JSONB, default={})               # {"2021": 3, ...}, by the year the stating paper appeared
     first_year = Column(Integer, nullable=True)
     last_year = Column(Integer, nullable=True)
-    status = Column(String, nullable=False)          # persisting | addressed | quiet
+    status = Column(String, nullable=False)          # persisting | new | addressed | quiet
     detail = Column(JSONB, default={})               # papers, fixes, counts by origin
     built_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

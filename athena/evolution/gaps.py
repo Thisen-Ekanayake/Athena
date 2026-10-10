@@ -9,21 +9,26 @@ in one theme. Each theme gets:
 - a label from its most distinctive words (class-based TF-IDF: the words
   that are frequent in this theme and rare in the topic's other themes);
 - how many statements each year, by the year the stating paper appeared;
-- a status: ``addressed`` when a strict link claims a fix, ``persisting``
-  when it was still stated in the topic's last two years without one, and
-  ``quiet`` otherwise.
+- a status: ``addressed`` when a strict link claims a fix; otherwise
+  ``persisting`` when it is still stated in the topic's last two years and
+  was first stated before them, ``new`` when it has only been stated in
+  them, and ``quiet`` when it has not been stated in them.
 
 Pure functions; ``athena.evolution.gpu`` feeds them vectors from Qdrant.
 """
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 
 import numpy as np
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, CountVectorizer
 
-THEME_DISTANCE = 0.35   # average-linkage cosine distance at which clusters stop merging
+THEME_DISTANCE = 0.40   # average-linkage cosine distance at which clusters stop merging (see below)
+# Chosen on the first run's three topics: at 0.35 PEFT split "high cost of full fine-tuning" into three
+# themes and 69% of statements were themed; at 0.40 they merge and 82% are; from 0.45 themes blur together
+# (PEFT's largest grew to 89 statements, at 0.50 to 286).
 MIN_THEME_SIZE = 3
 RECENT_YEARS = 2
 LABEL_TERMS = 3
@@ -40,6 +45,12 @@ _GENERIC = {
     "techniques", "technique", "framework", "frameworks", "paradigm", "setting", "settings",
 }
 STOP_WORDS = list(ENGLISH_STOP_WORDS | _GENERIC)
+# Citation markers and section numbers, removed before labelling so author names do not become labels.
+_CITATIONS = re.compile(r"\([^()]*?(?:19|20)\d{2}[a-z]?[^()]*\)|\[[\d,;\s–-]+\]|\bet al\.?|^\s*\d+(\.\d+)*\s+")
+
+
+def _clean(sentence: str) -> str:
+    return _CITATIONS.sub(" ", sentence)
 
 
 def cluster(vectors: np.ndarray, distance: float = THEME_DISTANCE, min_size: int = MIN_THEME_SIZE) -> list[int]:
@@ -98,7 +109,7 @@ def build_themes(rows: list[dict], vectors: np.ndarray, distance: float = THEME_
     for row, label in zip(rows, labels):
         if label >= 0:
             members[label].append(row)
-    terms = theme_terms({t: [r["sentence"] for r in rs] for t, rs in members.items()})
+    terms = theme_terms({t: [_clean(r["sentence"]) for r in rs] for t, rs in members.items()})
     years = [r["year"] for r in rows if r["year"]]
     latest = max(years) if years else None
 
@@ -107,8 +118,14 @@ def build_themes(rows: list[dict], vectors: np.ndarray, distance: float = THEME_
         yearly = Counter(r["year"] for r in rs if r["year"])
         first, last = (min(yearly), max(yearly)) if yearly else (None, None)
         fixes = [r for r in rs if r["fix"]]
-        recent = latest is not None and last is not None and last >= latest - (RECENT_YEARS - 1)
-        status = "addressed" if fixes else ("persisting" if recent else "quiet")
+        window = latest - (RECENT_YEARS - 1) if latest is not None else None
+        recent = window is not None and last is not None and last >= window
+        if fixes:
+            status = "addressed"
+        elif recent:
+            status = "persisting" if first is not None and first < window else "new"
+        else:
+            status = "quiet"
         papers = Counter(r["paper_id"] for r in rs)
         themes.append({
             "label": " · ".join(terms.get(t) or ["(no distinctive words)"]),
@@ -127,4 +144,5 @@ def build_themes(rows: list[dict], vectors: np.ndarray, distance: float = THEME_
             },
             "members": [r["id"] for r in rs],
         })
-    return sorted(themes, key=lambda th: (th["status"] != "persisting", -th["size"]))
+    order = {"persisting": 0, "new": 1, "addressed": 2, "quiet": 3}
+    return sorted(themes, key=lambda th: (order[th["status"]], -th["size"]))

@@ -128,7 +128,7 @@ export interface GapTheme {
   id: string
   label: string
   size: number
-  status: 'persisting' | 'addressed' | 'quiet'
+  status: 'persisting' | 'new' | 'addressed' | 'quiet'
   first_year: number | null
   last_year: number | null
   yearly: { year: number; count: number }[]

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CheckCircle2, CircleDot, Loader2, MoonStar } from 'lucide-react'
+import { CheckCircle2, CircleDot, Loader2, MoonStar, Sparkle } from 'lucide-react'
 import { Alert } from '../../components/shared/Alert'
 import { useTopicGaps, type GapTheme, type MiniPaper } from './api'
 
@@ -10,6 +10,7 @@ interface GapsViewProps {
 
 const STATUS = {
   persisting: { label: 'Persisting', icon: CircleDot, className: 'text-accent-warning border-accent-warning/40' },
+  new: { label: 'New', icon: Sparkle, className: 'text-accent-tertiary border-accent-tertiary/40' },
   addressed: { label: 'Fix claimed', icon: CheckCircle2, className: 'text-accent-success border-accent-success/40' },
   quiet: { label: 'Quiet', icon: MoonStar, className: 'text-text-muted border-border-subtle' },
 } as const
@@ -17,6 +18,7 @@ const STATUS = {
 const FILTERS = [
   { value: 'all', label: 'All themes' },
   { value: 'persisting', label: 'Persisting' },
+  { value: 'new', label: 'New' },
   { value: 'addressed', label: 'Fix claimed' },
   { value: 'quiet', label: 'Quiet' },
 ] as const
@@ -49,8 +51,10 @@ export function GapsView({ slug, onSelect }: GapsViewProps) {
     <div className="flex flex-col gap-5">
       <p className="text-sm text-text-secondary max-w-3xl">
         Limitations papers state about themselves, and that later papers state about them, grouped by meaning. A theme
-        is <b className="font-semibold text-text-primary">persisting</b> when it was still stated in {data.latest_year ? `${data.latest_year - 1}–${data.latest_year}` : 'the last two years'} and no
-        strict link claims a fix. The bars count statements per year; the last two years are highlighted.
+        is <b className="font-semibold text-text-primary">persisting</b> when it was first stated before{' '}
+        {data.latest_year ? `${data.latest_year - 1}–${data.latest_year}` : 'the last two years'}, is still stated then, and no strict
+        link claims a fix; <b className="font-semibold text-text-primary">new</b> when it has only been stated in those years. The bars
+        count statements per year; the last two years are highlighted.
       </p>
       <div className="flex flex-wrap gap-2" role="group" aria-label="Filter themes by status">
         {FILTERS.map((f) => (

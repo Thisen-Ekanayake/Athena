@@ -64,8 +64,11 @@ class TestThemes:
 
     def test_status_follows_recent_mentions_and_fixes(self):
         themes = self.themes()
-        assert themes["quantized"]["status"] == "persisting"   # stated in 2024, the topic's latest year
+        assert themes["quantized"]["status"] == "persisting"   # stated since 2021 and still in 2024
         assert themes["prompt"]["status"] == "quiet"           # last stated in 2020
+        for row in self.rows[:3]:
+            row["year"] = 2024 - row["id"] % 2
+        assert self.themes()["quantized"]["status"] == "new"   # only stated in 2023-2024
         self.rows[4]["fix"] = True
         assert self.themes()["prompt"]["status"] == "addressed"
 
@@ -97,3 +100,10 @@ def test_text_search_needs_a_topic_keyword():
     assert _mentions_keywords("soft prompts for small models", peft)
     assert not _mentions_keywords("speech recognition", peft)
     assert _mentions_keywords("anything", SimpleNamespace(config={}))  # no keywords: no gate
+
+
+def test_labels_ignore_citations_and_author_names():
+    from athena.evolution.gaps import _clean
+    assert "Lester" not in _clean("Prompt tuning lags full tuning (Lester et al., 2021).")
+    assert "[12, 14]" not in _clean("Adapters add latency [12, 14] at inference.")
+    assert _clean("3.1 Lack of universality of prompts").strip().startswith("Lack")
