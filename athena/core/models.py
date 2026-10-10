@@ -419,7 +419,9 @@ class EvoPaper(Base):
     venue = Column(String, nullable=True)
     work_type = Column(String, nullable=True)
     authors = Column(JSONB, default=[])
-    cited_by_count = Column(Integer, default=0)
+    cited_by_count = Column(Integer, default=0)      # OpenAlex's count
+    s2_paper_id = Column(String, nullable=True, index=True)  # Semantic Scholar paperId
+    s2_cited_by_count = Column(Integer, nullable=True)       # often far higher for ML preprints
     primary_topic = Column(String, nullable=True)
     is_oa = Column(Boolean, default=False)
     oa_pdf_url = Column(String, nullable=True)

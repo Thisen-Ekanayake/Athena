@@ -33,6 +33,15 @@ class TopicConfig:
     year_min: int | None = None
     year_max: int | None = None
     max_papers: int = 1500
+    # Semantic Scholar fills the reference lists OpenAlex lacks (most recent arXiv preprints) and
+    # adds papers that pool papers cite but OpenAlex never linked to the seeds (QLoRA, DoRA).
+    s2: bool = True
+    # Papers matching the topic's name or aliases, most cited first. The seeds' citer lists cannot
+    # reach them: OpenAlex lists only citers it has references for, and Semantic Scholar lists the
+    # newest 10,000. Candidates found this way still need min_links links to join.
+    s2_search_max: int = 1000
+    s2_expand_min_citers: int = 3   # an outside paper needs this many pool papers citing it to be fetched
+    s2_expand_max: int = 1500       # fetch at most this many, the most cited by the pool first
     # Relevance: papers whose title (full weight) or abstract (half) mentions one of these are on-topic.
     # Off-topic papers stay in the graph as context, but cannot be milestones or on the main path.
     # Empty means every paper is on-topic.

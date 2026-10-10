@@ -131,29 +131,35 @@ def _merge_paper(oid: str, paper, existing: EvoPaper | None, now: datetime) -> d
     """Combine a build's view of a paper with what is stored; papers are shared across topics.
 
     Without this, the last topic built wins: building PEFT after object detection reset R-CNN's
-    seed-corrected year and arXiv ID. Seed metadata wins, the earliest credible year wins, and
-    links are only ever added.
+    seed-corrected year and arXiv ID. Seed metadata wins, then a year read from an arXiv ID (it records
+    first appearance exactly), then the earliest other year; links are only ever added.
     """
     w = paper.work
     title, year, year_source = w.title[:1000], paper.year, paper.year_source
     arxiv_id, oa_pdf_url, is_oa, abstract = w.arxiv_id, w.oa_pdf_url, w.is_oa, w.abstract
+    s2_paper_id, s2_cited_by_count = w.s2_paper_id, w.s2_cited_by_count
     status = None
     if existing is not None:
         if existing.year_source == "seed" and year_source != "seed":
             title, year, year_source = existing.title, existing.year, existing.year_source
-        elif year_source != "seed" and existing.year and (year is None or existing.year < year):
+        elif year_source in ("seed", "arxiv"):
+            pass
+        elif existing.year_source == "arxiv" or (existing.year and (year is None or existing.year < year)):
             year, year_source = existing.year, existing.year_source
         arxiv_id = arxiv_id or existing.arxiv_id
         oa_pdf_url = oa_pdf_url or existing.oa_pdf_url
         is_oa = bool(is_oa or existing.is_oa)
         abstract = abstract or existing.abstract
+        s2_paper_id = s2_paper_id or existing.s2_paper_id
+        s2_cited_by_count = s2_cited_by_count or existing.s2_cited_by_count
         if existing.full_text_status in ("parsed", "failed"):
             status = existing.full_text_status  # a later phase already processed the full text
     return {
         "id": existing.id if existing is not None else uuid4(), "openalex_id": oid, "doi": w.doi,
         "arxiv_id": arxiv_id, "title": title, "abstract": abstract, "year": year, "year_source": year_source,
         "openalex_year": w.year, "venue": w.venue, "work_type": w.work_type, "authors": w.authors,
-        "cited_by_count": w.cited_by_count, "primary_topic": w.primary_topic, "is_oa": is_oa,
+        "cited_by_count": w.cited_by_count, "s2_paper_id": s2_paper_id, "s2_cited_by_count": s2_cited_by_count,
+        "primary_topic": w.primary_topic, "is_oa": is_oa,
         "oa_pdf_url": oa_pdf_url,
         "full_text_status": status or ("available" if (arxiv_id or oa_pdf_url) else "unavailable"),
         "merged_ids": paper.merged_ids, "updated_at": now,
@@ -195,8 +201,8 @@ def save_topic_build(slug: str, corpus: "Corpus", scores: "TopicScores") -> None
         for chunk in _chunks(tp_rows):
             session.execute(insert(EvoTopicPaper).values(chunk))
 
-        cite_rows = [{"id": uuid4(), "citing_id": ids[a], "cited_id": ids[b], "source": "openalex"}
-                     for a, b in corpus.edges]
+        cite_rows = [{"id": uuid4(), "citing_id": ids[a], "cited_id": ids[b],
+                      "source": corpus.edge_sources.get((a, b), "openalex")} for a, b in corpus.edges]
         for chunk in _chunks(cite_rows):
             session.execute(insert(EvoCitation).values(chunk).on_conflict_do_nothing(constraint="uq_evo_citation"))
 
@@ -221,7 +227,7 @@ def _node(tp: EvoTopicPaper, p: EvoPaper, override: EvoMilestoneOverride | None)
         "year_source": p.year_source,
         "authors": (p.authors or [])[:3],
         "venue": p.venue,
-        "cited_by_count": p.cited_by_count,
+        "cited_by_count": max(p.cited_by_count or 0, p.s2_cited_by_count or 0),
         "kind": tp.kind,
         "role": tp.role,
         "named_method": tp.named_method,

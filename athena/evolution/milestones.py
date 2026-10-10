@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 from athena.evolution import graph as g
 from athena.evolution.config import TopicConfig
-from athena.evolution.corpus import Corpus
+from athena.evolution.corpus import Corpus, relevance
 
 _SURVEY = re.compile(r"\b(survey|review|overview|tutorial|primer|taxonomy)\b", re.IGNORECASE)
 _DATASET = re.compile(r"\b(dataset|data set|corpus|database)\b", re.IGNORECASE)
@@ -38,18 +38,6 @@ def classify_kind(title: str, work_type: str | None = None) -> str:
     if _BENCHMARK.search(title):
         return "benchmark"
     return "method"
-
-
-def relevance(title: str, abstract: str | None, keywords: list[str]) -> float:
-    """1.0 if the title mentions a topic keyword, 0.5 if only the abstract does, else 0."""
-    if not keywords:
-        return 1.0
-    words = [k.lower() for k in keywords]
-    if any(k in title.lower() for k in words):
-        return 1.0
-    if abstract and any(k in abstract.lower() for k in words):
-        return 0.5
-    return 0.0
 
 
 def named_method(title: str) -> str | None:
@@ -143,8 +131,8 @@ def score_topic(corpus: Corpus, config: TopicConfig) -> TopicScores:
     on_main = {pid for edge in main for pid in edge[:2]}
     flow = {pid: 0.0 for pid in corpus.papers} | g.node_flow(topic_graph)
 
-    citations = {pid: float(p.work.cited_by_count) for pid, p in corpus.papers.items()}
-    specificity = {pid: in_deg[pid] / max(p.work.cited_by_count, in_deg[pid], 1) for pid, p in corpus.papers.items()}
+    citations = {pid: float(p.work.citations) for pid, p in corpus.papers.items()}
+    specificity = {pid: in_deg[pid] / max(p.work.citations, in_deg[pid], 1) for pid, p in corpus.papers.items()}
     features = {
         "citations": g.cohort_scaled(citations, years),
         "in_degree": g.count_scaled({pid: float(d) for pid, d in in_deg.items()}),

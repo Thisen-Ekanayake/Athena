@@ -30,6 +30,7 @@ from athena.core.config_store import get_setting
 BASE_URL = "https://api.openalex.org"
 PER_PAGE = 200
 IDS_PER_FILTER = 100
+DOIS_PER_FILTER = 50
 CACHE_TTL_SECONDS = 30 * 24 * 3600
 WORK_FIELDS = ",".join([
     "id", "doi", "display_name", "publication_year", "type", "cited_by_count", "referenced_works",
@@ -104,6 +105,15 @@ class Work:
     oa_pdf_url: str | None = None
     primary_topic: str | None = None
     field_name: str | None = None
+    # Filled from Semantic Scholar by ``athena.evolution.corpus.augment_with_s2``.
+    s2_paper_id: str | None = None
+    s2_cited_by_count: int | None = None
+    s2_refs: list[str] = field(default_factory=list)  # OpenAlex IDs of references found through Semantic Scholar
+
+    @property
+    def citations(self) -> int:
+        """Global citations: the larger of the two sources' counts, since each misses some."""
+        return max(self.cited_by_count, self.s2_cited_by_count or 0)
 
     @classmethod
     def from_api(cls, raw: dict) -> "Work":
@@ -165,6 +175,17 @@ class OpenAlexClient:
         for start in range(0, len(unique), IDS_PER_FILTER):
             chunk = unique[start:start + IDS_PER_FILTER]
             data = self._get("/works", {"filter": "openalex:" + "|".join(chunk), "per-page": IDS_PER_FILTER,
+                                        "select": WORK_FIELDS})
+            works += [Work.from_api(raw) for raw in data.get("results", [])]
+        return works
+
+    def get_works_by_doi(self, dois: list[str]) -> list[Work]:
+        """Many works by DOI, 50 per list call (DOIs are long, so fewer fit in a URL than IDs)."""
+        works: list[Work] = []
+        unique = list(dict.fromkeys(d.lower() for d in dois if d))
+        for start in range(0, len(unique), DOIS_PER_FILTER):
+            chunk = unique[start:start + DOIS_PER_FILTER]
+            data = self._get("/works", {"filter": "doi:" + "|".join(chunk), "per-page": DOIS_PER_FILTER,
                                         "select": WORK_FIELDS})
             works += [Work.from_api(raw) for raw in data.get("results", [])]
         return works

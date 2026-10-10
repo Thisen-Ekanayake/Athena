@@ -96,3 +96,32 @@ class TestDuplicatesAndYears:
     def test_citer_bound_needs_two_citers_and_ignores_one_outlier(self):
         assert _citer_bound([2012]) is None
         assert _citer_bound([2012] + [2016] * 40) == 2016
+
+
+class TestStoredYearMerge:
+    """Papers are shared across topics, so a build merges its view with the stored row."""
+
+    def merged(self, new_year, new_source, old_year, old_source):
+        from types import SimpleNamespace
+
+        from athena.database.evolution import _merge_paper
+        from athena.evolution.corpus import CorpusPaper
+        paper = CorpusPaper(work=work("W1", year=new_year), year=new_year, year_source=new_source, role="core")
+        existing = SimpleNamespace(id="x", title="Old", year=old_year, year_source=old_source, arxiv_id=None,
+                                   oa_pdf_url=None, is_oa=False, abstract=None, s2_paper_id=None,
+                                   s2_cited_by_count=None, full_text_status="available")
+        row = _merge_paper("W1", paper, existing, now=None)
+        return row["year"], row["year_source"]
+
+    def test_seed_year_is_kept(self):
+        assert self.merged(2016, "openalex", 2015, "seed") == (2015, "seed")
+
+    def test_arxiv_year_replaces_an_earlier_citer_guess(self):
+        # A revised 2023 preprint "citing" DoRA once dated it 2023; its arXiv ID says 2024.
+        assert self.merged(2024, "arxiv", 2023, "citers") == (2024, "arxiv")
+
+    def test_arxiv_year_is_kept_over_a_later_guess(self):
+        assert self.merged(2022, "citers", 2024, "arxiv") == (2024, "arxiv")
+
+    def test_otherwise_the_earliest_year_wins(self):
+        assert self.merged(2018, "openalex", 2017, "citers") == (2017, "citers")
