@@ -498,3 +498,64 @@ class EvoMilestoneOverride(Base):
     action = Column(String, nullable=False)  # pin | unpin
     note = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class EvoSection(Base):
+    """A section of a Tier 2 paper's full text, parsed by GROBID."""
+    __tablename__ = "evo_sections"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    position = Column(Integer, nullable=False)       # order in the paper; the abstract comes first
+    heading = Column(String, nullable=False)
+    number = Column(String, nullable=True)           # "3.2", as GROBID read it
+    section_type = Column(String, nullable=False)    # see athena.evolution.tei.SECTION_TYPES
+    rule_type = Column(String, nullable=True)        # the heading rule's answer before inheritance
+    n_sentences = Column(Integer, default=0)
+
+
+class EvoChunk(Base):
+    """About 300 words of one section. The id doubles as the point id in Qdrant's paper_chunks."""
+    __tablename__ = "evo_chunks"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    section_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_sections.id", ondelete="CASCADE"), nullable=False)
+    position = Column(Integer, nullable=False)       # order within the paper
+    section_type = Column(String, nullable=False)
+    text = Column(String, nullable=False)            # without the title and heading prefix added for embedding
+    n_words = Column(Integer, default=0)
+    embedded_at = Column(DateTime(timezone=True), nullable=True)  # null: waiting for the GPU lane
+
+
+class EvoCitationContext(Base):
+    """A sentence in which citing_id cites cited_id, and what the classifier said about it.
+
+    A strict gap -> resolution link is a context whose label states a limitation of the cited
+    paper (addresses_limitation or criticises) and whose problem is attributed to the cited
+    paper's own method (``attributed``).
+    """
+    __tablename__ = "evo_citation_contexts"
+    __table_args__ = (
+        UniqueConstraint("citing_id", "cited_id", "sentence_hash", name="uq_evo_citation_context"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    citing_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    cited_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    source = Column(String, nullable=False)          # grobid | s2
+    section_type = Column(String, nullable=True)     # unknown for Semantic Scholar contexts
+    sentence = Column(String, nullable=False)
+    sentence_hash = Column(String, nullable=False)
+    marked = Column(String, nullable=True)           # the sentence with the cited paper's markers in [[ ]]
+    mention = Column(String, nullable=True)          # the word right before the citation marker ("LoRA")
+    cues = Column(JSONB, default=[])                 # contrast and limitation cue words in the sentence
+    s2_intents = Column(JSONB, default=[])
+    label = Column(String, nullable=True)            # Task B label; null until classified
+    attributed = Column(Boolean, nullable=True)      # asked only for limitation labels
+    model = Column(String, nullable=True)
+    labelled_at = Column(DateTime(timezone=True), nullable=True)

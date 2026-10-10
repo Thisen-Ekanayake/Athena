@@ -57,6 +57,8 @@ class TopicConfig:
     # Membership is a yes/no that favoured mid-tier papers on long paths; the flow weight replaces it.
     main_path_min_score: float | None = None
     key_routes: int = 3                # top-SPC edges the key-route main path starts from
+    # Tier 2 (full text): milestones, main-path papers and this many of each milestone's strongest citers
+    tier2_successors: int = 8
 
     @classmethod
     def from_dict(cls, data: dict | None) -> "TopicConfig":
