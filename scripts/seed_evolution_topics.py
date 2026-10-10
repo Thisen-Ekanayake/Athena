@@ -38,9 +38,12 @@ TOPICS = [
             {"arxiv_id": "2110.04366", "title": "Towards a Unified View of Parameter-Efficient Transfer Learning",
              "year": 2021},
         ],
-        "config": {"keywords": ["parameter-efficient", "parameter efficient", "fine-tun", "finetun", "adapter",
-                                "low-rank adaptation", "lora", "prompt tuning", "prefix-tuning", "prefix tuning",
-                                "delta tuning", "peft"]},
+        # Specific to PEFT on purpose: "fine-tun" on its own made R-CNN, T5, PaLM and ControlNet
+        # milestones, since their abstracts mention fine-tuning.
+        "config": {"keywords": ["parameter-efficient", "parameter efficient", "efficient fine-tun",
+                                "efficient finetun", "adapter", "low-rank adaptation", "low rank adaptation", "lora",
+                                "prompt tuning", "prompt-tuning", "prefix-tuning", "prefix tuning", "p-tuning",
+                                "soft prompt", "delta tuning", "peft", "bitfit", "side-tuning", "side tuning"]},
     },
     {
         "slug": "object-detection",
