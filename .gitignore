@@ -159,3 +159,6 @@ athena_data_acquisition_plan.docx
 *.txt
 *.sh
 *.md
+
+models/
+scripts/evolution_bench/out/
