@@ -78,6 +78,19 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
+  # Optional read-only copy of the research-evolution graph (athena/evolution/neo4j_export.py).
+  # Not started by default: docker compose -f docker/docker-compose.yml --profile graph up -d neo4j
+  neo4j:
+    image: neo4j:5.26-community
+    profiles: ["graph"]
+    environment:
+      NEO4J_AUTH: neo4j/athena_graph
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+
 volumes:
   # Explicit names pin the data to these exact volumes regardless of the Compose
   # project name / launch directory, so the stack can never silently start
@@ -90,3 +103,5 @@ volumes:
     name: docker_redis_data
   athena_staging:
     name: docker_athena_staging
+  neo4j_data:
+    name: docker_neo4j_data
