@@ -30,6 +30,7 @@ from athena.core.config_store import get_setting
 LABELS = ["addresses_limitation", "criticises", "extends_or_uses", "compares", "background"]
 LIMITATION_LABELS = {"addresses_limitation", "criticises"}
 SYSTEM_PROMPT = "You classify text from research papers. Reply with JSON only."
+THINK_TOKENS = 900  # the server caps thinking at 512 tokens (--reasoning-budget); the answer follows
 
 
 _MARK_NOTE = "The citation of the cited paper is marked [[like this]].\n"
@@ -97,21 +98,40 @@ class Verdict:
         return self.label in LIMITATION_LABELS and self.attributed is True
 
 
+def managed_servers() -> bool:
+    """True when the lane runs its own llama-server (the default); False for any OpenAI-compatible endpoint.
+
+    With EVOLUTION_MANAGED_SERVERS=false, EVOLUTION_CHAT_URL and EVOLUTION_EMBED_URL point at another
+    service (without the trailing /v1), EVOLUTION_API_KEY is sent as a bearer token, and nothing
+    llama.cpp-specific is sent to it.
+    """
+    return get_setting("EVOLUTION_MANAGED_SERVERS", "true").strip().lower() not in ("false", "0", "no")
+
+
+def auth_headers() -> dict:
+    key = get_setting("EVOLUTION_API_KEY")
+    return {"Authorization": f"Bearer {key}"} if key else {}
+
+
 class Classifier:
-    def __init__(self, base_url: str | None = None, model: str | None = None, http: httpx.Client | None = None):
+    def __init__(self, base_url: str | None = None, model: str | None = None, http: httpx.Client | None = None,
+                 local: bool | None = None):
         self.base_url = (base_url or get_setting("EVOLUTION_CHAT_URL", "http://127.0.0.1:8080")).rstrip("/")
         self.model = model or get_setting("EVOLUTION_CHAT_MODEL_NAME", "qwen3.5-9b")
-        self.http = http or httpx.Client(timeout=300.0)
+        self.local = managed_servers() if local is None else local
+        self.http = http or httpx.Client(timeout=900.0, headers=auth_headers())
 
-    def ask(self, prompt: str, schema: dict, name: str) -> dict | None:
+    def ask(self, prompt: str, schema: dict, name: str, think: bool = False) -> dict | None:
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
             "temperature": 0,
-            "max_tokens": 64,
+            "max_tokens": THINK_TOKENS if think else 64,
             "response_format": {"type": "json_schema", "json_schema": {"name": name, "schema": schema}},
-            "chat_template_kwargs": {"enable_thinking": False},
         }
+        if self.local:
+            # Qwen's chat template switches thinking per request; other servers may reject the field.
+            payload["chat_template_kwargs"] = {"enable_thinking": think}
         resp = self.http.post(f"{self.base_url}/v1/chat/completions", json=payload)
         resp.raise_for_status()
         content = resp.json()["choices"][0]["message"].get("content") or ""

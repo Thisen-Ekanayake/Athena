@@ -33,12 +33,13 @@ from athena.core.models import EvoTopic
 from athena.database import evolution as db
 from athena.database.db import SessionLocal
 from athena.evolution import vectors
-from athena.evolution.classify import Classifier
+from athena.evolution.classify import Classifier, auth_headers, managed_servers
 from athena.evolution.gaps import build_themes
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # Phase 0: throughput is the same with one slot as with eight, and every input must fit one ubatch.
 MAX_CHUNK_TOKENS = 900
+EXTERNAL_MAX_WORDS = 600  # without a tokenizer endpoint, a word cap well inside common 8k contexts
 EMBED_BATCH = 8
 FETCH = 256
 # Loose links (Phase 3): a gap statement against later papers' abstract, introduction and method chunks.
@@ -72,7 +73,14 @@ def _served_model(url: str) -> str:
 
 @contextmanager
 def llama_server(url: str, model: Path, args: list[str], log_name: str):
-    """Run llama-server for the duration of the block, or reuse one already serving ``model``."""
+    """Run llama-server for the duration of the block, or reuse one already serving ``model``.
+
+    With external endpoints (EVOLUTION_MANAGED_SERVERS=false) nothing is started.
+    """
+    if not managed_servers():
+        logger.info(f"Using the external endpoint at {url}")
+        yield
+        return
     if _healthy(url):
         served = _served_model(url)
         if served and model.stem.lower() not in served.lower() and model.name.lower() not in served.lower():
@@ -128,7 +136,13 @@ def chat_server():
 
 
 def _fit(http: httpx.Client, url: str, text: str) -> tuple[str, bool]:
-    """Trim ``text`` until it fits MAX_CHUNK_TOKENS. Formula-heavy text runs near four tokens a word."""
+    """Trim ``text`` until it fits MAX_CHUNK_TOKENS. Formula-heavy text runs near four tokens a word.
+
+    External endpoints have no /tokenize, so there the text is cut at a word count instead.
+    """
+    if not managed_servers():
+        words = text.split()
+        return " ".join(words[:EXTERNAL_MAX_WORDS]), len(words) > EXTERNAL_MAX_WORDS
     trimmed = False
     while True:
         tokens = len(http.post(f"{url}/tokenize", json={"content": text}).json()["tokens"])
@@ -140,10 +154,17 @@ def _fit(http: httpx.Client, url: str, text: str) -> tuple[str, bool]:
 
 
 def _embed(http: httpx.Client, url: str, texts: list[str]) -> np.ndarray:
-    resp = http.post(f"{url}/v1/embeddings", json={"input": texts})
+    body: dict = {"input": texts, "model": get_setting("EVOLUTION_EMBED_MODEL_NAME", "qwen3-embedding-8b")}
+    if get_setting("EVOLUTION_EMBED_DIMENSIONS"):  # OpenAI's text-embedding-3 models shorten vectors themselves
+        body["dimensions"] = int(get_setting("EVOLUTION_EMBED_DIMENSIONS"))
+    resp = http.post(f"{url}/v1/embeddings", json=body)
     resp.raise_for_status()
     data = sorted(resp.json()["data"], key=lambda d: d["index"])
-    return vectors.truncate(np.asarray([d["embedding"] for d in data]))
+    raw = np.asarray([d["embedding"] for d in data])
+    if raw.shape[1] < vectors.DIM:
+        raise ValueError(f"The embedding model returns {raw.shape[1]} dimensions; the collections need at least "
+                         f"{vectors.DIM}. Use a model with more, or rebuild the collections for this one.")
+    return vectors.truncate(raw)
 
 
 def _embed_chunks(http: httpx.Client, url: str, session, limit: int | None) -> dict:
@@ -221,7 +242,7 @@ def embed_pending(limit: int | None = None) -> dict:
     """Embed chunks and gap statements that have no vector yet, then search loose links."""
     vectors.ensure_collection()
     url, server = embed_server()
-    with server, httpx.Client(timeout=600.0) as http, SessionLocal() as session:
+    with server, httpx.Client(timeout=600.0, headers=auth_headers()) as http, SessionLocal() as session:
         summary = _embed_chunks(http, url, session, limit)
         if limit is None:
             summary["gaps_embedded"] = _embed_gaps(http, url, session)

@@ -197,3 +197,50 @@ class TestMethodNames:
         assert detect_method_name(self.pairs(*["deep CNN"] * 30), "ImageNet Classification", 40) is None
         # Used by too small a share of the citing papers.
         assert detect_method_name(self.pairs(*["with YOLO"] * 4), "You Only Look Once", 30) is None
+
+
+class TestExternalEndpoints:
+    """Bring-your-own-model: any OpenAI-compatible service instead of the local llama-server."""
+
+    def test_nothing_llama_specific_goes_to_an_external_chat_endpoint(self):
+        seen = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={"choices": [{"message": {"content": '{"label": "background"}'}}]})
+
+        http = httpx.Client(headers={"Authorization": "Bearer k"}, transport=httpx.MockTransport(handler))
+        Classifier(base_url="https://api.example.com", model="gpt-x", http=http, local=False).classify(
+            "QLoRA", "LoRA", "We build on LoRA.")
+        body = json.loads(seen[0].content)
+        assert "chat_template_kwargs" not in body and body["model"] == "gpt-x"
+        assert seen[0].url == "https://api.example.com/v1/chat/completions"
+        assert seen[0].headers["authorization"] == "Bearer k"
+
+    def test_embeddings_are_cut_to_1024_dimensions_and_short_ones_are_refused(self, monkeypatch):
+        import numpy as np
+        import pytest
+
+        from athena.evolution import gpu
+        settings = {"EVOLUTION_EMBED_MODEL_NAME": "text-embedding-3-large", "EVOLUTION_EMBED_DIMENSIONS": "1024"}
+        monkeypatch.setattr(gpu, "get_setting", lambda key, default="": settings.get(key, default))
+        sizes = iter([3072, 768])
+        bodies = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            bodies.append(json.loads(request.content))
+            n = next(sizes)
+            return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0] * n}]})
+
+        http = httpx.Client(transport=httpx.MockTransport(handler))
+        vec = gpu._embed(http, "https://api.example.com", ["a gap"])
+        assert vec.shape == (1, 1024) and np.isclose(np.linalg.norm(vec[0]), 1.0)
+        assert bodies[0] == {"input": ["a gap"], "model": "text-embedding-3-large", "dimensions": 1024}
+        with pytest.raises(ValueError, match="768 dimensions"):
+            gpu._embed(http, "https://api.example.com", ["a gap"])
+
+    def test_external_text_is_cut_by_words(self, monkeypatch):
+        from athena.evolution import gpu
+        monkeypatch.setattr(gpu, "managed_servers", lambda: False)
+        text, cut = gpu._fit(None, "https://api.example.com", "word " * 700)
+        assert cut and len(text.split()) == gpu.EXTERNAL_MAX_WORDS
