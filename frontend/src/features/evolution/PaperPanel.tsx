@@ -1,0 +1,174 @@
+import { useState } from 'react'
+import { ExternalLink, Loader2, Pin, PinOff, RotateCcw, X } from 'lucide-react'
+import { usePaperDetail, useSetMilestone, type EvolutionNode } from './api'
+
+interface PaperPanelProps {
+  slug: string
+  paperId: string
+  onSelect: (id: string) => void
+  onClose: () => void
+}
+
+const SCORE_LABELS: Record<string, string> = {
+  citations: 'Citations for its years',
+  in_degree: 'Cited within the topic',
+  pagerank: 'Graph importance',
+  flow: 'Citation paths through it',
+  relevance: 'Topic keywords',
+  specificity: 'Share of citations from the topic',
+  named_method: 'Named method',
+}
+
+const YEAR_SOURCE: Record<string, string> = {
+  seed: 'from the topic seeds',
+  arxiv: 'from its arXiv ID',
+  citers: 'inferred from when it was first cited',
+  openalex: 'from OpenAlex',
+}
+
+export function PaperPanel({ slug, paperId, onSelect, onClose }: PaperPanelProps) {
+  const { data: paper, isLoading, error } = usePaperDetail(slug, paperId)
+  const setMilestone = useSetMilestone(slug)
+  const [note, setNote] = useState('')
+  const [showAbstract, setShowAbstract] = useState(false)
+
+  if (isLoading) {
+    return (
+      <aside className="glass-base rounded-xl border border-border-subtle p-5 flex items-center gap-2 text-sm text-text-muted">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading paper…
+      </aside>
+    )
+  }
+  if (error || !paper) {
+    return (
+      <aside className="glass-base rounded-xl border border-border-subtle p-5 text-sm text-text-muted">
+        This paper could not be loaded.
+      </aside>
+    )
+  }
+
+  const status = paper.milestone_override === 'pin'
+    ? 'Milestone (pinned by you)'
+    : paper.milestone_override === 'unpin'
+      ? 'Not a milestone (unpinned by you)'
+      : paper.is_milestone ? 'Milestone (picked automatically)' : 'Not a milestone'
+
+  const act = (action: 'pin' | 'unpin' | 'reset') =>
+    setMilestone.mutate({ paperId: paper.id, action, note: note.trim() || undefined })
+
+  return (
+    <aside className="glass-base rounded-xl border border-border-subtle p-5 flex flex-col gap-4 text-sm">
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="font-display font-bold text-base text-text-primary leading-snug">{paper.title}</h3>
+        <button onClick={onClose} className="p-1 -m-1 text-text-muted hover:text-text-primary" aria-label="Close paper details">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 text-[13px]">
+        <dt className="text-text-muted">Year</dt>
+        <dd className="text-text-secondary tabular-nums">
+          {paper.year ?? 'unknown'}
+          {paper.year_source && <span className="text-text-muted"> · {YEAR_SOURCE[paper.year_source] ?? paper.year_source}</span>}
+        </dd>
+        {paper.authors.length > 0 && (
+          <>
+            <dt className="text-text-muted">Authors</dt>
+            <dd className="text-text-secondary">{paper.authors.join(', ')}{paper.authors.length >= 3 ? ' et al.' : ''}</dd>
+          </>
+        )}
+        {paper.venue && (
+          <>
+            <dt className="text-text-muted">Venue</dt>
+            <dd className="text-text-secondary">{paper.venue}</dd>
+          </>
+        )}
+        <dt className="text-text-muted">Citations</dt>
+        <dd className="text-text-secondary tabular-nums">
+          {paper.cited_by_count.toLocaleString()} overall · {paper.in_degree} within this topic
+        </dd>
+        <dt className="text-text-muted">Full text</dt>
+        <dd className="text-text-secondary">{paper.full_text_status === 'unavailable' ? 'Not openly available' : 'Openly available'}</dd>
+      </dl>
+
+      <a href={paper.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-accent-secondary hover:underline text-[13px]">
+        Open paper <ExternalLink className="w-3.5 h-3.5" />
+      </a>
+
+      {paper.abstract && (
+        <div>
+          <button onClick={() => setShowAbstract(!showAbstract)} className="text-[12px] font-medium text-text-muted hover:text-text-primary">
+            {showAbstract ? 'Hide abstract' : 'Show abstract'}
+          </button>
+          {showAbstract && <p className="mt-2 text-[13px] text-text-secondary leading-relaxed">{paper.abstract}</p>}
+        </div>
+      )}
+
+      <section className="flex flex-col gap-2">
+        <div className="flex items-baseline justify-between">
+          <h4 className="text-[11px] font-display font-bold tracking-[0.12em] uppercase text-text-muted">Milestone score</h4>
+          <span className="font-mono text-accent-primary tabular-nums">{paper.milestone_score.toFixed(2)}</span>
+        </div>
+        {Object.entries(paper.score_detail)
+          .filter(([, value]) => value > 0)
+          .sort(([, a], [, b]) => b - a)
+          .map(([key, value]) => (
+            <div key={key} className="grid grid-cols-[1fr_5rem] items-center gap-2 text-[12px]">
+              <span className="text-text-secondary">{SCORE_LABELS[key] ?? key}</span>
+              <span className="h-1.5 rounded-full bg-border-subtle overflow-hidden">
+                <span className="block h-full bg-accent-primary" style={{ width: `${Math.min(100, value * 400)}%` }} />
+              </span>
+            </div>
+          ))}
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <h4 className="text-[11px] font-display font-bold tracking-[0.12em] uppercase text-text-muted">{status}</h4>
+        <input
+          id="milestone-note"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          maxLength={500}
+          placeholder={paper.override_note ?? 'Why? (optional note)'}
+          className="w-full px-3 py-2 rounded-md border border-border-subtle bg-glass-fill text-text-primary placeholder:text-text-ghost text-[13px] focus:outline-none focus:border-accent-primary/60"
+        />
+        <div className="flex flex-wrap gap-2">
+          {!paper.is_milestone && (
+            <button onClick={() => act('pin')} disabled={setMilestone.isPending} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-accent-primary/15 border border-accent-primary/30 text-text-primary text-[12px] hover:bg-accent-primary/25">
+              <Pin className="w-3.5 h-3.5" /> Pin as milestone
+            </button>
+          )}
+          {paper.is_milestone && (
+            <button onClick={() => act('unpin')} disabled={setMilestone.isPending} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border-subtle text-text-secondary text-[12px] hover:text-text-primary">
+              <PinOff className="w-3.5 h-3.5" /> Remove milestone
+            </button>
+          )}
+          {paper.milestone_override && (
+            <button onClick={() => act('reset')} disabled={setMilestone.isPending} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border-subtle text-text-secondary text-[12px] hover:text-text-primary">
+              <RotateCcw className="w-3.5 h-3.5" /> Back to automatic
+            </button>
+          )}
+        </div>
+        {setMilestone.isError && <p className="text-[12px] text-accent-critical">Saving failed. Check that the API is running and try again.</p>}
+      </section>
+
+      <Lineage title="Builds on" papers={paper.builds_on} onSelect={onSelect} />
+      <Lineage title="Built upon by" papers={paper.built_upon_by} onSelect={onSelect} />
+    </aside>
+  )
+}
+
+function Lineage({ title, papers, onSelect }: { title: string; papers: EvolutionNode[]; onSelect: (id: string) => void }) {
+  if (papers.length === 0) return null
+  return (
+    <section className="flex flex-col gap-1.5">
+      <h4 className="text-[11px] font-display font-bold tracking-[0.12em] uppercase text-text-muted">{title}</h4>
+      {papers.map((p) => (
+        <button key={p.id} onClick={() => onSelect(p.id)} className="text-left text-[12px] text-text-secondary hover:text-text-primary flex gap-2">
+          <span className="font-mono text-text-muted tabular-nums shrink-0">{p.year ?? '—'}</span>
+          <span className={p.is_milestone ? 'text-text-primary' : ''}>{p.title}</span>
+        </button>
+      ))}
+    </section>
+  )
+}
