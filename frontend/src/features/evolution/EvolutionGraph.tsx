@@ -84,6 +84,7 @@ function themeColors() {
   return {
     milestone: read('--color-accent-primary', '#4c5fff'),
     path: read('--color-accent-tertiary', '#38c5d4'),
+    strict: read('--color-accent-critical', '#e05a6b'),
     seed: read('--color-accent-warning', '#e0a94b'),
     node: read('--text-muted', 'rgba(120, 135, 185, 0.55)'),
     edge: read('--text-ghost', 'rgba(90, 105, 160, 0.40)'),
@@ -148,7 +149,21 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
         opacity: 0.9,
       },
     },
+    {
+      // Strict gap -> resolution link: shown whether or not all citations are.
+      selector: 'edge.strict',
+      style: {
+        'curve-style': 'straight',
+        width: 1.8,
+        'line-color': c.strict,
+        'target-arrow-shape': 'triangle',
+        'target-arrow-color': c.strict,
+        'arrow-scale': 0.8,
+        opacity: 0.9,
+      },
+    },
     { selector: 'edge.highlighted', style: { 'line-color': c.milestone, width: 1.5, opacity: 0.85 } },
+    { selector: 'edge.strict.highlighted', style: { 'line-color': c.strict, width: 2.5, opacity: 1 } },
     { selector: 'edge.faded', style: { opacity: 0.03 } },
   ]
 }
@@ -189,7 +204,7 @@ export function EvolutionGraph({ nodes, edges, selectedId, onSelect, showCitatio
         .map((e) => ({
           group: 'edges' as const,
           data: { id: `${e.target}->${e.source}`, source: e.target, target: e.source },
-          classes: e.main_path ? 'main-path' : '',
+          classes: [e.main_path && 'main-path', e.strict && 'strict'].filter(Boolean).join(' '),
         })),
     ]
     const cy = cytoscape({

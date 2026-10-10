@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ExternalLink, Loader2, Pin, PinOff, RotateCcw, X } from 'lucide-react'
-import { usePaperDetail, useSetMilestone, type EvolutionNode } from './api'
+import { usePaperDetail, useSetMilestone, type EvolutionNode, type StrictLink } from './api'
 
 interface PaperPanelProps {
   slug: string
@@ -88,7 +88,7 @@ export function PaperPanel({ slug, paperId, onSelect, onClose }: PaperPanelProps
           {paper.cited_by_count.toLocaleString()} overall · {paper.in_degree} within this topic
         </dd>
         <dt className="text-text-muted">Full text</dt>
-        <dd className="text-text-secondary">{paper.full_text_status === 'unavailable' ? 'Not openly available' : 'Openly available'}</dd>
+        <dd className="text-text-secondary">{fullTextLabel(paper)}</dd>
       </dl>
 
       <a href={paper.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-accent-secondary hover:underline text-[13px]">
@@ -152,6 +152,19 @@ export function PaperPanel({ slug, paperId, onSelect, onClose }: PaperPanelProps
         {setMilestone.isError && <p className="text-[12px] text-accent-critical">Saving failed. Check that the API is running and try again.</p>}
       </section>
 
+      <Links
+        title="Limitations it takes on"
+        hint="Earlier papers whose limitation this paper states, in its own words."
+        links={paper.addresses}
+        onSelect={onSelect}
+      />
+      <Links
+        title="Its limitations, taken on later"
+        hint="Later papers stating a limitation of this one."
+        links={paper.addressed_by}
+        onSelect={onSelect}
+      />
+
       <Lineage title="Builds on" papers={paper.builds_on} onSelect={onSelect} />
       <Lineage title="Built upon by" papers={paper.built_upon_by} onSelect={onSelect} />
     </aside>
@@ -168,6 +181,59 @@ function Lineage({ title, papers, onSelect }: { title: string; papers: Evolution
           <span className="font-mono text-text-muted tabular-nums shrink-0">{p.year ?? '—'}</span>
           <span className={p.is_milestone ? 'text-text-primary' : ''}>{p.title}</span>
         </button>
+      ))}
+    </section>
+  )
+}
+
+const SECTION_NAMES: Record<string, string> = {
+  abstract: 'abstract',
+  intro: 'introduction',
+  related_work: 'related work',
+  method: 'method',
+  results: 'results',
+  discussion: 'discussion',
+  limitations: 'limitations',
+  conclusion: 'conclusion',
+  future_work: 'future work',
+  other: 'other section',
+}
+
+function fullTextLabel(paper: { full_text_status: string; full_text: { status?: string; sections?: number } }) {
+  if (paper.full_text.status === 'parsed') return `Parsed, ${paper.full_text.sections ?? 0} sections`
+  if (paper.full_text.status === 's2_contexts') return 'Not openly available; citing sentences from Semantic Scholar'
+  if (paper.full_text_status === 'failed') return 'Could not be parsed'
+  return paper.full_text_status === 'unavailable' ? 'Not openly available' : 'Openly available'
+}
+
+function Links({ title, hint, links, onSelect }: {
+  title: string
+  hint: string
+  links: StrictLink[]
+  onSelect: (id: string) => void
+}) {
+  if (links.length === 0) return null
+  return (
+    <section className="flex flex-col gap-2">
+      <h4 className="text-[11px] font-display font-bold tracking-[0.12em] uppercase text-text-muted" title={hint}>{title}</h4>
+      {links.map(({ paper, evidence }) => (
+        <div key={paper.id} className="flex flex-col gap-1">
+          <button onClick={() => onSelect(paper.id)} className="text-left text-[12px] text-text-primary hover:text-accent-primary flex gap-2">
+            <span className="font-mono text-text-muted tabular-nums shrink-0">{paper.year ?? '—'}</span>
+            <span>{paper.named_method ? `${paper.named_method}: ` : ''}{paper.title}</span>
+          </button>
+          {evidence.slice(0, 2).map((e, i) => (
+            <blockquote key={i} className="ml-[2.6rem] pl-2 border-l-2 border-accent-critical/60 text-[12px] text-text-secondary leading-relaxed">
+              {e.sentence}
+              <span className="block mt-0.5 text-[10px] font-mono uppercase text-text-muted">
+                {e.label === 'addresses_limitation' ? 'claims a fix' : 'states a limitation'}
+                {e.section_type ? ` · ${SECTION_NAMES[e.section_type] ?? e.section_type}` : ''}
+                {e.source === 's2' ? ' · via Semantic Scholar' : ''}
+              </span>
+            </blockquote>
+          ))}
+          {evidence.length > 2 && <span className="ml-[2.6rem] text-[11px] text-text-muted">and {evidence.length - 2} more sentences</span>}
+        </div>
       ))}
     </section>
   )

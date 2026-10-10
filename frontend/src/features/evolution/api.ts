@@ -46,6 +46,8 @@ export interface EvolutionEdge {
   source: string // citing paper
   target: string // cited paper
   main_path: boolean
+  strict: boolean // a citing sentence states a limitation of the cited paper, attributed to its own method
+  fixes: boolean // ...and claims to fix it
 }
 
 export interface EvolutionGraph {
@@ -53,6 +55,7 @@ export interface EvolutionGraph {
   nodes: EvolutionNode[]
   edges: EvolutionEdge[]
   total_papers: number
+  strict_links: number
   year_range: [number, number] | null
 }
 
@@ -60,6 +63,18 @@ export interface EvolutionTimeline {
   topic: EvolutionTopic
   years: { year: number; papers: EvolutionNode[] }[]
   without_full_text: EvolutionNode[]
+}
+
+export interface LinkEvidence {
+  sentence: string
+  section_type: string | null
+  label: 'addresses_limitation' | 'criticises'
+  source: 'grobid' | 's2'
+}
+
+export interface StrictLink {
+  paper: EvolutionNode
+  evidence: LinkEvidence[]
 }
 
 export interface EvolutionPaperDetail extends EvolutionNode {
@@ -70,6 +85,9 @@ export interface EvolutionPaperDetail extends EvolutionNode {
   merged_ids: string[]
   builds_on: EvolutionNode[]
   built_upon_by: EvolutionNode[]
+  addresses: StrictLink[] // earlier papers whose stated limitation this one takes on
+  addressed_by: StrictLink[] // later papers that take on this one's limitations
+  full_text: { status?: 'parsed' | 'failed' | 's2_contexts'; sections?: number; contexts?: number; error?: string }
 }
 
 export type TopicSearchResult =

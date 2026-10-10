@@ -234,6 +234,10 @@ function Legend() {
       {item('bg-accent-primary', 'Milestone')}
       {item('border-2 border-accent-tertiary', 'On the main path')}
       {item('border-2 border-accent-warning', 'Seed paper')}
+      <span className="flex items-center gap-1.5">
+        <span className="inline-block w-4 h-0.5 bg-accent-critical" />
+        Takes on a stated limitation
+      </span>
     </span>
   )
 }
