@@ -841,7 +841,7 @@ def topic_gaps(session: Session, topic: EvoTopic, examples: int = 3) -> dict:
         })
     order = {"persisting": 0, "addressed": 1, "quiet": 2}
     out.sort(key=lambda t: (order.get(t["status"], 3), -t["size"]))
-    latest = max((t["detail"] or {}).get("latest_topic_year") or 0 for t in themes) if themes else None
+    latest = max((t.detail or {}).get("latest_topic_year") or 0 for t in themes) if themes else None
     return {"topic": topic_summary(topic), "latest_year": latest or None, "themes": out,
             "loose_min_score": LOOSE_MIN_SCORE}
 
