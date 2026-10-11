@@ -17,11 +17,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from athena.evolution import graph as g
 from athena.evolution.config import TopicConfig
 from athena.evolution.corpus import Corpus, relevance
 from athena.evolution.names import NAME_TOKEN
+
+if TYPE_CHECKING:
+    from athena.evolution.membership import Membership
 
 _SURVEY = re.compile(r"\b(survey|review|overview|tutorial|primer|taxonomy)\b", re.IGNORECASE)
 _DATASET = re.compile(r"\b(dataset|data set|corpus|database)\b", re.IGNORECASE)
@@ -118,12 +122,14 @@ def select_milestones(scores: dict[str, PaperScore], years: dict[str, int | None
     return picked
 
 
-def score_topic(corpus: Corpus, config: TopicConfig) -> TopicScores:
+def score_topic(corpus: Corpus, config: TopicConfig, membership: "Membership | None" = None) -> TopicScores:
+    """Scores and milestones. ``membership`` says which papers are on-topic; keywords decide without it."""
     years = {pid: p.year for pid, p in corpus.papers.items()}
     cg = g.build_graph(corpus.papers, corpus.edges, years)
     in_deg, out_deg = g.degrees(cg)
     pagerank = g.pagerank(cg)
-    rel = {pid: relevance(p.title, p.work.abstract, config.keywords) for pid, p in corpus.papers.items()}
+    rel = membership.relevance if membership is not None else {
+        pid: relevance(p.title, p.work.abstract, config.keywords) for pid, p in corpus.papers.items()}
     # The main path runs on the on-topic subgraph so it cannot wander through neighbouring fields.
     on_topic = {pid for pid, r in rel.items() if r > 0}
     topic_graph = g.build_graph(on_topic, [e for e in cg.edges if e[0] in on_topic and e[1] in on_topic], years)
@@ -175,6 +181,7 @@ def score_topic(corpus: Corpus, config: TopicConfig) -> TopicScores:
         "dropped_for_cycles": cg.dropped_for_cycles,
         "main_path_edges": len(main),
         "on_topic_papers": len(on_topic),
+        **(membership.stats if membership is not None else {}),
         "milestones": sum(s.is_milestone_auto for s in scores.values()),
     }
     return TopicScores(papers=scores, main_path=main, stats=stats)

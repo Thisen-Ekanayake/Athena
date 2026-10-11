@@ -46,6 +46,9 @@ class TopicConfig:
     # Off-topic papers stay in the graph as context, but cannot be milestones or on the main path.
     # Empty means every paper is on-topic.
     keywords: list[str] = field(default_factory=list)
+    # Decide on-topic papers from abstract embeddings too (athena.evolution.membership); keywords still
+    # count for titles and for papers without a vector yet.
+    semantic_membership: bool = True
     # Milestones
     weights: MilestoneWeights = field(default_factory=MilestoneWeights)
     eras: int = 8                      # eras hold equal numbers of papers, so busy years get more milestones
