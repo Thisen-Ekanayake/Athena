@@ -1,38 +1,46 @@
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { AppShell } from './components/layout/AppShell'
+import { ClusterPage } from './pages/ClusterPage'
+import { ClustersPage } from './pages/ClustersPage'
 import { FeedPage } from './pages/FeedPage'
-import { TrendingPage } from './pages/TrendingPage'
+import { HomePage } from './pages/HomePage'
+import { PaperPage } from './pages/PaperPage'
 import { SavedPage } from './pages/SavedPage'
+import { SearchPage } from './pages/SearchPage'
 import { SettingsPage } from './pages/SettingsPage'
-import { SearchResultsPage } from './pages/SearchResultsPage'
-import { ClusterBrowserPage } from './pages/ClusterBrowserPage'
-import { ClusterViewPage } from './pages/ClusterViewPage'
-import { SearchPanel } from './features/search/SearchPanel'
-import { Layout } from './components/Layout'
-import { useTheme } from './hooks/useTheme'
+import { TrendingPage } from './pages/TrendingPage'
+import { Spinner } from './ui/Spinner'
 
 // Lazy so the graph library (cytoscape) only loads on the Evolution page.
 const EvolutionPage = lazy(() =>
   import('./features/evolution/EvolutionPage').then((m) => ({ default: m.EvolutionPage })),
 )
 
+const evolution = (
+  <Suspense fallback={<Spinner label="Loading…" />}>
+    <EvolutionPage />
+  </Suspense>
+)
+
 function App() {
-  useTheme()
-  
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Layout />}>
-          <Route index element={<FeedPage />} />
-          <Route path="trending" element={<TrendingPage />} />
-          <Route path="saved" element={<SavedPage />} />
+        <Route path="/" element={<AppShell />}>
+          <Route index element={<HomePage />} />
+          <Route path="feed" element={<FeedPage />} />
           <Route path="sources/:sourceId" element={<FeedPage />} />
-          <Route path="search" element={<SearchResultsPage />} />
-          <Route path="research" element={<SearchPanel />} />
-          <Route path="evolution" element={<Suspense fallback={null}><EvolutionPage /></Suspense>} />
-          <Route path="evolution/:slug" element={<Suspense fallback={null}><EvolutionPage /></Suspense>} />
-          <Route path="clusters" element={<ClusterBrowserPage />} />
-          <Route path="clusters/:id" element={<ClusterViewPage />} />
+          <Route path="trending" element={<TrendingPage />} />
+          <Route path="clusters" element={<ClustersPage />} />
+          <Route path="clusters/:id" element={<ClusterPage />} />
+          <Route path="evolution" element={evolution} />
+          <Route path="evolution/:slug" element={evolution} />
+          <Route path="saved" element={<SavedPage />} />
+          <Route path="search" element={<SearchPage />} />
+          {/* Research search and the literature review now live on the search page. */}
+          <Route path="research" element={<Navigate to="/search" replace />} />
+          <Route path="items/:id" element={<PaperPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="settings/:tab" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

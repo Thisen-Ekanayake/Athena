@@ -1,8 +1,11 @@
 import axios from 'axios'
 
+/** Base URL of the v1 API, shared by axios and the streaming endpoints (Q&A, sync events). */
+export const API_BASE: string = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+
 // Create a configured axios instance
 export const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1',
+  baseURL: API_BASE,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -31,26 +34,26 @@ export interface ClusterInfo {
   is_active: boolean
 }
 
+/** A content item as the feed, search, cluster and list endpoints return it (`_build_feed_item`). */
 export interface FeedItem {
   id: string
   title: string
   url: string
-  summary: string
+  summary: string | null
   summary_status?: string
   score: number
   published_at: string
   category: string
   is_trending: boolean
+  authors?: string[]
+  citation_count?: number
   source: {
-    id: string
     name: string
-    url: string
-    category: string
-    pinned: boolean
-    muted: boolean
+    type: string
+    authority: number
   }
-  cluster?: ClusterInfo
-  takeaways?: string[]
+  cluster?: { id: string; label: string | null } | null
+  takeaways?: string[] | null
   related_count: number
 }
 

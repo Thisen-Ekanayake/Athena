@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { apiClient } from '../client'
+import { apiClient, type FeedItem } from '../client'
 
 interface ApiSignal {
   score: number
@@ -27,11 +27,11 @@ export interface ScoreBreakdown {
 }
 
 const SIGNAL_LABELS: Record<string, string> = {
-  citation_impact: 'Citation Impact',
+  citation_impact: 'Citations',
   engagement: 'Engagement',
-  community_sentiment: 'Sentiment',
+  community_sentiment: 'Community sentiment',
   recency_velocity: 'Recency',
-  source_authority: 'Authority',
+  source_authority: 'Source authority',
 }
 
 export const useScoreBreakdown = (itemId: string, enabled: boolean) => {
@@ -57,11 +57,17 @@ export const useScoreBreakdown = (itemId: string, enabled: boolean) => {
   })
 }
 
+export interface LibrarySearchResponse {
+  query: string
+  items: FeedItem[]
+  total: number
+}
+
 export const useSearch = (q: string, category: string | null = null, enabled: boolean = true) => {
   return useQuery({
     queryKey: ['search', q, category],
     queryFn: async () => {
-      const { data } = await apiClient.get<any>('/search', {
+      const { data } = await apiClient.get<LibrarySearchResponse>('/search', {
         params: { q, category }
       })
       return data
@@ -71,11 +77,17 @@ export const useSearch = (q: string, category: string | null = null, enabled: bo
   })
 }
 
+export interface ClusterDetail {
+  cluster: ClusterSummary
+  items: FeedItem[]
+  pagination: { page: number; limit: number; total: number; has_next: boolean }
+}
+
 export const useCluster = (clusterId: string, page: number = 1) => {
   return useQuery({
     queryKey: ['cluster', clusterId, page],
     queryFn: async () => {
-      const { data } = await apiClient.get<any>(`/clusters/${clusterId}`, {
+      const { data } = await apiClient.get<ClusterDetail>(`/clusters/${clusterId}`, {
         params: { page, limit: 20 }
       })
       return data
