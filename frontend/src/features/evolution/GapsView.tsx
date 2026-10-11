@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react'
-import { CheckCircle2, CircleDot, Loader2, MoonStar, Sparkle } from 'lucide-react'
-import { Alert } from '../../components/shared/Alert'
+import { CheckCircle2, CircleDot, MoonStar, Sparkle } from 'lucide-react'
+import { Chip, type ChipTone } from '../../ui/Chip'
+import { Notice } from '../../ui/Notice'
+import { Spinner } from '../../ui/Spinner'
+import { cn } from '../../ui/cn'
 import { useTopicGaps, type GapTheme, type MiniPaper } from './api'
 
 interface GapsViewProps {
@@ -8,12 +11,12 @@ interface GapsViewProps {
   onSelect: (id: string) => void
 }
 
-const STATUS = {
-  persisting: { label: 'Persisting', icon: CircleDot, className: 'text-accent-warning border-accent-warning/40' },
-  new: { label: 'New', icon: Sparkle, className: 'text-accent-tertiary border-accent-tertiary/40' },
-  addressed: { label: 'Fix claimed', icon: CheckCircle2, className: 'text-accent-success border-accent-success/40' },
-  quiet: { label: 'Quiet', icon: MoonStar, className: 'text-text-muted border-border-subtle' },
-} as const
+const STATUS: Record<GapTheme['status'], { label: string; icon: typeof CircleDot; tone: ChipTone }> = {
+  persisting: { label: 'Persisting', icon: CircleDot, tone: 'warn' },
+  new: { label: 'New', icon: Sparkle, tone: 'accent' },
+  addressed: { label: 'Fix claimed', icon: CheckCircle2, tone: 'good' },
+  quiet: { label: 'Quiet', icon: MoonStar, tone: 'neutral' },
+}
 
 const FILTERS = [
   { value: 'all', label: 'All themes' },
@@ -34,43 +37,55 @@ export function GapsView({ slug, onSelect }: GapsViewProps) {
     return years.length ? { first: Math.min(...years), last: Math.max(...years), max: Math.max(...counts, 1) } : null
   }, [data])
 
-  if (isLoading) return <p className="flex items-center gap-2 text-sm text-text-muted"><Loader2 className="w-4 h-4 animate-spin" /> Loading gaps…</p>
-  if (error || !data) return <Alert type="error" title="Could not load the gaps">Check that the API is running.</Alert>
+  if (isLoading) return <Spinner label="Loading open problems…" />
+  if (error || !data) return <Notice tone="error" title="The open problems could not be loaded">Check that the API is running.</Notice>
   if (data.themes.length === 0 || !scale) {
     return (
-      <Alert type="info" title="No gap themes yet">
-        Gap themes appear after the GPU lane has labelled and embedded gap statements:{' '}
+      <Notice title="No open problems yet">
+        They appear after the GPU lane has labelled and embedded gap statements:{' '}
         <code>python3 scripts/evolution_full_text.py --gpu-only</code>.
-      </Alert>
+      </Notice>
     )
   }
   const shown = data.themes.filter((t) => filter === 'all' || t.status === filter)
   const counts = Object.fromEntries(FILTERS.map((f) => [f.value, f.value === 'all' ? data.themes.length : data.themes.filter((t) => t.status === f.value).length]))
 
   return (
-    <div className="flex flex-col gap-5">
-      <p className="text-sm text-text-secondary max-w-3xl">
-        Limitations papers state about themselves, and that later papers state about them, grouped by meaning. A theme
-        is <b className="font-semibold text-text-primary">persisting</b> when it was first stated before{' '}
-        {data.latest_year ? `${data.latest_year - 1}–${data.latest_year}` : 'the last two years'}, is still stated then, and no strict
-        link claims a fix; <b className="font-semibold text-text-primary">new</b> when it has only been stated in those years. The bars
-        count statements per year; the last two years are highlighted.
-      </p>
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Filter themes by status">
+    <div className="grid gap-5">
+      {/* The edge of the map: open problems sit where the mist begins. */}
+      <section className="relative overflow-hidden rounded-xl border border-line bg-surface">
+        <div className="mist" aria-hidden="true"><span /><span /><span /><span /></div>
+        <div className="relative grid gap-2 p-5 sm:pr-48">
+          <h2 className="text-[16px] font-semibold text-fg">
+            {counts.new + counts.persisting} open {counts.new + counts.persisting === 1 ? 'problem' : 'problems'} at the edge of this topic
+          </h2>
+          <p className="max-w-3xl text-[13px] leading-relaxed text-fg-2">
+            Limitations that papers state about themselves, or that later papers state about them, grouped by meaning. A theme
+            is <b className="font-medium text-fg">persisting</b> when it was first stated before{' '}
+            {data.latest_year ? `${data.latest_year - 1}–${data.latest_year}` : 'the last two years'}, is still stated then, and no
+            strict link claims a fix. It is <b className="font-medium text-fg">new</b> when it has only been stated in those years. The bars
+            count statements per year, with the last two years in the accent.
+          </p>
+        </div>
+        <span className="pointer-events-none absolute right-6 bottom-4 font-myth text-[28px] leading-none text-fg-3 max-sm:hidden" aria-hidden="true">Uncharted</span>
+      </section>
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter by status">
         {FILTERS.map((f) => (
           <button
             key={f.value}
+            type="button"
             onClick={() => setFilter(f.value)}
             aria-pressed={filter === f.value}
-            className={`px-3 py-1 rounded-full border text-[12px] transition-colors ${
-              filter === f.value ? 'border-accent-primary/60 bg-accent-primary/15 text-text-primary' : 'border-border-subtle text-text-muted hover:text-text-secondary'
-            }`}
+            className={cn(
+              'h-7 rounded-full border px-3 text-[12.5px] transition-colors',
+              filter === f.value ? 'border-accent-line bg-accent-soft text-fg' : 'border-line text-fg-3 hover:text-fg-2',
+            )}
           >
             {f.label} <span className="font-mono tabular-nums">{counts[f.value]}</span>
           </button>
         ))}
       </div>
-      <ul className="flex flex-col divide-y divide-border-subtle">
+      <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
         {shown.map((t) => (
           <ThemeRow key={t.id} theme={t} scale={scale} latest={data.latest_year} onSelect={onSelect} />
         ))}
@@ -88,21 +103,19 @@ function ThemeRow({ theme, scale, latest, onSelect }: {
   const status = STATUS[theme.status]
   const Icon = status.icon
   return (
-    <li className="py-4 grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-4">
-      <div className="flex flex-col gap-2 min-w-0">
+    <li className="grid grid-cols-1 gap-4 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+      <div className="flex min-w-0 flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-medium ${status.className}`}>
-            <Icon className="w-3 h-3" aria-hidden="true" /> {status.label}
-          </span>
-          <h4 className="text-[14px] font-semibold text-text-primary">{theme.label}</h4>
-          <span className="text-[12px] font-mono text-text-muted tabular-nums">
+          <Chip tone={status.tone}><Icon aria-hidden="true" /> {status.label}</Chip>
+          <h4 className="text-[14px] font-medium text-fg">{theme.label}</h4>
+          <span className="font-mono text-[12px] text-fg-3 tabular-nums">
             {theme.size} statements · {theme.first_year}–{theme.last_year}
           </span>
         </div>
         {theme.examples.map((e, i) => (
-          <blockquote key={i} className="pl-2 border-l-2 border-border-subtle text-[12px] text-text-secondary leading-relaxed">
+          <blockquote key={i} className="pl-2 border-l-2 border-line text-[12px] text-fg-2 leading-relaxed">
             {e.sentence}
-            <span className="block mt-0.5 text-[11px] text-text-muted">
+            <span className="block mt-0.5 text-[11px] text-fg-3">
               {e.origin === 'own' ? 'In ' : 'About '}
               <PaperLink paper={e.paper} onSelect={onSelect} />
               {e.origin === 'citing' && e.stated_by && <>, stated by <PaperLink paper={e.stated_by} onSelect={onSelect} /></>}
@@ -110,12 +123,12 @@ function ThemeRow({ theme, scale, latest, onSelect }: {
           </blockquote>
         ))}
         {theme.fixed_by.length > 0 && (
-          <p className="text-[12px] text-text-secondary">
+          <p className="text-[12px] text-fg-2">
             Fix claimed by {theme.fixed_by.map((p, i) => <span key={p.id}>{i > 0 && ', '}<PaperLink paper={p} onSelect={onSelect} /></span>)}
           </p>
         )}
         {theme.loose_candidates.length > 0 && (
-          <p className="text-[12px] text-text-muted">
+          <p className="text-[12px] text-fg-3">
             Possibly taken on by (loose match, no evidence sentence):{' '}
             {theme.loose_candidates.map((c, i) => (
               <span key={c.paper.id}>{i > 0 && ', '}<PaperLink paper={c.paper} onSelect={onSelect} /> <span className="font-mono tabular-nums">{c.score.toFixed(2)}</span></span>
@@ -132,7 +145,7 @@ function PaperLink({ paper, onSelect }: { paper: MiniPaper | null; onSelect: (id
   if (!paper) return <span>a paper outside the topic</span>
   const name = paper.named_method ?? (paper.title.length > 60 ? `${paper.title.slice(0, 57)}…` : paper.title)
   return (
-    <button onClick={() => onSelect(paper.id)} className="text-text-secondary hover:text-accent-primary underline-offset-2 hover:underline">
+    <button onClick={() => onSelect(paper.id)} className="text-fg-2 hover:text-accent-ink underline-offset-2 hover:underline">
       {name}{paper.year ? ` (${paper.year})` : ''}
     </button>
   )
@@ -153,8 +166,8 @@ function Sparkline({ theme, scale, latest }: { theme: GapTheme; scale: { first: 
     <figure className="flex flex-col gap-1 self-start">
       <div className="relative">
         <svg width={width} height={H + 1} role="img" aria-label={`Statements per year: ${summary}`} className="overflow-visible">
-          {/* Colours from the theme's CSS variables: they are not Tailwind colour tokens. */}
-          <line x1={0} x2={width} y1={H + 0.5} y2={H + 0.5} style={{ stroke: 'var(--border-default)' }} strokeWidth={1} />
+          {/* SVG colours read the look's CSS variables directly. */}
+          <line x1={0} x2={width} y1={H + 0.5} y2={H + 0.5} style={{ stroke: 'var(--line-strong)' }} strokeWidth={1} />
           {years.map((year, i) => {
             const count = byYear.get(year) ?? 0
             const h = count ? Math.max(2, (count / scale.max) * H) : 0
@@ -170,7 +183,7 @@ function Sparkline({ theme, scale, latest }: { theme: GapTheme; scale: { first: 
                     width={BAR_W}
                     height={h}
                     rx={1.5}
-                    style={{ fill: recent ? 'var(--color-accent-primary)' : 'var(--text-muted)' }}
+                    style={{ fill: recent ? 'var(--accent)' : 'var(--fg-3)' }}
                     opacity={hover === null || hover === year ? 1 : 0.5}
                   />
                 )}
@@ -179,12 +192,12 @@ function Sparkline({ theme, scale, latest }: { theme: GapTheme; scale: { first: 
           })}
         </svg>
         {hovered && (
-          <span className="absolute -top-6 left-0 px-1.5 py-0.5 rounded bg-glass-fill border border-border-subtle text-[11px] font-mono text-text-primary tabular-nums whitespace-nowrap pointer-events-none">
+          <span className="absolute -top-6 left-0 px-1.5 py-0.5 rounded bg-surface border border-line text-[11px] font-mono text-fg tabular-nums whitespace-nowrap pointer-events-none">
             {hovered.year}: {hovered.count} {hovered.count === 1 ? 'statement' : 'statements'}
           </span>
         )}
       </div>
-      <figcaption className="flex justify-between text-[10px] font-mono text-text-muted tabular-nums" style={{ width }}>
+      <figcaption className="flex justify-between text-[10px] font-mono text-fg-3 tabular-nums" style={{ width }}>
         <span>{scale.first}</span>
         <span>{scale.last}</span>
       </figcaption>

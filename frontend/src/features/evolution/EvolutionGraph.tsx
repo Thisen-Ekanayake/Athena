@@ -79,22 +79,27 @@ function layout(nodes: EvolutionNode[], firstYear: number, xOf: Map<number, numb
   return new Map(sim.map((d) => [d.id, { x: d.x ?? d.targetX, y: (d.y ?? 0) * stretch }]))
 }
 
+/** Colours from the current look's CSS variables (gold or indigo). */
 function themeColors() {
   const css = getComputedStyle(document.documentElement)
   const read = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback
   return {
-    milestone: read('--color-accent-primary', '#4c5fff'),
-    path: read('--color-accent-tertiary', '#38c5d4'),
-    strict: read('--color-accent-critical', '#e05a6b'),
-    loose: read('--color-accent-warning', '#e0a94b'),
-    seed: read('--color-accent-warning', '#e0a94b'),
-    node: read('--text-muted', 'rgba(120, 135, 185, 0.55)'),
-    edge: read('--text-ghost', 'rgba(90, 105, 160, 0.40)'),
-    label: read('--text-primary', 'rgba(235, 238, 255, 0.95)'),
-    surface: read('--color-void', '#060917'),
+    accent: read('--accent', '#d6ae5f'),
+    star: read('--star', '#f6e3b4'),
+    path: read('--fg-2', '#a8a297'),
+    strict: read('--bad', '#e5727a'),
+    loose: read('--warn', '#e0965a'),
+    seed: read('--warn', '#e0965a'),
+    edge: read('--map-line', 'rgba(246, 227, 180, 0.2)'),
+    label: read('--fg', '#edeae4'),
+    surface: read('--map-bg', '#08090c'),
   }
 }
 
+/**
+ * Papers are stars: milestones shine in the accent and carry labels, the rest are faint points.
+ * Selecting one draws its thread: the citations into and out of it light up in the accent.
+ */
 function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
   const c = themeColors()
   return [
@@ -103,20 +108,22 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
       style: {
         width: 'data(size)',
         height: 'data(size)',
-        'background-color': c.node,
+        'background-color': c.star,
+        'background-opacity': 0.55,
         'border-width': 0,
       },
     },
     {
       selector: 'node.milestone',
       style: {
-        'background-color': c.milestone,
+        'background-color': c.accent,
+        'background-opacity': 1,
         'border-width': 2,
         'border-color': c.surface,
         label: 'data(label)',
         color: c.label,
         'font-size': 10,
-        'font-family': 'DM Sans, sans-serif',
+        'font-family': 'Geist, ui-sans-serif, system-ui, sans-serif',
         'text-valign': 'bottom',
         'text-margin-y': 4,
         'text-wrap': 'wrap',
@@ -126,29 +133,30 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
         'min-zoomed-font-size': 7, // hide labels too small to read until the user zooms in
       },
     },
-    { selector: 'node.main-path', style: { 'border-width': 3, 'border-color': c.path } },
-    { selector: 'node.seed', style: { 'border-width': 3, 'border-color': c.seed } },
-    { selector: 'node.selected', style: { 'border-width': 4, 'border-color': c.label } },
-    { selector: 'node.faded', style: { opacity: 0.15 } },
+    { selector: 'node.main-path', style: { 'border-width': 2, 'border-color': c.path } },
+    { selector: 'node.seed', style: { 'border-width': 2, 'border-color': c.seed } },
+    { selector: 'node.selected', style: { 'border-width': 3, 'border-color': c.label, 'background-color': c.accent, 'background-opacity': 1 } },
+    { selector: 'node.thread', style: { 'background-color': c.accent, 'background-opacity': 1 } },
+    { selector: 'node.faded', style: { opacity: 0.18 } },
     {
       selector: 'edge',
       style: {
         'curve-style': 'haystack',
         width: 0.6,
         'line-color': c.edge,
-        opacity: showCitations ? 0.35 : 0,
+        opacity: showCitations ? 0.5 : 0,
       },
     },
     {
       selector: 'edge.main-path',
       style: {
         'curve-style': 'straight',
-        width: 2.5,
+        width: 1.6,
         'line-color': c.path,
         'target-arrow-shape': 'triangle',
         'target-arrow-color': c.path,
-        'arrow-scale': 0.8,
-        opacity: 0.9,
+        'arrow-scale': 0.7,
+        opacity: 0.55,
       },
     },
     {
@@ -156,12 +164,12 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
       selector: 'edge.strict',
       style: {
         'curve-style': 'straight',
-        width: 1.8,
+        width: 1.6,
         'line-color': c.strict,
         'target-arrow-shape': 'triangle',
         'target-arrow-color': c.strict,
-        'arrow-scale': 0.8,
-        opacity: 0.9,
+        'arrow-scale': 0.7,
+        opacity: 0.8,
       },
     },
     {
@@ -169,27 +177,59 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
       selector: 'edge.loose',
       style: {
         'curve-style': 'straight',
-        width: 1.4,
+        width: 1.3,
         'line-style': 'dashed',
         'line-dash-pattern': [5, 4],
         'line-color': c.loose,
         'target-arrow-shape': 'triangle',
         'target-arrow-color': c.loose,
         'arrow-scale': 0.7,
-        opacity: 0.85,
+        opacity: 0.8,
       },
     },
-    { selector: 'edge.highlighted', style: { 'line-color': c.milestone, width: 1.5, opacity: 0.85 } },
-    { selector: 'edge.strict.highlighted', style: { 'line-color': c.strict, width: 2.5, opacity: 1 } },
+    // Ariadne's thread: the selected paper's citations, drawn in the accent.
+    {
+      selector: 'edge.thread',
+      style: {
+        'curve-style': 'straight',
+        'line-color': c.accent,
+        'target-arrow-shape': 'triangle',
+        'target-arrow-color': c.accent,
+        'arrow-scale': 0.7,
+        width: 1.8,
+        opacity: 0.95,
+      },
+    },
+    { selector: 'edge.strict.thread', style: { 'line-color': c.strict, 'target-arrow-color': c.strict, width: 2.4 } },
     { selector: 'edge.faded', style: { opacity: 0.03 } },
   ]
+}
+
+/** A fixed field of faint stars behind the map, seeded so it is the same on every visit. */
+const STARS = (() => {
+  let a = 7
+  const rnd = () => {
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+  return Array.from({ length: 220 }, () => ({ x: rnd() * 100, y: rnd() * 100, r: 0.35 + rnd() * rnd() * 1.2, o: 0.15 + rnd() * 0.5 }))
+})()
+
+function StarField() {
+  return (
+    <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
+      {STARS.map((s, i) => <circle key={i} cx={`${s.x}%`} cy={`${s.y}%`} r={s.r} style={{ fill: 'var(--star)' }} opacity={s.o} />)}
+    </svg>
+  )
 }
 
 export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations }: EvolutionGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const cyRef = useRef<cytoscape.Core | null>(null)
   const onSelectRef = useRef(onSelect)
-  const theme = useAppStore((s) => s.theme)
+  const accent = useAppStore((s) => s.accent)
   const [ticks, setTicks] = useState<{ year: number; x: number }[]>([])
 
   useEffect(() => {
@@ -276,37 +316,46 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, looseEdges, firstYear, lastYear])
 
-  // Re-colour on theme change or when citations are toggled.
+  // Re-colour when the look changes or citations are toggled.
   useEffect(() => {
     cyRef.current?.style(graphStyle(showCitations))
-  }, [theme, showCitations, nodes])
+  }, [accent, showCitations, nodes])
 
-  // Highlight the selected paper and its neighbours, and bring it into view.
+  // Draw the selected paper's thread: its citations in and out light up, oldest first; the rest fades.
   useEffect(() => {
     const cy = cyRef.current
     if (!cy) return
-    cy.elements().removeClass('selected highlighted faded')
+    cy.elements().stop(true, false)
+    cy.elements().removeClass('selected thread faded').removeStyle('opacity')
     if (!selectedId) return
     const node = cy.getElementById(selectedId)
     if (node.empty()) return
     const neighbourhood = node.closedNeighborhood()
     cy.elements().not(neighbourhood).addClass('faded')
     node.addClass('selected')
-    node.connectedEdges().addClass('highlighted')
+    neighbourhood.nodes().not(node).addClass('thread')
+    const thread = node.connectedEdges().addClass('thread')
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!reduced) {
+      const year = (id: string) => nodes.find((n) => n.id === id)?.year ?? 0
+      thread
+        .sort((a, b) => year(a.source().id()) - year(b.source().id()))
+        .forEach((edge, i) => {
+          edge.style('opacity', 0)
+          edge.delay(Math.min(i * 35, 900)).animate({ style: { opacity: 0.95 } }, { duration: 260 })
+        })
+    }
     cy.animate({ center: { eles: node }, zoom: Math.max(cy.zoom(), 0.9) }, { duration: 300 })
   }, [selectedId, nodes])
 
   return (
-    <div className="relative w-full h-[620px] rounded-xl border border-border-subtle bg-glass-fill overflow-hidden">
+    <div className="relative h-[620px] w-full overflow-hidden rounded-xl border border-line" style={{ background: 'var(--map-bg)' }}>
+      <StarField />
       {/* Explicit size: an absolutely positioned container collapsed to zero height once cytoscape took it over. */}
-      <div ref={containerRef} className="w-full h-full" aria-label="Citation graph of the topic, oldest papers on the left" />
-      <div className="absolute left-0 right-0 bottom-0 h-7 border-t border-border-subtle bg-glass-fill pointer-events-none">
+      <div ref={containerRef} className="relative h-full w-full" aria-label="Lineage map of the topic, oldest papers on the left" />
+      <div className="pointer-events-none absolute right-0 bottom-0 left-0 h-7 border-t border-line" style={{ background: 'color-mix(in srgb, var(--map-bg) 85%, transparent)' }}>
         {ticks.map((t) => (
-          <span
-            key={t.year}
-            className="absolute top-1.5 -translate-x-1/2 text-[10px] font-mono text-text-muted tabular-nums"
-            style={{ left: t.x }}
-          >
+          <span key={t.year} className="absolute top-1.5 -translate-x-1/2 font-mono text-[10px] text-fg-3 tabular-nums" style={{ left: t.x }}>
             {t.year}
           </span>
         ))}
