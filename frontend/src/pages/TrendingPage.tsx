@@ -1,102 +1,54 @@
-import { useAppStore } from '../store/appStore'
+import { Flame, Sparkles } from 'lucide-react'
 import { useTrending } from '../api/queries'
-import { FeedCard } from '../components/FeedCard'
-import { CardSkeleton } from '../components/CardSkeleton'
-import { Alert } from '../components/shared/Alert'
-import { Flame, Sparkles, TrendingUp, Zap } from 'lucide-react'
-import { motion } from 'framer-motion'
+import { ItemList } from '../components/items/ItemRow'
+import { timeAgo } from '../components/items/format'
+import { useAppStore } from '../store/appStore'
+import { EmptyState } from '../ui/EmptyState'
+import { Notice } from '../ui/Notice'
+import { PageHeader } from '../ui/PageHeader'
+import { Segmented } from '../ui/Segmented'
+import { SkeletonRows } from '../ui/Skeleton'
 
+const CATEGORIES = [
+  { value: 'all', label: 'All' },
+  { value: 'paper', label: 'Papers' },
+  { value: 'company_blog', label: 'Lab blogs' },
+  { value: 'community_blog', label: 'Community' },
+]
+
+/** What is gaining attention right now, with an AI-written brief on the theme behind it. */
 export function TrendingPage() {
-  const { currentCategory, viewMode } = useAppStore()
-  const { data, status, error } = useTrending(currentCategory)
+  const category = useAppStore((s) => s.currentCategory)
+  const setCategory = useAppStore((s) => s.setCategory)
+  const { data, status, error } = useTrending(category)
 
   return (
-    <div className="flex-1 flex flex-col min-h-screen">
-      {/* Header with Energy Shift */}
-      <div className="relative overflow-hidden border-b border-white/5 pt-28 pb-20 px-8">
-        {/* Background Atmosphere Overrides for Trending */}
-        <div className="absolute inset-0 bg-[#E05A6B]/10 z-0" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-[#E0A94B]/10 blur-[120px] rounded-full z-0" />
-        
-        <div className="relative z-10 max-w-[1200px] mx-auto text-center flex flex-col items-center">
-          <motion.div 
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="w-16 h-16 rounded-3xl glass-float border-accent-tertiary/30 flex items-center justify-center text-accent-tertiary mb-6 shadow-glow-tertiary"
-          >
-            <TrendingUp className="w-8 h-8" />
-          </motion.div>
-          <motion.h1 
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.1 }}
-            className="text-4xl md:text-5xl font-display font-bold text-white tracking-tight mb-4"
-          >
-            <span className="text-accent-tertiary">Hot</span> Sync
-          </motion.h1>
-          <motion.p 
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.2 }}
-            className="text-text-secondary text-sm md:text-base max-w-xl font-medium leading-relaxed"
-          >
-            High-velocity intelligence streams gaining rapid cross-cluster attention in the last 24 cycles.
-          </motion.p>
-        </div>
+    <div className="mx-auto max-w-[920px]">
+      <PageHeader title="Trending" description="What is gaining attention right now, measured by how fast items collect citations and discussion." />
+      <div className="mb-4">
+        <Segmented label="Type" value={category ?? 'all'} options={CATEGORIES} onChange={(v) => setCategory(v === 'all' ? null : v)} />
       </div>
 
-      <div className="flex-1 w-full max-w-[1200px] mx-auto px-6 py-12 md:px-12">
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="grid gap-8"
-        >
-          {data?.brief && (
-            <div className="glass-float rounded-2xl overflow-hidden border-accent-tertiary/20 group hover:border-accent-tertiary/40 transition-all duration-500">
-              <div className="bg-accent-tertiary/10 px-8 py-4 flex items-center justify-between border-b border-accent-tertiary/20">
-                <div className="flex items-center gap-3">
-                  <Zap className="w-5 h-5 text-accent-tertiary" />
-                  <span className="text-xs font-display font-bold tracking-[0.2em] text-accent-tertiary uppercase">Velocity Intelligence: {data.brief.theme}</span>
-                </div>
-                <Sparkles className="w-4 h-4 text-accent-tertiary/50" />
-              </div>
-              <div className="p-8">
-                <p className="text-text-primary leading-relaxed font-medium">
-                  {data.brief.brief}
-                </p>
-              </div>
-            </div>
-          )}
+      {data?.brief && (
+        <section className="relative mb-4 rounded-xl border border-line bg-surface p-4">
+          <span className="ai-ring" aria-hidden="true" />
+          <p className="mb-1 flex items-center gap-1.5 text-[12px] text-fg-3">
+            <Sparkles className="h-3.5 w-3.5 text-accent" aria-hidden="true" /> Brief written by AI {data.brief.generated_at && `· ${timeAgo(data.brief.generated_at)}`}
+          </p>
+          <h2 className="text-[16px] font-semibold text-fg">{data.brief.theme}</h2>
+          <p className="mt-1.5 max-w-[70ch] text-[14px] leading-relaxed text-fg-2">{data.brief.brief}</p>
+        </section>
+      )}
 
-          <div className="space-y-6">
-            {status === 'pending' ? (
-              <div className="grid gap-6">
-                {[1, 2, 3].map(i => <CardSkeleton key={i} />)}
-              </div>
-            ) : status === 'error' ? (
-              <Alert type="error" title="Stream Disturbance">
-                {(error as Error).message}
-              </Alert>
-            ) : (
-              <div className="grid gap-6">
-                {data?.items.length === 0 ? (
-                   <div className="flex flex-col items-center justify-center py-24 text-center opacity-40">
-                     <Flame className="w-12 h-12 text-text-ghost mb-4" />
-                     <h3 className="text-lg font-display font-medium text-white">Quiet Signal</h3>
-                     <p className="text-sm text-text-muted">No high-velocity updates in the current category.</p>
-                   </div>
-                ) : (
-                  data?.items.map((item, idx) => (
-                    <FeedCard key={item.id} item={item} viewMode={viewMode} index={idx} />
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-        </motion.div>
-      </div>
+      {status === 'pending' ? (
+        <SkeletonRows count={5} />
+      ) : status === 'error' ? (
+        <Notice tone="error" title="Trending items could not be loaded">{error?.message}</Notice>
+      ) : data.items.length === 0 ? (
+        <EmptyState icon={Flame} title="Nothing is trending right now">Trending needs a few days of citation and discussion data. Check back after the next syncs.</EmptyState>
+      ) : (
+        <ItemList items={data.items} />
+      )}
     </div>
   )
 }
-

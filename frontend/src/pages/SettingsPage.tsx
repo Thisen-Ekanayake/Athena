@@ -1,667 +1,483 @@
-import { useState, useMemo } from 'react'
-import { useSources, useToggleSource, useAddSource, useUpdateSource } from '../api/queries/sources'
-import { useApiKeys, useSetApiKey, useDeleteApiKey } from '../api/queries/app_settings'
-import { useClusters, useScoringHealth, useFetchHealth } from '../api/queries/phase4'
-import type { Source } from '../api/client'
-import { Alert } from '../components/shared/Alert'
-import { Check, Orbit, ExternalLink, Shield, Cpu, Activity, Plus, Key, Eye, EyeOff, Trash2, GitBranch, BarChart2, RefreshCw, Pencil, X, ArrowUpNarrowWide, ArrowDownWideNarrow } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { Link, NavLink, useParams } from 'react-router-dom'
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, Check, Eye, EyeOff, Pencil, RefreshCw, Trash2, X, ExternalLink } from 'lucide-react'
+import { apiClient, type Source } from '../api/client'
+import { apiErrorMessage } from '../api/error'
+import { useApiKeys, useDeleteApiKey, useSetApiKey } from '../api/queries/app_settings'
+import { useClusters, useFetchHealth, useScoringHealth } from '../api/queries/phase4'
+import { useAddSource, useSources, useToggleSource, useUpdateSource, type PreviewResponse } from '../api/queries/sources'
+import { timeAgo } from '../components/items/format'
+import { SyncLog } from '../components/layout/SyncLog'
+import { useAppStore, type Accent } from '../store/appStore'
+import { Button } from '../ui/Button'
+import { Card } from '../ui/Card'
+import { Chip } from '../ui/Chip'
+import { Notice } from '../ui/Notice'
+import { OwlCoin } from '../ui/OwlCoin'
+import { PageHeader } from '../ui/PageHeader'
+import { Spinner } from '../ui/Spinner'
+import { cn } from '../ui/cn'
 
-function safeHostname(url: string): string {
-  try { return new URL(url).hostname } catch { return url }
+const TABS = [
+  { id: 'sources', label: 'Sources' },
+  { id: 'keys', label: 'Models and keys' },
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'clusters', label: 'Clusters' },
+  { id: 'health', label: 'Health' },
+  { id: 'sync', label: 'Sync log' },
+] as const
+
+type Tab = (typeof TABS)[number]['id']
+
+const inputClass = 'h-8 min-w-0 rounded-lg border border-line bg-surface-2 px-2.5 text-[13px] text-fg placeholder:text-fg-3 focus:border-accent-line focus:outline-none'
+
+function SectionTitle({ title, description }: { title: string; description?: ReactNode }) {
+  return (
+    <div className="mb-4 grid gap-1">
+      <h2 className="text-[16px] font-semibold text-fg">{title}</h2>
+      {description && <p className="max-w-[68ch] text-[13px] text-fg-2">{description}</p>}
+    </div>
+  )
 }
 
-type SortKey = 'name' | 'created' | 'health' | 'protocol' | 'inertia'
-type SortDir = 'asc' | 'desc'
+function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: string }) {
+  return (
+    <div className="rounded-xl border border-line bg-surface p-4">
+      <p className="text-[12px] text-fg-3">{label}</p>
+      <p className="mt-1 font-mono text-[22px] font-medium tabular-nums text-fg">{value}</p>
+      {sub && <p className="mt-0.5 text-[12px] text-fg-3">{sub}</p>}
+    </div>
+  )
+}
 
-const SORT_OPTIONS: { value: SortKey; label: string }[] = [
-  { value: 'name', label: 'Alphabetical' },
-  { value: 'created', label: 'Date Created' },
-  { value: 'health', label: 'Health Status' },
-  { value: 'protocol', label: 'Protocol' },
-  { value: 'inertia', label: 'Inertia' },
+/** Where Athena fetches from, the keys it uses, how it looks, and how its pipeline is doing. */
+export function SettingsPage() {
+  const { tab } = useParams<{ tab?: string }>()
+  const active: Tab = TABS.some((t) => t.id === tab) ? (tab as Tab) : 'sources'
+
+  return (
+    <div className="mx-auto max-w-[1100px]">
+      <PageHeader title="Settings" />
+      <div className="grid gap-8 md:grid-cols-[200px_minmax(0,1fr)]">
+        <nav className="flex gap-1 overflow-x-auto md:flex-col" aria-label="Settings sections">
+          {TABS.map((t) => (
+            <NavLink
+              key={t.id}
+              to={`/settings/${t.id}`}
+              className={cn(
+                'flex h-8 shrink-0 items-center rounded-lg px-2.5 text-[13.5px] transition-colors',
+                active === t.id ? 'bg-surface-2 text-fg shadow-[0_0_0_1px_var(--line)]' : 'text-fg-2 hover:bg-surface-2/60 hover:text-fg',
+              )}
+            >
+              {t.label}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="min-w-0">
+          {active === 'sources' && <SourcesSection />}
+          {active === 'keys' && <KeysSection />}
+          {active === 'appearance' && <AppearanceSection />}
+          {active === 'clusters' && <ClustersSection />}
+          {active === 'health' && <HealthSection />}
+          {active === 'sync' && <SyncSection />}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── Sources ── */
+
+type SortKey = 'name' | 'created' | 'health' | 'type' | 'active'
+
+const SORTS: { value: SortKey; label: string }[] = [
+  { value: 'name', label: 'Name' },
+  { value: 'created', label: 'Date added' },
+  { value: 'health', label: 'Failures' },
+  { value: 'type', label: 'Type' },
+  { value: 'active', label: 'Active' },
 ]
 
 const byName = (a: Source, b: Source) => a.name.localeCompare(b.name)
-
-// Each comparator defines the ascending order for its key; descending just
-// negates it. Equal primary keys tie-break alphabetically by name.
-const SORT_COMPARATORS: Record<SortKey, (a: Source, b: Source) => number> = {
+const COMPARE: Record<SortKey, (a: Source, b: Source) => number> = {
   name: byName,
   created: (a, b) => (a.created_at || '').localeCompare(b.created_at || ''),
   health: (a, b) => a.consecutive_failures - b.consecutive_failures,
-  protocol: (a, b) => a.type.localeCompare(b.type),
-  inertia: (a, b) => Number(a.is_active) - Number(b.is_active),
+  type: (a, b) => a.type.localeCompare(b.type),
+  active: (a, b) => Number(a.is_active) - Number(b.is_active),
 }
 
-function sortSources(sources: Source[] | undefined, key: SortKey, dir: SortDir): Source[] {
-  if (!sources) return []
-  const base = SORT_COMPARATORS[key]
-  const sign = dir === 'asc' ? 1 : -1
-  return [...sources].sort((a, b) => sign * base(a, b) || byName(a, b))
+function host(url: string) {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return url
+  }
 }
 
-const KEY_LABELS: Record<string, { label: string; hint: string }> = {
-  OPENAI_API_KEY: { label: 'OpenAI API Key', hint: 'Used for embeddings, summarisation, search, and scoring.' },
-  SEMANTIC_SCHOLAR_API_KEY: { label: 'Semantic Scholar API Key', hint: 'Used to enrich papers with citation counts. Optional — works without one at lower rate limits.' },
-}
+const isPreview = (data: PreviewResponse | Source): data is PreviewResponse => 'sample_items' in data
 
-function ApiKeyRow({ keyName }: { keyName: string }) {
-  const { data: keys } = useApiKeys()
-  const setKey = useSetApiKey()
-  const deleteKey = useDeleteApiKey()
+function SourcesSection() {
+  const { data: sources, isLoading } = useSources()
+  const toggle = useToggleSource()
+  const update = useUpdateSource()
+  const add = useAddSource()
+  const [url, setUrl] = useState('')
+  const [preview, setPreview] = useState<PreviewResponse | null>(null)
+  const [sortBy, setSortBy] = useState<SortKey>('name')
+  const [asc, setAsc] = useState(true)
+  const [editing, setEditing] = useState<{ id: string; name: string; url: string } | null>(null)
 
-  const info = keys?.find(k => k.key === keyName)
-  const meta = KEY_LABELS[keyName]
+  const sorted = useMemo(
+    () => [...(sources ?? [])].sort((a, b) => (asc ? 1 : -1) * COMPARE[sortBy](a, b) || byName(a, b)),
+    [sources, sortBy, asc],
+  )
 
-  const [editing, setEditing] = useState(false)
-  const [input, setInput] = useState('')
-  const [revealed, setRevealed] = useState(false)
-
-  const handleSave = () => {
-    if (!input.trim()) return
-    setKey.mutate({ key: keyName, value: input }, {
-      onSuccess: () => { setEditing(false); setInput('') },
-    })
+  const check = (e: FormEvent) => {
+    e.preventDefault()
+    if (!url) return
+    add.mutate({ url }, { onSuccess: (data) => setPreview(isPreview(data) ? data : null) })
+  }
+  const confirm = () => add.mutate({ url, confirm: true }, { onSuccess: () => { setUrl(''); setPreview(null) } })
+  const saveEdit = () => {
+    if (!editing) return
+    update.mutate({ id: editing.id, name: editing.name.trim(), url: editing.url.trim() }, { onSuccess: () => setEditing(null) })
   }
 
   return (
-    <div className="glass-void border border-white/5 rounded-xl p-5 space-y-3">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] font-display font-bold text-white">{meta.label}</span>
-            {info?.is_set ? (
-              <span className="text-[10px] font-mono font-bold text-[#5AE07F] border border-[#5AE07F]/30 px-1.5 py-0.5 rounded uppercase">SET</span>
-            ) : (
-              <span className="text-[10px] font-mono font-bold text-text-ghost border border-white/10 px-1.5 py-0.5 rounded uppercase">NOT SET</span>
-            )}
-          </div>
-          <p className="text-[11px] text-text-muted mt-0.5">{meta.hint}</p>
-          {info?.is_set && !editing && (
-            <div className="flex items-center gap-2 mt-2">
-              <span className="font-mono text-[12px] text-text-secondary">
-                {revealed ? info.masked_value : '••••••••••••••••'}
-              </span>
-              <button onClick={() => setRevealed(r => !r)} className="text-text-ghost hover:text-text-primary transition-colors">
-                {revealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-              </button>
+    <div className="grid gap-8">
+      <section>
+        <SectionTitle title="Add a source" description="Paste a blog, RSS feed or site address. Athena works out how to read it and shows a preview first." />
+        {!preview ? (
+          <form onSubmit={check} className="flex gap-2">
+            <input id="source-url" type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://deepmind.google/discover/blog/" aria-label="Source address" className={cn(inputClass, 'h-9 flex-1')} />
+            <Button type="submit" variant="primary" className="h-9" disabled={!url || add.isPending}>{add.isPending ? 'Checking…' : 'Check'}</Button>
+          </form>
+        ) : (
+          <Card className="p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[15px] font-medium text-fg">{preview.source_name}</p>
+                <p className="text-[12.5px] text-fg-3">Read as {preview.source_type}</p>
+              </div>
+              <Chip tone="good"><Check /> Readable</Chip>
             </div>
-          )}
-        </div>
-        <div className="flex gap-2 shrink-0">
-          {info?.is_set && !editing && (
-            <button
-              onClick={() => deleteKey.mutate(keyName)}
-              disabled={deleteKey.isPending}
-              className="p-2 rounded-lg glass-base border border-white/5 text-text-ghost hover:text-[#E05A6B] hover:border-[#E05A6B]/30 transition-all"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          )}
-          <button
-            onClick={() => { setEditing(e => !e); setInput('') }}
-            className="px-4 py-2 rounded-lg glass-base border border-white/10 text-text-secondary hover:text-white hover:border-accent-primary/30 transition-all font-display font-bold text-[11px] uppercase tracking-wider"
-          >
-            {editing ? 'CANCEL' : info?.is_set ? 'UPDATE' : 'SET KEY'}
-          </button>
-        </div>
-      </div>
-
-      <AnimatePresence>
-        {editing && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            className="overflow-hidden"
-          >
-            <div className="flex gap-2 pt-1">
-              <input
-                type="password"
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSave()}
-                placeholder={`Paste your ${meta.label}...`}
-                autoFocus
-                className="flex-1 glass-base border border-white/10 focus:border-accent-primary text-white rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-none transition-all placeholder:text-text-ghost"
-              />
-              <button
-                onClick={handleSave}
-                disabled={setKey.isPending || !input.trim()}
-                className="px-6 py-2.5 bg-accent-primary text-white rounded-xl font-display font-bold text-[12px] hover:shadow-glow-primary transition-all disabled:opacity-50 disabled:grayscale uppercase"
-              >
-                {setKey.isPending ? 'SAVING...' : 'SAVE'}
-              </button>
-            </div>
-            {setKey.isError && (
-              <p className="text-[11px] text-[#E05A6B] mt-2">{(setKey.error as any)?.message || 'Failed to save key.'}</p>
+            {preview.sample_items.length > 0 && (
+              <ul className="mt-3 grid gap-1 border-t border-line pt-3">
+                <li className="text-[12px] text-fg-3">Latest items</li>
+                {preview.sample_items.slice(0, 3).map((item, i) => <li key={i} className="truncate text-[13px] text-fg-2">{item.title}</li>)}
+              </ul>
             )}
-          </motion.div>
+            <div className="mt-4 flex gap-2">
+              <Button variant="primary" onClick={confirm} disabled={add.isPending}>{add.isPending ? 'Adding…' : 'Add source'}</Button>
+              <Button variant="secondary" onClick={() => { setPreview(null); add.reset() }}>Cancel</Button>
+            </div>
+          </Card>
         )}
-      </AnimatePresence>
-    </div>
-  )
-}
+        {add.isError && <Notice tone="error" className="mt-3" title="This address could not be read">{apiErrorMessage(add.error, 'Check the address and try again.')}</Notice>}
+      </section>
 
-function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
-  return (
-    <div className="glass-void border border-white/5 rounded-xl p-5">
-      <div className="text-[10px] font-display font-bold text-text-ghost uppercase tracking-widest mb-2">{label}</div>
-      <div className="text-2xl font-display font-bold text-white">{value}</div>
-      {sub && <div className="text-[11px] text-text-muted mt-1">{sub}</div>}
-    </div>
-  )
-}
-
-function LogicClustersPanel() {
-  const { data: clusters, isLoading } = useClusters()
-  const { data: health } = useScoringHealth()
-
-  return (
-    <div className="space-y-8">
-      <section className="glass-opaque rounded-2xl p-8 border border-white/5 shadow-2xl overflow-hidden relative group">
-        <div className="pointer-events-none absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-          <GitBranch className="w-32 h-32 text-accent-primary" />
-        </div>
-        <h3 className="text-xl font-display font-bold text-white mb-2 flex items-center gap-3">
-          <GitBranch className="w-5 h-5 text-accent-primary" />
-          Logic Clusters
-        </h3>
-        <p className="text-sm text-text-secondary mb-8 font-medium">Semantic topic groups auto-generated by the clustering pipeline.</p>
-
-        {health && (
-          <div className="grid grid-cols-3 gap-4 mb-8">
-            <StatCard label="Total Items" value={health.total_items.toLocaleString()} />
-            <StatCard label="Active Clusters" value={clusters?.length ?? '—'} />
-            <StatCard label="Trending" value={health.trending_items} sub={`${health.trending_percentage}% of content`} />
+      <section>
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+          <SectionTitle title="Your sources" description={sources ? `${sources.length} sources. Switch one off to stop fetching from it.` : undefined} />
+          <div className="mb-4 flex items-center gap-1.5">
+            <label htmlFor="source-sort" className="text-[12px] text-fg-3">Sort</label>
+            <select id="source-sort" value={sortBy} onChange={(e) => setSortBy(e.target.value as SortKey)} className={cn(inputClass, 'pr-6')}>
+              {SORTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+            <Button variant="secondary" size="icon" onClick={() => setAsc((v) => !v)} aria-label={asc ? 'Ascending; switch to descending' : 'Descending; switch to ascending'}>
+              {asc ? <ArrowUpNarrowWide /> : <ArrowDownWideNarrow />}
+            </Button>
           </div>
-        )}
-
+        </div>
+        {update.isError && <Notice tone="error" className="mb-3" title="The source could not be updated">{apiErrorMessage(update.error, 'Try again.')}</Notice>}
         {isLoading ? (
-          <div className="flex justify-center py-12">
-            <div className="w-8 h-8 rounded-full border-2 border-accent-primary border-t-transparent animate-spin" />
-          </div>
-        ) : clusters && clusters.length > 0 ? (
-          <div className="glass-opaque rounded-2xl overflow-hidden border border-white/5">
-            <table className="min-w-full divide-y divide-white/5">
-              <thead className="glass-void/50">
+          <Spinner label="Loading sources…" />
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-line">
+            <table className="w-full min-w-[640px] text-left text-[13px]">
+              <thead className="border-b border-line bg-surface text-[12px] text-fg-3">
                 <tr>
-                  <th className="px-6 py-4 text-left text-xs font-display font-bold text-text-ghost uppercase tracking-widest">Label</th>
-                  <th className="px-6 py-4 text-left text-xs font-display font-bold text-text-ghost uppercase tracking-widest">Summary</th>
-                  <th className="px-6 py-4 text-right text-xs font-display font-bold text-text-ghost uppercase tracking-widest">Items</th>
+                  <th className="px-4 py-2.5 font-normal">Source</th>
+                  <th className="px-4 py-2.5 font-normal">Type</th>
+                  <th className="px-4 py-2.5 font-normal">Status</th>
+                  <th className="px-4 py-2.5 font-normal">Last fetched</th>
+                  <th className="px-4 py-2.5 text-right font-normal">Active</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/5">
-                {clusters.map((c, idx) => (
-                  <motion.tr key={c.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.04 }} className="hover:bg-white/[0.02] transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-[13px] font-bold text-white">{c.label ?? 'Unlabelled'}</span>
+              <tbody className="divide-y divide-line">
+                {sorted.map((s) => (
+                  <tr key={s.id} className="bg-bg hover:bg-surface/60">
+                    <td className="px-4 py-3">
+                      {editing?.id === s.id ? (
+                        <div className="grid gap-1.5">
+                          <input id={`source-name-${s.id}`} value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} aria-label="Name" className={inputClass} />
+                          <input id={`source-url-${s.id}`} type="url" value={editing.url} onChange={(e) => setEditing({ ...editing, url: e.target.value })} aria-label="Address" className={cn(inputClass, 'font-mono text-[12px]')} />
+                        </div>
+                      ) : (
+                        <div className="grid">
+                          <Link to={`/sources/${s.id}`} className="w-fit font-medium text-fg hover:underline" title="Show this source's items">{s.name}</Link>
+                          <a href={s.url} target="_blank" rel="noopener noreferrer" className="inline-flex w-fit items-center gap-1 font-mono text-[11.5px] text-fg-3 hover:text-fg">
+                            {host(s.url)} <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                          </a>
+                        </div>
+                      )}
                     </td>
-                    <td className="px-6 py-4 max-w-sm">
-                      <span className="text-[12px] text-text-secondary line-clamp-2">{c.summary ?? '—'}</span>
+                    <td className="px-4 py-3"><Chip>{s.type}</Chip></td>
+                    <td className="px-4 py-3">
+                      {s.consecutive_failures > 0 ? (
+                        <span className="inline-flex items-center gap-1.5 text-bad"><span className="h-1.5 w-1.5 rounded-full bg-bad" />{s.consecutive_failures} failed {s.consecutive_failures === 1 ? 'fetch' : 'fetches'}</span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-fg-2"><span className="h-1.5 w-1.5 rounded-full bg-good" />OK</span>
+                      )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right">
-                      <span className="text-[13px] font-mono font-bold text-accent-primary">{c.item_count}</span>
+                    <td className="px-4 py-3 text-fg-3">{timeAgo(s.last_fetched_at) || 'Never'}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1">
+                        {editing?.id === s.id ? (
+                          <>
+                            <Button variant="ghost" size="icon-sm" onClick={saveEdit} disabled={update.isPending || !editing.name.trim() || !editing.url.trim()} aria-label="Save"><Check /></Button>
+                            <Button variant="ghost" size="icon-sm" onClick={() => { setEditing(null); update.reset() }} aria-label="Cancel"><X /></Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button variant="ghost" size="icon-sm" onClick={() => setEditing({ id: s.id, name: s.name, url: s.url })} aria-label={`Edit ${s.name}`}><Pencil /></Button>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={s.is_active}
+                              aria-label={`Fetch from ${s.name}`}
+                              onClick={() => toggle.mutate({ id: s.id, is_active: !s.is_active })}
+                              className={cn('relative h-[18px] w-[30px] rounded-full transition-colors', s.is_active ? 'bg-accent' : 'bg-line-strong')}
+                            >
+                              <span className={cn('absolute top-[2px] left-[2px] h-[14px] w-[14px] rounded-full bg-fg shadow transition-transform', s.is_active && 'translate-x-[12px]')} />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </td>
-                  </motion.tr>
+                  </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        ) : (
-          <div className="flex flex-col items-center py-16 opacity-40">
-            <GitBranch className="w-12 h-12 text-text-ghost mb-4" />
-            <p className="text-sm font-display font-bold text-text-muted uppercase tracking-widest">No clusters yet</p>
-            <p className="text-xs text-text-ghost mt-2">Clusters are generated automatically once enough content is ingested.</p>
-          </div>
         )}
       </section>
     </div>
   )
 }
 
-function SystemCorePanel() {
-  const { data: scoring, isLoading: scoringLoading } = useScoringHealth()
-  const { data: fetch_, isLoading: fetchLoading } = useFetchHealth()
+/* ── Models and keys ── */
 
-  return (
-    <div className="space-y-8">
-      <section className="glass-opaque rounded-2xl p-8 border border-white/5 shadow-2xl overflow-hidden relative group">
-        <div className="pointer-events-none absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-          <BarChart2 className="w-32 h-32 text-accent-primary" />
-        </div>
-        <h3 className="text-xl font-display font-bold text-white mb-2 flex items-center gap-3">
-          <BarChart2 className="w-5 h-5 text-accent-primary" />
-          Scoring Health
-        </h3>
-        <p className="text-sm text-text-secondary mb-8 font-medium">Scoring pipeline metrics across all ingested content.</p>
-        {scoringLoading ? (
-          <div className="flex justify-center py-8"><div className="w-8 h-8 rounded-full border-2 border-accent-primary border-t-transparent animate-spin" /></div>
-        ) : scoring ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <StatCard label="Total Items" value={scoring.total_items.toLocaleString()} />
-            <StatCard label="Scored" value={scoring.scored_items.toLocaleString()} sub={`${scoring.unscored_items.toLocaleString()} unscored`} />
-            <StatCard label="Avg Score" value={scoring.average_score.toFixed(3)} />
-            <StatCard label="Queue Depth" value={scoring.scoring_queue_depth} sub="pending jobs" />
-          </div>
-        ) : null}
-      </section>
+const KEYS: { key: string; label: string; hint: string }[] = [
+  { key: 'OPENAI_API_KEY', label: 'OpenAI', hint: 'Used for embeddings, summaries, search and scoring.' },
+  { key: 'SEMANTIC_SCHOLAR_API_KEY', label: 'Semantic Scholar', hint: 'Adds citation counts and live paper search. Optional: without it, requests are slower and rate-limited.' },
+]
 
-      <section className="glass-opaque rounded-2xl p-8 border border-white/5 shadow-2xl overflow-hidden relative group">
-        <div className="pointer-events-none absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-          <RefreshCw className="w-32 h-32 text-accent-secondary" />
-        </div>
-        <h3 className="text-xl font-display font-bold text-white mb-2 flex items-center gap-3">
-          <RefreshCw className="w-5 h-5 text-accent-secondary" />
-          Fetch Health
-        </h3>
-        <p className="text-sm text-text-secondary mb-8 font-medium">Source harvest pipeline success and failure rates.</p>
-        {fetchLoading ? (
-          <div className="flex justify-center py-8"><div className="w-8 h-8 rounded-full border-2 border-accent-secondary border-t-transparent animate-spin" /></div>
-        ) : fetch_ ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <StatCard label="Total Fetches" value={fetch_.total_fetches.toLocaleString()} />
-            <StatCard label="Successful" value={fetch_.successful_fetches.toLocaleString()} />
-            <StatCard label="Failed" value={fetch_.failed_fetches} />
-            <StatCard label="Success Rate" value={`${fetch_.success_rate}%`} />
-          </div>
-        ) : null}
-      </section>
-    </div>
-  )
-}
+function KeyRow({ keyName, label, hint }: { keyName: string; label: string; hint: string }) {
+  const { data: keys } = useApiKeys()
+  const setKey = useSetApiKey()
+  const deleteKey = useDeleteApiKey()
+  const info = keys?.find((k) => k.key === keyName)
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState('')
+  const [revealed, setRevealed] = useState(false)
 
-export function SettingsPage() {
-  const { data: sources, isLoading: sourcesLoading } = useSources()
-  const toggleSource = useToggleSource()
-  const addSource = useAddSource()
-  const updateSource = useUpdateSource()
-
-  const [activeSection, setActiveSection] = useState('harvest')
-  const [urlInput, setUrlInput] = useState('')
-  const [previewData, setPreviewData] = useState<any>(null)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editName, setEditName] = useState('')
-  const [editUrl, setEditUrl] = useState('')
-  const [sortBy, setSortBy] = useState<SortKey>('name')
-  const [sortDir, setSortDir] = useState<SortDir>('asc')
-
-  const sortedSources = useMemo(() => sortSources(sources, sortBy, sortDir), [sources, sortBy, sortDir])
-
-  const startEdit = (source: { id: string, name: string, url: string }) => {
-    setEditingId(source.id)
-    setEditName(source.name)
-    setEditUrl(source.url)
-    updateSource.reset()
-  }
-
-  const cancelEdit = () => {
-    setEditingId(null)
-    updateSource.reset()
-  }
-
-  const saveEdit = (id: string) => {
-    updateSource.mutate(
-      { id, name: editName.trim(), url: editUrl.trim() },
-      { onSuccess: () => setEditingId(null) }
-    )
-  }
-
-  const handleDetect = async (e: React.FormEvent) => {
+  const save = (e: FormEvent) => {
     e.preventDefault()
-    if (!urlInput) return
-    
-    addSource.mutate({ url: urlInput }, {
-      onSuccess: (data) => {
-        setPreviewData(data)
-      }
-    })
-  }
-
-  const handleConfirmAdd = async () => {
-    addSource.mutate({ url: urlInput, confirm: true }, {
-      onSuccess: () => {
-        setUrlInput('')
-        setPreviewData(null)
-      }
-    })
+    if (!value.trim()) return
+    setKey.mutate({ key: keyName, value }, { onSuccess: () => { setEditing(false); setValue('') } })
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-screen">
-      <div className="glass-base border-b border-white/5 pt-28 pb-10 px-8">
-        <div className="max-w-[1200px] mx-auto">
-          <h1 className="text-3xl font-display font-bold text-white tracking-tight">Control <span className="text-accent-primary">Horizon</span></h1>
-          <p className="text-sm text-text-muted mt-2 font-medium">Configure harvesting silos, intelligence resonators, and system core parameters.</p>
-        </div>
-      </div>
-
-      <div className="max-w-[1200px] mx-auto w-full px-6 py-12 md:px-12 grid md:grid-cols-4 gap-12">
-        {/* Settings Navigation Sidebar */}
-        <div className="col-span-1 space-y-4">
-          <div className="text-[10px] font-display font-bold text-text-ghost uppercase tracking-[0.2em] px-3">Subsystems</div>
-          <nav className="space-y-1">
-            {[
-              { id: 'harvest', label: 'Content Harvest' },
-              { id: 'apis', label: 'API Keys' },
-              { id: 'clusters', label: 'Logic Clusters' },
-              { id: 'core', label: 'System Core' },
-            ].map(({ id, label }) => (
-              <button
-                key={id}
-                onClick={() => setActiveSection(id)}
-                className={`w-full text-left px-4 py-3 rounded-xl font-display font-bold text-[13px] transition-all ${
-                  activeSection === id
-                    ? 'bg-accent-primary/10 text-accent-primary border border-accent-primary/20 shadow-glow-primary'
-                    : 'text-text-muted hover:text-text-primary hover:bg-white/5'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </nav>
-        </div>
-
-        {/* Settings Content Pane */}
-        <div className="col-span-1 md:col-span-3 space-y-12">
-
-          {/* API Keys */}
-          {activeSection === 'apis' && (
-            <section className="glass-opaque rounded-2xl p-8 border border-white/5 shadow-2xl overflow-hidden relative group">
-              <div className="pointer-events-none absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-                <Key className="w-32 h-32 text-accent-primary" />
-              </div>
-              <h3 className="text-xl font-display font-bold text-white mb-2 flex items-center gap-3">
-                <Key className="w-5 h-5 text-accent-primary" />
-                API Keys
-              </h3>
-              <p className="text-sm text-text-secondary mb-8 font-medium">
-                Configure external service credentials. Keys are stored in the database and take precedence over environment variables.
-              </p>
-              <div className="space-y-4">
-                <ApiKeyRow keyName="OPENAI_API_KEY" />
-                <ApiKeyRow keyName="SEMANTIC_SCHOLAR_API_KEY" />
-              </div>
-            </section>
+    <Card className="p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="grid gap-1">
+          <p className="flex items-center gap-2 text-[14px] font-medium text-fg">
+            {label} {info?.is_set ? <Chip tone="good">Set</Chip> : <Chip>Not set</Chip>}
+          </p>
+          <p className="text-[12.5px] text-fg-3">{hint}</p>
+          {info?.is_set && !editing && (
+            <p className="flex items-center gap-2 font-mono text-[12px] text-fg-2">
+              {revealed ? info.masked_value : '••••••••••••••••'}
+              <Button variant="ghost" size="icon-sm" onClick={() => setRevealed((v) => !v)} aria-label={revealed ? 'Hide key' : 'Show key'}>
+                {revealed ? <EyeOff /> : <Eye />}
+              </Button>
+            </p>
           )}
-
-          {/* Logic Clusters */}
-          {activeSection === 'clusters' && <LogicClustersPanel />}
-
-          {/* System Core */}
-          {activeSection === 'core' && <SystemCorePanel />}
-
-          {/* Add Custom Source */}
-          {activeSection === 'harvest' && <>
-          <section className="glass-opaque rounded-2xl p-8 border border-white/5 shadow-2xl overflow-hidden relative group">
-             <div className="pointer-events-none absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-               <Orbit className="w-32 h-32 text-accent-primary" />
-             </div>
-             
-             <h3 className="text-xl font-display font-bold text-white mb-2 flex items-center gap-3">
-               <Plus className="w-5 h-5 text-accent-primary" />
-               Harvest Deployment
-             </h3>
-             <p className="text-sm text-text-secondary mb-8 font-medium">Instantiate a new intelligence harvesting node from any URL or RSS stream.</p>
-             
-             <AnimatePresence mode="wait">
-               {!previewData ? (
-                 <motion.form 
-                  key="input"
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20 }}
-                  className="space-y-6" 
-                  onSubmit={handleDetect}
-                 >
-                   <div className="space-y-2">
-                     <label className="text-[10px] font-display font-bold text-text-ghost uppercase tracking-[0.15em] ml-1">Universal Resource Locator</label>
-                     <div className="flex gap-3">
-                       <input 
-                         type="url" 
-                         value={urlInput}
-                         onChange={e => setUrlInput(e.target.value)}
-                         placeholder="https://research.deepmind.com/blog"
-                         className="flex-1 glass-void border border-white/5 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-accent-primary transition-all font-medium placeholder:text-text-ghost"
-                       />
-                       <button 
-                         type="submit" 
-                         disabled={addSource.isPending || !urlInput}
-                         className="px-8 py-3 bg-accent-primary text-white rounded-xl font-display font-bold text-[13px] hover:shadow-glow-primary transition-all disabled:opacity-50 disabled:grayscale"
-                       >
-                         {addSource.isPending ? 'SCANNING...' : 'MATERIALIZE'}
-                       </button>
-                     </div>
-                   </div>
-                   {addSource.isError && (
-                     <Alert type="error" title="Ingestion Failed">{(addSource.error as any)?.message || 'Target format unrecognized.'}</Alert>
-                   )}
-                 </motion.form>
-               ) : (
-                 <motion.div 
-                  key="preview"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  className="space-y-6"
-                 >
-                   <div className="glass-void border border-accent-secondary/20 rounded-xl p-6">
-                     <div className="flex items-start justify-between mb-6">
-                       <div className="flex gap-4">
-                         <div className="w-12 h-12 rounded-xl bg-accent-secondary/10 flex items-center justify-center text-accent-secondary border border-accent-secondary/20 shadow-glow-secondary">
-                           <Activity className="w-6 h-6" />
-                         </div>
-                         <div>
-                           <h4 className="text-xl font-display font-bold text-white mb-1 flex items-center gap-2">
-                             {previewData.source_name}
-                           </h4>
-                           <span className="text-[10px] font-mono font-bold text-accent-secondary border border-accent-secondary/30 px-2 py-0.5 rounded-md uppercase">
-                             Stream Type: {previewData.source_type}
-                           </span>
-                         </div>
-                       </div>
-                       <Check className="w-6 h-6 text-green-500" />
-                     </div>
-                     
-                     <div className="space-y-3">
-                       <h5 className="text-[10px] font-display font-bold tracking-widest text-text-ghost uppercase flex items-center gap-2">
-                         <Orbit className="w-3 h-3" />
-                         HARVEST PREVIEW
-                       </h5>
-                       <div className="grid gap-2">
-                         {previewData.sample_items?.slice(0, 2).map((item: any, idx: number) => (
-                           <div key={idx} className="glass-base p-3 rounded-lg border border-white/5">
-                             <h6 className="text-[13px] font-bold text-text-primary truncate">{item.title}</h6>
-                           </div>
-                         ))}
-                       </div>
-                     </div>
-                     
-                     <div className="mt-8 flex gap-3">
-                        <button 
-                          onClick={handleConfirmAdd}
-                          disabled={addSource.isPending}
-                          className="flex-1 py-3 bg-accent-secondary text-white rounded-xl font-display font-bold text-[13px] hover:shadow-glow-secondary transition-all"
-                        >
-                         {addSource.isPending ? 'DEPLOYING...' : 'CONFIRM DEPLOYMENT'}
-                        </button>
-                        <button 
-                          onClick={() => { setPreviewData(null); addSource.reset() }}
-                          className="px-6 py-3 glass-base border border-white/10 text-white rounded-xl font-display font-bold text-[13px] hover:bg-white/5 transition-all"
-                        >
-                          ABORT
-                        </button>
-                     </div>
-                   </div>
-                 </motion.div>
-               )}
-             </AnimatePresence>
-          </section>
-
-          {/* Active Sources Table */}
-          <section className="space-y-6">
-             <div className="flex items-center justify-between gap-4 px-1 flex-wrap">
-               <div className="flex items-center gap-3">
-                 <Shield className="w-5 h-5 text-accent-primary" />
-                 <h3 className="text-xl font-display font-bold text-white">Active Reservoirs</h3>
-                 <span className="text-[10px] font-mono font-bold text-accent-primary bg-accent-primary/10 border border-accent-primary/20 px-2 py-1 rounded-md tracking-wider">
-                   {sources?.length ?? 0} SOURCE{(sources?.length ?? 0) === 1 ? '' : 'S'}
-                 </span>
-               </div>
-               <div className="flex items-center gap-2">
-                 <label htmlFor="source-sort" className="text-[10px] font-display font-bold text-text-ghost uppercase tracking-[0.15em]">Sort</label>
-                 <select
-                   id="source-sort"
-                   value={sortBy}
-                   onChange={e => setSortBy(e.target.value as SortKey)}
-                   className="glass-void border border-white/10 text-white rounded-lg px-3 py-1.5 text-xs font-display font-bold focus:outline-none focus:border-accent-primary transition-all cursor-pointer"
-                 >
-                   {SORT_OPTIONS.map(opt => (
-                     <option key={opt.value} value={opt.value} className="bg-void text-white">{opt.label}</option>
-                   ))}
-                 </select>
-                 <button
-                   type="button"
-                   onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
-                   title={sortDir === 'asc' ? 'Ascending — click for descending' : 'Descending — click for ascending'}
-                   aria-label={`Sort direction: ${sortDir === 'asc' ? 'ascending' : 'descending'}`}
-                   className="glass-void border border-white/10 text-text-muted hover:text-accent-primary hover:border-accent-primary/40 rounded-lg p-2 transition-all"
-                 >
-                   {sortDir === 'asc'
-                     ? <ArrowUpNarrowWide className="w-4 h-4" />
-                     : <ArrowDownWideNarrow className="w-4 h-4" />}
-                 </button>
-               </div>
-             </div>
-
-             {updateSource.isError && (
-               <Alert type="error" title="Update Failed">{(updateSource.error as any)?.response?.data?.detail || 'Could not update this source.'}</Alert>
-             )}
-
-             <div className="glass-opaque rounded-2xl overflow-hidden border border-white/5 shadow-xl">
-               {sourcesLoading ? (
-                 <div className="p-20 flex justify-center">
-                   <div className="w-8 h-8 rounded-full border-2 border-accent-primary border-t-transparent animate-spin" />
-                 </div>
-               ) : sources && sources.length > 0 ? (
-                 <div className="overflow-x-auto">
-                   <table className="min-w-full divide-y divide-white/5">
-                     <thead className="glass-void/50">
-                       <tr>
-                         <th className="px-6 py-4 text-left text-xs font-display font-bold text-text-ghost uppercase tracking-widest">Materialized Source</th>
-                         <th className="px-6 py-4 text-left text-xs font-display font-bold text-text-ghost uppercase tracking-widest">Protocol</th>
-                         <th className="px-6 py-4 text-left text-xs font-display font-bold text-text-ghost uppercase tracking-widest">Health State</th>
-                         <th className="px-6 py-4 text-right text-xs font-display font-bold text-text-ghost uppercase tracking-widest">Inertia</th>
-                       </tr>
-                     </thead>
-                     <tbody className="divide-y divide-white/5">
-                       {sortedSources.map((source, idx) => (
-                         <motion.tr 
-                          key={source.id} 
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: idx * 0.05 }}
-                          className="hover:bg-white/[0.02] transition-colors"
-                         >
-                           <td className="px-6 py-5 whitespace-nowrap">
-                             {editingId === source.id ? (
-                               <div className="flex flex-col gap-2 min-w-[280px]">
-                                 <input
-                                   type="text"
-                                   value={editName}
-                                   onChange={e => setEditName(e.target.value)}
-                                   placeholder="Source name"
-                                   className="glass-void border border-white/10 text-white rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-accent-primary transition-all font-bold placeholder:text-text-ghost"
-                                 />
-                                 <input
-                                   type="url"
-                                   value={editUrl}
-                                   onChange={e => setEditUrl(e.target.value)}
-                                   placeholder="https://..."
-                                   className="glass-void border border-white/10 text-text-secondary rounded-lg px-3 py-1.5 text-[11px] font-mono focus:outline-none focus:border-accent-primary transition-all placeholder:text-text-ghost"
-                                 />
-                               </div>
-                             ) : (
-                               <div className="flex flex-col">
-                                 <span className="text-[15px] font-bold text-white group-hover:text-accent-primary transition-colors">{source.name}</span>
-                                 <a href={source.url} target="_blank" rel="noopener noreferrer" className="text-[11px] font-mono text-text-ghost hover:text-accent-primary flex items-center gap-1.5 mt-1 transition-colors">
-                                   {safeHostname(source.url)} <ExternalLink className="w-3 h-3" />
-                                 </a>
-                               </div>
-                             )}
-                           </td>
-                           <td className="px-6 py-5 whitespace-nowrap">
-                             <span className="text-[10px] font-mono font-bold text-text-muted bg-white/5 px-2 py-0.5 rounded border border-white/5 uppercase tracking-wider">{source.type}</span>
-                           </td>
-                           <td className="px-6 py-5 whitespace-nowrap">
-                             {source.consecutive_failures > 0 ? (
-                               <div className="flex items-center gap-2 text-xs text-[#E05A6B] font-bold font-display uppercase tracking-widest">
-                                 <div className="w-1.5 h-1.5 rounded-full bg-[#E05A6B] shadow-[0_0_8px_#E05A6B]" />
-                                 {source.consecutive_failures} DESYNC
-                               </div>
-                             ) : (
-                               <div className="flex items-center gap-2 text-xs text-[#5AE07F] font-bold font-display uppercase tracking-widest">
-                                 <div className="w-1.5 h-1.5 rounded-full bg-[#5AE07F] shadow-[0_0_8px_#5AE07F]" />
-                                 RESONANT
-                               </div>
-                             )}
-                           </td>
-                           <td className="px-6 py-5 whitespace-nowrap text-right">
-                             {editingId === source.id ? (
-                               <div className="flex items-center justify-end gap-2">
-                                 <button
-                                   onClick={() => saveEdit(source.id)}
-                                   disabled={updateSource.isPending || !editName.trim() || !editUrl.trim()}
-                                   title="Save changes"
-                                   className="p-2 rounded-lg text-[#5AE07F] hover:bg-[#5AE07F]/10 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
-                                 >
-                                   {updateSource.isPending ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                                 </button>
-                                 <button
-                                   onClick={cancelEdit}
-                                   title="Cancel"
-                                   className="p-2 rounded-lg text-text-ghost hover:text-white hover:bg-white/5 transition-colors"
-                                 >
-                                   <X className="w-4 h-4" />
-                                 </button>
-                               </div>
-                             ) : (
-                               <div className="flex items-center justify-end gap-4">
-                                 <button
-                                   onClick={() => startEdit(source)}
-                                   title="Edit source"
-                                   className="text-text-ghost hover:text-accent-primary transition-colors"
-                                 >
-                                   <Pencil className="w-4 h-4" />
-                                 </button>
-                                 <button
-                                   onClick={() => toggleSource.mutate({ id: source.id, is_active: !source.is_active })}
-                                   className={`relative inline-flex h-5 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition-all duration-500 focus:outline-none ${source.is_active ? 'bg-accent-primary' : 'bg-void border border-white/10'}`}
-                                 >
-                                   <span className="sr-only">Toggle Inertia</span>
-                                   <span className={`pointer-events-none inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-lg transition-transform duration-500 ease-glass ${source.is_active ? 'translate-x-[10px]' : 'translate-x-[-10px]'}`} />
-                                 </button>
-                               </div>
-                             )}
-                           </td>
-                         </motion.tr>
-                       ))}
-                     </tbody>
-                   </table>
-                 </div>
-               ) : (
-                 <div className="p-20 text-center flex flex-col items-center opacity-30">
-                   <Cpu className="w-12 h-12 text-text-ghost mb-4 animate-pulse" />
-                   <p className="text-sm font-display font-medium text-text-muted uppercase tracking-widest">Harvest Field Depleted</p>
-                 </div>
-               )}
-             </div>
-          </section>
-          </>}
+        </div>
+        <div className="flex gap-1.5">
+          {info?.is_set && !editing && (
+            <Button variant="ghost" size="icon" onClick={() => deleteKey.mutate(keyName)} disabled={deleteKey.isPending} aria-label={`Remove the ${label} key`}><Trash2 /></Button>
+          )}
+          <Button variant="secondary" size="sm" onClick={() => { setEditing((v) => !v); setValue('') }}>
+            {editing ? 'Cancel' : info?.is_set ? 'Replace' : 'Add key'}
+          </Button>
         </div>
       </div>
-    </div>
+      {editing && (
+        <form onSubmit={save} className="mt-3 flex gap-2">
+          <input id={`key-${keyName}`} type="password" autoFocus value={value} onChange={(e) => setValue(e.target.value)} placeholder={`Paste your ${label} key`} aria-label={`${label} key`} className={cn(inputClass, 'h-9 flex-1 font-mono')} />
+          <Button type="submit" variant="primary" className="h-9" disabled={setKey.isPending || !value.trim()}>{setKey.isPending ? 'Saving…' : 'Save'}</Button>
+        </form>
+      )}
+      {setKey.isError && <p className="mt-2 text-[12px] text-bad">{apiErrorMessage(setKey.error, 'The key could not be saved.')}</p>}
+    </Card>
   )
 }
 
+function KeysSection() {
+  return (
+    <section>
+      <SectionTitle title="Models and keys" description="Keys saved here are stored in the database and override the ones in your environment file." />
+      <div className="grid gap-3">
+        {KEYS.map((k) => <KeyRow key={k.key} keyName={k.key} label={k.label} hint={k.hint} />)}
+      </div>
+    </section>
+  )
+}
+
+/* ── Appearance ── */
+
+const LOOKS: { value: Accent; label: string; note: string }[] = [
+  { value: 'gold', label: 'Gold', note: 'Warm bronze and starlight, like a temple at night.' },
+  { value: 'indigo', label: 'Indigo', note: 'Cool silver and violet, a more technical feel.' },
+]
+
+function AppearanceSection() {
+  const accent = useAppStore((s) => s.accent)
+  const setAccent = useAppStore((s) => s.setAccent)
+  return (
+    <section>
+      <SectionTitle title="Appearance" description="Athena has one dark look in two accents. The change applies everywhere straight away." />
+      <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="Accent colour">
+        {LOOKS.map((look) => (
+          <button
+            key={look.value}
+            type="button"
+            role="radio"
+            aria-checked={accent === look.value}
+            data-accent={look.value}
+            onClick={() => setAccent(look.value)}
+            className={cn(
+              'flex items-center gap-4 rounded-xl border bg-surface p-4 text-left transition-colors',
+              accent === look.value ? 'border-accent-line shadow-[0_0_0_3px_var(--accent-soft)]' : 'border-line hover:border-line-strong',
+            )}
+          >
+            <OwlCoin size={52} full />
+            <span className="grid gap-0.5">
+              <span className="text-[14px] font-medium text-fg">{look.label}</span>
+              <span className="text-[12.5px] text-fg-3">{look.note}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/* ── Clusters ── */
+
+function ClustersSection() {
+  const { data: clusters, isLoading } = useClusters()
+  const { data: health } = useScoringHealth()
+  return (
+    <section className="grid gap-5">
+      <SectionTitle title="Clusters" description="Groups the clustering job builds from item embeddings. Small groups are hidden on the Clusters page." />
+      {health && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Stat label="Items" value={health.total_items.toLocaleString()} />
+          <Stat label="Clusters" value={clusters?.length ?? '—'} />
+          <Stat label="Trending" value={health.trending_items} sub={`${health.trending_percentage}% of items`} />
+        </div>
+      )}
+      {isLoading ? (
+        <Spinner label="Loading clusters…" />
+      ) : clusters?.length ? (
+        <div className="overflow-x-auto rounded-xl border border-line">
+          <table className="w-full min-w-[560px] text-left text-[13px]">
+            <thead className="border-b border-line bg-surface text-[12px] text-fg-3">
+              <tr>
+                <th className="px-4 py-2.5 font-normal">Label</th>
+                <th className="px-4 py-2.5 font-normal">Summary</th>
+                <th className="px-4 py-2.5 text-right font-normal">Items</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {clusters.map((c) => (
+                <tr key={c.id} className="bg-bg">
+                  <td className="px-4 py-3 font-medium whitespace-nowrap text-fg">{c.label ?? 'Unnamed'}</td>
+                  <td className="px-4 py-3 text-fg-2"><span className="line-clamp-2">{c.summary ?? '—'}</span></td>
+                  <td className="px-4 py-3 text-right font-mono tabular-nums text-fg-2">{c.item_count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <Notice title="No clusters yet">They are built automatically once enough items have been fetched.</Notice>
+      )}
+    </section>
+  )
+}
+
+/* ── Health ── */
+
+function HealthSection() {
+  const { data: scoring, isLoading: scoringLoading } = useScoringHealth()
+  const { data: fetches, isLoading: fetchLoading } = useFetchHealth()
+  return (
+    <section className="grid gap-6">
+      <div>
+        <SectionTitle title="Scoring" description="How much of the library has a relevance score." />
+        {scoringLoading ? <Spinner /> : scoring && (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat label="Items" value={scoring.total_items.toLocaleString()} />
+            <Stat label="Scored" value={scoring.scored_items.toLocaleString()} sub={`${scoring.unscored_items.toLocaleString()} waiting`} />
+            <Stat label="Average score" value={scoring.average_score.toFixed(2)} />
+            <Stat label="Queue" value={scoring.scoring_queue_depth} sub="jobs waiting" />
+          </div>
+        )}
+      </div>
+      <div>
+        <SectionTitle title="Fetching" description="How often fetching from sources succeeds." />
+        {fetchLoading ? <Spinner /> : fetches && (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat label="Fetches" value={fetches.total_fetches.toLocaleString()} />
+            <Stat label="Succeeded" value={fetches.successful_fetches.toLocaleString()} />
+            <Stat label="Failed" value={fetches.failed_fetches.toLocaleString()} />
+            <Stat label="Success rate" value={`${fetches.success_rate}%`} />
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+/* ── Sync ── */
+
+function SyncSection() {
+  const [starting, setStarting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const start = async () => {
+    setStarting(true)
+    setError(null)
+    try {
+      await apiClient.post('/sync')
+    } catch (e) {
+      setError(apiErrorMessage(e, 'The sync could not be started.'))
+    } finally {
+      setStarting(false)
+    }
+  }
+  return (
+    <section>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <SectionTitle title="Sync log" description="Live output from the worker while it fetches from your sources. A sync also runs on its own schedule." />
+        <Button variant="secondary" onClick={start} disabled={starting}><RefreshCw className={starting ? 'animate-spin' : undefined} /> Sync now</Button>
+      </div>
+      {error && <Notice tone="error" className="mb-3" title={error}>Check that the API and the Celery worker are running.</Notice>}
+      <SyncLog />
+    </section>
+  )
+}
