@@ -3,8 +3,8 @@ Research evolution, Phase 2: full text for each topic's Tier 2 papers, then the 
 
 Tier 2 is a topic's milestones, main path and each milestone's strongest successors. The full-text
 step downloads their PDFs (arXiv first), parses them with GROBID and stores sections, chunks and
-citing sentences; it needs GROBID running (`docker run -d --name athena-grobid -p 8070:8070
-grobid/grobid:0.9.1-crf`) but no GPU. The GPU lane then embeds the chunks with Qwen3-Embedding-8B
+citing sentences; it needs GROBID running (`docker compose -f docker/docker-compose.yml up -d grobid`)
+but no GPU. The GPU lane then embeds the chunks with Qwen3-Embedding-8B
 and labels the citing sentences with Qwen3.5-9B, one model at a time.
 
 Usage:

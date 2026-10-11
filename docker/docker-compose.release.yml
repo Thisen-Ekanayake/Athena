@@ -22,6 +22,7 @@ services:
       DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
+      GROBID_URL: http://grobid:8070
     depends_on:
       - redis
       - db
@@ -56,6 +57,11 @@ services:
     restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
+
+  # Parses Tier 2 PDFs for the research-evolution full-text job.
+  grobid:
+    image: grobid/grobid:0.9.1-crf
+    restart: unless-stopped
 
 volumes:
   postgres_data:

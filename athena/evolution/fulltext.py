@@ -310,7 +310,7 @@ class FullTextFetcher:
         except httpx.HTTPError as exc:
             raise RuntimeError(
                 f"GROBID is not reachable at {self.grobid_url}. Start it with "
-                "`docker run -d --name athena-grobid -p 8070:8070 grobid/grobid:0.9.1-crf`."
+                "`docker compose -f docker/docker-compose.yml up -d grobid`."
             ) from exc
 
 

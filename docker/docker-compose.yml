@@ -30,6 +30,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       # Keep container staging on the mounted volume regardless of .env's value.
       ATHENA_STAGING_DIR: /tmp/athena/staging
+      GROBID_URL: http://grobid:8070
     depends_on:
       - redis
       - db
@@ -77,6 +78,14 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+
+  # Parses Tier 2 PDFs for the research-evolution full-text job (athena/evolution/fulltext.py).
+  # The CRF image is CPU only; natively run workers reach it at http://localhost:8070.
+  grobid:
+    image: grobid/grobid:0.9.1-crf
+    restart: always
+    ports:
+      - "8070:8070"
 
   # Optional read-only copy of the research-evolution graph (athena/evolution/neo4j_export.py).
   # Not started by default: docker compose -f docker/docker-compose.yml --profile graph up -d neo4j
