@@ -177,13 +177,14 @@ export const useTopicTimeline = (slug: string | undefined) =>
     staleTime: 5 * 60 * 1000,
   })
 
-export const useTopicGaps = (slug: string | undefined) =>
-  useQuery({
-    queryKey: ['evolution', 'gaps', slug],
-    queryFn: async () => (await apiClient.get<TopicGaps>(`/evolution/topics/${slug}/gaps`)).data,
-    enabled: !!slug,
-    staleTime: 5 * 60 * 1000,
-  })
+export const topicGapsQuery = (slug: string | undefined) => ({
+  queryKey: ['evolution', 'gaps', slug],
+  queryFn: async () => (await apiClient.get<TopicGaps>(`/evolution/topics/${slug}/gaps`)).data,
+  enabled: !!slug,
+  staleTime: 5 * 60 * 1000,
+})
+
+export const useTopicGaps = (slug: string | undefined) => useQuery(topicGapsQuery(slug))
 
 export const usePaperDetail = (slug: string | undefined, paperId: string | null) =>
   useQuery({

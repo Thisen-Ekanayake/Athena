@@ -1,5 +1,5 @@
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
-import { apiClient, type FeedResponse, type TrendingResponse, type ClusterInfo } from './client'
+import { apiClient, type FeedItem, type FeedResponse, type TrendingResponse, type ClusterInfo } from './client'
 
 export const useFeed = (
   sort: 'score' | 'date' | 'trending' = 'score', 
@@ -9,7 +9,7 @@ export const useFeed = (
   limit: number = 20
 ) => {
   return useInfiniteQuery<FeedResponse>({
-    queryKey: ['feed', sort, category, dateRange, sourceId],
+    queryKey: ['feed', sort, category, dateRange, sourceId, limit],
     queryFn: async ({ pageParam = 1 }) => {
       const { data } = await apiClient.get<FeedResponse>('/feed', {
         params: { sort, category, date_range: dateRange !== 'all' ? dateRange : undefined, source_id: sourceId, page: pageParam, limit }
@@ -46,11 +46,17 @@ export const useClusters = (category: string | null = null) => {
   })
 }
 
+export interface ItemDetail extends FeedItem {
+  abstract: string | null
+  fetched_at: string | null
+  summarised_at: string | null
+}
+
 export const useItemDetail = (itemId: string, enabled: boolean = false) => {
   return useQuery({
     queryKey: ['item', itemId],
     queryFn: async () => {
-      const { data } = await apiClient.get(`/items/${itemId}`)
+      const { data } = await apiClient.get<ItemDetail>(`/items/${itemId}`)
       return data
     },
     enabled
