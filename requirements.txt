@@ -11,6 +11,7 @@ python-dotenv
 loguru
 newspaper3k
 lxml_html_clean
+lxml
 arxiv
 openai
 qdrant-client
@@ -30,3 +31,4 @@ umap-learn
 hdbscan
 scikit-learn
 mlflow
+python-igraph

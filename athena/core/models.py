@@ -377,3 +377,262 @@ class AppSetting(Base):
     key = Column(String, primary_key=True)
     value = Column(String, nullable=False)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ── Research evolution ───────────────────────────────────────────────
+# Papers here are a separate corpus from content_items: they come from
+# OpenAlex, are grouped into curated topics, and never enter the feed.
+
+
+class EvoTopic(Base):
+    """A curated research topic whose evolution graph is built ahead of time."""
+    __tablename__ = "evo_topics"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    slug = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)
+    aliases = Column(ARRAY(String), default=[])
+    description = Column(String, nullable=True)
+    seeds = Column(JSONB, default=[])   # [{openalex_id, title, year, arxiv_id}] hand-picked anchors
+    config = Column(JSONB, default={})  # corpus limits and milestone weights; see athena.evolution.config
+    status = Column(String, default="pending")  # pending | building | ready | failed
+    status_detail = Column(String, nullable=True)
+    built_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    topic_papers = relationship("EvoTopicPaper", back_populates="topic", cascade="all, delete-orphan")
+
+
+class EvoPaper(Base):
+    """One paper (an OpenAlex work), shared across topics."""
+    __tablename__ = "evo_papers"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    openalex_id = Column(String, unique=True, nullable=False)  # short form, e.g. "W2626778328"
+    doi = Column(String, nullable=True, index=True)
+    arxiv_id = Column(String, nullable=True, index=True)
+    title = Column(String, nullable=False)
+    abstract = Column(String, nullable=True)
+    year = Column(Integer, nullable=True)            # repaired first-appearance year
+    year_source = Column(String, nullable=True)      # seed | arxiv | citers | openalex
+    openalex_year = Column(Integer, nullable=True)   # as reported, kept for auditing the repair
+    venue = Column(String, nullable=True)
+    work_type = Column(String, nullable=True)
+    authors = Column(JSONB, default=[])
+    cited_by_count = Column(Integer, default=0)      # OpenAlex's count
+    s2_paper_id = Column(String, nullable=True, index=True)  # Semantic Scholar paperId
+    s2_cited_by_count = Column(Integer, nullable=True)       # often far higher for ML preprints
+    primary_topic = Column(String, nullable=True)
+    is_oa = Column(Boolean, default=False)
+    oa_pdf_url = Column(String, nullable=True)
+    full_text_status = Column(String, default="unavailable")  # unavailable | available | parsed | failed
+    abstract_embedded_at = Column(DateTime(timezone=True), nullable=True)  # Tier 1: in Qdrant's paper_abstracts
+    merged_ids = Column(ARRAY(String), default=[])   # duplicate OpenAlex records folded into this one
+    content_item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=True)
+    extra = Column(JSONB, default={})
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class EvoCitation(Base):
+    """citing_id cites cited_id. Only edges between papers in some topic corpus are stored."""
+    __tablename__ = "evo_citations"
+    __table_args__ = (
+        UniqueConstraint("citing_id", "cited_id", name="uq_evo_citation"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    citing_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    cited_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    source = Column(String, default="openalex")  # openalex | grobid | s2
+
+
+class EvoTopicPaper(Base):
+    """A paper's place in one topic: graph scores and milestone status."""
+    __tablename__ = "evo_topic_papers"
+    __table_args__ = (
+        UniqueConstraint("topic_id", "paper_id", name="uq_evo_topic_paper"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"), nullable=False)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"), nullable=False)
+    role = Column(String, default="core")       # seed | core
+    kind = Column(String, default="method")     # method | survey | dataset | benchmark
+    in_degree = Column(Integer, default=0)      # citations from inside the topic
+    out_degree = Column(Integer, default=0)
+    pagerank = Column(Float, default=0.0)
+    citation_percentile = Column(Float, default=0.0)  # citations relative to topic papers from nearby years, 0-1
+    specificity = Column(Float, default=0.0)    # share of the paper's citations that come from this topic
+    on_main_path = Column(Boolean, default=False)
+    named_method = Column(String, nullable=True)
+    milestone_score = Column(Float, default=0.0)
+    is_milestone_auto = Column(Boolean, default=False)
+    score_detail = Column(JSONB, default={})
+
+    topic = relationship("EvoTopic", back_populates="topic_papers")
+    paper = relationship("EvoPaper")
+
+
+class EvoMainPathEdge(Base):
+    """An edge on a topic's main path, with its search path count (SPC) weight."""
+    __tablename__ = "evo_main_path_edges"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"), nullable=False)
+    citing_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"), nullable=False)
+    cited_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"), nullable=False)
+    spc_weight = Column(Float, nullable=False)
+
+
+class EvoMilestoneOverride(Base):
+    """A person's pin or unpin of a milestone. Applied at read time, so rebuilds never undo it."""
+    __tablename__ = "evo_milestone_overrides"
+    __table_args__ = (
+        UniqueConstraint("topic_id", "paper_id", name="uq_evo_milestone_override"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"), nullable=False)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"), nullable=False)
+    action = Column(String, nullable=False)  # pin | unpin
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class EvoSection(Base):
+    """A section of a Tier 2 paper's full text, parsed by GROBID."""
+    __tablename__ = "evo_sections"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    position = Column(Integer, nullable=False)       # order in the paper; the abstract comes first
+    heading = Column(String, nullable=False)
+    number = Column(String, nullable=True)           # "3.2", as GROBID read it
+    section_type = Column(String, nullable=False)    # see athena.evolution.tei.SECTION_TYPES
+    rule_type = Column(String, nullable=True)        # the heading rule's answer before inheritance
+    n_sentences = Column(Integer, default=0)
+
+
+class EvoChunk(Base):
+    """About 300 words of one section. The id doubles as the point id in Qdrant's paper_chunks."""
+    __tablename__ = "evo_chunks"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    section_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_sections.id", ondelete="CASCADE"), nullable=False)
+    position = Column(Integer, nullable=False)       # order within the paper
+    section_type = Column(String, nullable=False)
+    text = Column(String, nullable=False)            # without the title and heading prefix added for embedding
+    n_words = Column(Integer, default=0)
+    embedded_at = Column(DateTime(timezone=True), nullable=True)  # null: waiting for the GPU lane
+
+
+class EvoCitationContext(Base):
+    """A sentence in which citing_id cites cited_id, and what the classifier said about it.
+
+    A strict gap -> resolution link is a context whose label states a limitation of the cited
+    paper (addresses_limitation or criticises) and whose problem is attributed to the cited
+    paper's own method (``attributed``).
+    """
+    __tablename__ = "evo_citation_contexts"
+    __table_args__ = (
+        UniqueConstraint("citing_id", "cited_id", "sentence_hash", name="uq_evo_citation_context"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    citing_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    cited_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    source = Column(String, nullable=False)          # grobid | s2
+    section_type = Column(String, nullable=True)     # unknown for Semantic Scholar contexts
+    sentence = Column(String, nullable=False)
+    sentence_hash = Column(String, nullable=False)
+    marked = Column(String, nullable=True)           # the sentence with the cited paper's markers in [[ ]]
+    mention = Column(String, nullable=True)          # the word right before the citation marker ("LoRA")
+    cues = Column(JSONB, default=[])                 # contrast and limitation cue words in the sentence
+    s2_intents = Column(JSONB, default=[])
+    label = Column(String, nullable=True)            # Task B label; null until classified
+    attributed = Column(Boolean, nullable=True)      # asked only for limitation labels
+    model = Column(String, nullable=True)
+    labelled_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class EvoGapStatement(Base):
+    """A sentence stating a research gap: a paper's own limitation, or a later paper stating one of it.
+
+    ``paper_id`` is the paper the gap belongs to; ``source_paper_id`` the paper whose text states it.
+    Own statements (origin "own") are candidates until the 9B labels them; statements from strict
+    links (origin "citing") are gaps by construction.
+    """
+    __tablename__ = "evo_gap_statements"
+    __table_args__ = (
+        UniqueConstraint("source_paper_id", "paper_id", "sentence_hash", name="uq_evo_gap_statement"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    source_paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                             nullable=False, index=True)
+    origin = Column(String, nullable=False)          # own | citing
+    context_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_citation_contexts.id", ondelete="CASCADE"),
+                        nullable=True)
+    section_type = Column(String, nullable=True)
+    sentence = Column(String, nullable=False)
+    sentence_hash = Column(String, nullable=False)
+    label = Column(String, nullable=True)            # gap | not_gap; null until classified
+    model = Column(String, nullable=True)
+    labelled_at = Column(DateTime(timezone=True), nullable=True)
+    embedded_at = Column(DateTime(timezone=True), nullable=True)      # vector in Qdrant's gap_statements
+    loose_checked_at = Column(DateTime(timezone=True), nullable=True)  # loose links searched
+
+
+class EvoGapTheme(Base):
+    """A cluster of one topic's gap statements, with how often it was stated each year."""
+    __tablename__ = "evo_gap_themes"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    label = Column(String, nullable=False)           # distinctive terms of its statements
+    size = Column(Integer, nullable=False)
+    yearly = Column(JSONB, default={})               # {"2021": 3, ...}, by the year the stating paper appeared
+    first_year = Column(Integer, nullable=True)
+    last_year = Column(Integer, nullable=True)
+    status = Column(String, nullable=False)          # persisting | new | addressed | quiet
+    detail = Column(JSONB, default={})               # papers, fixes, counts by origin
+    built_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class EvoGapThemeMember(Base):
+    __tablename__ = "evo_gap_theme_members"
+
+    theme_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_gap_themes.id", ondelete="CASCADE"), primary_key=True)
+    gap_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_gap_statements.id", ondelete="CASCADE"),
+                    primary_key=True, index=True)
+
+
+class EvoLooseLink(Base):
+    """A later paper whose text matches an earlier paper's gap, with no citation needed. Shown dashed, on request.
+
+    ``chunk_id`` is not a foreign key: chunk IDs survive re-parsing, and a link to a chunk that is gone
+    simply drops out of reads.
+    """
+    __tablename__ = "evo_loose_links"
+    __table_args__ = (
+        UniqueConstraint("gap_id", "paper_id", name="uq_evo_loose_link"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    gap_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_gap_statements.id", ondelete="CASCADE"),
+                    nullable=False, index=True)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    chunk_id = Column(PG_UUID(as_uuid=True), nullable=False)
+    score = Column(Float, nullable=False)            # cosine similarity of the best matching chunk
+    cites = Column(Boolean, default=False)           # whether the later paper cites the gap's paper anyway
