@@ -5,7 +5,7 @@ Each function computes a single normalised score in [0.0, 1.0].
 """
 import math
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 from loguru import logger
@@ -149,7 +149,7 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (norm_a * norm_b))
 
 
-def _get_reference_embeddings(openai_client) -> tuple:
+def _get_reference_embeddings(embed: Callable[[List[str]], np.ndarray]) -> tuple:
     """Get or compute reference pole embeddings (cached in module globals)."""
     global _cached_positive_embeddings, _cached_negative_embeddings
 
@@ -157,18 +157,8 @@ def _get_reference_embeddings(openai_client) -> tuple:
         return _cached_positive_embeddings, _cached_negative_embeddings
 
     try:
-        pos_response = openai_client.embeddings.create(
-            input=POSITIVE_POLES,
-            model="text-embedding-3-small"
-        )
-        neg_response = openai_client.embeddings.create(
-            input=NEGATIVE_POLES,
-            model="text-embedding-3-small"
-        )
-
-        _cached_positive_embeddings = np.array([d.embedding for d in pos_response.data])
-        _cached_negative_embeddings = np.array([d.embedding for d in neg_response.data])
-
+        _cached_positive_embeddings = np.asarray(embed(POSITIVE_POLES))
+        _cached_negative_embeddings = np.asarray(embed(NEGATIVE_POLES))
         return _cached_positive_embeddings, _cached_negative_embeddings
     except Exception as e:
         logger.error(f"Failed to compute reference embeddings: {e}")
@@ -198,11 +188,15 @@ def _extract_comments(metadata: Dict[str, Any]) -> List[str]:
 
 def compute_sentiment_score(
     metadata: Dict[str, Any],
-    openai_client=None,
+    embed: Optional[Callable[[List[str]], np.ndarray]] = None,
 ) -> float:
     """
     Compute semantic sentiment by embedding comments and comparing cosine
-    similarity to positive/negative reference poles.
+    similarity to positive and negative reference poles.
+
+    The score is 0.5 plus how much closer the comments sit to the positive
+    poles than to the negative ones, so it does not depend on the range of
+    similarities a particular embedding model produces.
 
     Returns 0.5 (neutral) if no comments are available or if embedding fails.
     """
@@ -210,34 +204,28 @@ def compute_sentiment_score(
     if not comments:
         return 0.5
 
-    if openai_client is None:
+    if embed is None:
         return 0.5
 
     try:
-        pos_embeds, neg_embeds = _get_reference_embeddings(openai_client)
+        pos_embeds, neg_embeds = _get_reference_embeddings(embed)
         if pos_embeds is None or neg_embeds is None:
             return 0.5
 
         # Embed comments in batches of 50
         all_comment_embeds = []
         for i in range(0, len(comments), 50):
-            batch = comments[i:i + 50]
-            response = openai_client.embeddings.create(
-                input=batch,
-                model="text-embedding-3-small"
-            )
-            all_comment_embeds.extend([d.embedding for d in response.data])
+            all_comment_embeds.extend(np.asarray(embed(comments[i:i + 50])))
 
-        comment_embeddings = np.array(all_comment_embeds)
-
-        # For each comment, compute mean similarity to positive pole
-        positive_similarities = []
-        for comment_emb in comment_embeddings:
-            sims = [_cosine_similarity(comment_emb, pos) for pos in pos_embeds]
-            positive_similarities.append(np.mean(sims))
+        # For each comment, mean similarity to the positive poles minus the negative ones
+        margins = []
+        for comment_emb in all_comment_embeds:
+            pos = np.mean([_cosine_similarity(comment_emb, p) for p in pos_embeds])
+            neg = np.mean([_cosine_similarity(comment_emb, n) for n in neg_embeds])
+            margins.append(pos - neg)
 
         # Mean across all comments
-        sentiment = float(np.mean(positive_similarities))
+        sentiment = 0.5 + float(np.mean(margins))
         return min(1.0, max(0.0, sentiment))
 
     except Exception as e:
