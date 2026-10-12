@@ -32,7 +32,7 @@ export function AskPaper({ itemId }: { itemId: string }) {
 
   useEffect(() => {
     let dead = false
-    fetch(`${API_BASE}/items/${itemId}/qa/status`)
+    fetch(`${API_BASE}/items/${itemId}/qa/status`, { credentials: 'include' })
       .then((r) => r.json())
       .then((d: { status?: Grounding }) => {
         if (!dead) setGrounding(d.status ?? null)
@@ -52,7 +52,7 @@ export function AskPaper({ itemId }: { itemId: string }) {
   const prefetch = () => {
     if (prefetched.current) return
     prefetched.current = true
-    fetch(`${API_BASE}/items/${itemId}/qa/prefetch`).catch(() => {})
+    fetch(`${API_BASE}/items/${itemId}/qa/prefetch`, { credentials: 'include' }).catch(() => {})
   }
 
   const send = async (question: string) => {
@@ -69,6 +69,7 @@ export function AskPaper({ itemId }: { itemId: string }) {
     try {
       const res = await fetch(`${API_BASE}/items/${itemId}/qa`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, history: past }),
         signal: controller.signal,

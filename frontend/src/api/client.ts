@@ -1,14 +1,29 @@
 import axios from 'axios'
+import { queryClient } from './queryClient'
 
 /** Base URL of the v1 API, shared by axios and the streaming endpoints (Q&A, sync events). */
 export const API_BASE: string = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
 
-// Create a configured axios instance
+// Create a configured axios instance. The session lives in an httpOnly cookie, so requests carry credentials.
 export const apiClient = axios.create({
   baseURL: API_BASE,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
+})
+
+// A 401 means the session ended (logged out elsewhere, deactivated, expired); a 403 with this detail means a
+// temporary password must be replaced. Either way, re-read who is logged in and let the route guard redirect.
+apiClient.interceptors.response.use(undefined, (error) => {
+  const status = error?.response?.status
+  const detail = error?.response?.data?.detail
+  if (status === 401 || (status === 403 && detail === 'password_change_required')) {
+    if (!String(error?.config?.url ?? '').startsWith('/auth/')) {
+      queryClient.invalidateQueries({ queryKey: ['auth'] })
+    }
+  }
+  return Promise.reject(error)
 })
 
 // Types for the API responses

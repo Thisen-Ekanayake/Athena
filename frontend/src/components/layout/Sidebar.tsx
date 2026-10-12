@@ -1,6 +1,8 @@
-import { Link, NavLink } from 'react-router-dom'
-import { Bookmark, GitBranch, House, Layers, Newspaper, Settings, TrendingUp, type LucideIcon } from 'lucide-react'
+import { Link, NavLink, useNavigate } from 'react-router-dom'
+import { Bookmark, GitBranch, House, Layers, LogOut, Newspaper, Settings, TrendingUp, type LucideIcon } from 'lucide-react'
+import { useCurrentUser, useLogout } from '../../api/queries/auth'
 import { useAppStore, type Accent } from '../../store/appStore'
+import { Button } from '../../ui/Button'
 import { OwlCoin } from '../../ui/OwlCoin'
 import { cn } from '../../ui/cn'
 
@@ -39,6 +41,38 @@ function Item({ to, label, icon: Icon, end, compact, onNavigate }: { to: string;
   )
 }
 
+/** Who is logged in, with a way out. The name links to the Account settings. */
+function UserMenu({ compact, onNavigate }: { compact: boolean; onNavigate?: () => void }) {
+  const user = useCurrentUser()
+  const logout = useLogout()
+  const navigate = useNavigate()
+  if (!user) return null
+  const initial = (user.display_name || user.email).trim().charAt(0).toUpperCase()
+  return (
+    <div className={cn('flex items-center gap-1', compact && 'max-lg:flex-col')}>
+      <Link
+        to="/settings/account"
+        onClick={onNavigate}
+        title={`${user.display_name} (${user.email})`}
+        className={cn('flex h-8 min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 text-fg-2 hover:bg-surface-2/70 hover:text-fg', compact && 'max-lg:justify-center max-lg:px-0')}
+      >
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-2 text-[11px] font-medium text-fg shadow-[0_0_0_1px_var(--line)]" aria-hidden="true">{initial}</span>
+        <span className={cn('min-w-0 truncate text-[13px]', compact && 'max-lg:sr-only')}>{user.display_name}</span>
+      </Link>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={() => logout.mutate(undefined, { onSettled: () => navigate('/login', { replace: true }) })}
+        disabled={logout.isPending}
+        aria-label="Log out"
+        title="Log out"
+      >
+        <LogOut />
+      </Button>
+    </div>
+  )
+}
+
 /**
  * The app's navigation. On desktop it narrows to icons below 1024px; on phones the same
  * content opens as a sheet (`compact={false}`).
@@ -74,6 +108,7 @@ export function Sidebar({ compact = true, onNavigate, className }: { compact?: b
           ))}
         </div>
         <Item to="/settings" label="Settings" icon={Settings} compact={compact} onNavigate={onNavigate} />
+        <UserMenu compact={compact} onNavigate={onNavigate} />
       </div>
     </aside>
   )
