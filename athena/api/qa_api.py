@@ -3,7 +3,6 @@ import tiktoken
 from athena.core.models import ContentCategory
 from athena.core.qa_fetcher import select_relevant_sections
 from athena.core.qa_prompt import build_messages, prune_history_if_needed
-import openai
 import json
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -14,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
+from athena.core import llm
 from athena.core.models import ContentItem, QAFetchCache, QAUsageLog
 from athena.core.qa_fetcher import fetch_article_content
 from athena.api.deps import get_db, get_current_user_required
@@ -94,7 +94,7 @@ class QARequest(BaseModel):
 
 def est_tokens(text: str) -> int:
     try:
-        enc = tiktoken.encoding_for_model("gpt-4o-mini")
+        enc = tiktoken.get_encoding("o200k_base")  # an estimate; the served model counts its own
         return len(enc.encode(text))
     except Exception:
         return int(len(text.split()) * 1.3)
@@ -160,18 +160,21 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
         input_tokens = sum(est_tokens(m["content"]) for m in messages)
 
         # 4. Stream response
+        model = llm.chat_model("qa")
+
         async def generate():
-            client = openai.AsyncOpenAI()
+            client = llm.async_chat_client()
             try:
                 # Send partial content flag as initial event
                 if result.partial:
                     yield f"data: {json.dumps({'partial': True, 'method': result.method})}\n\n"
 
                 stream = await client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model=model,
                     messages=messages,
                     max_tokens=800,
                     stream=True,
+                    extra_body=llm.chat_extra(),
                 )
 
                 answer_tokens = 0
@@ -184,7 +187,7 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
 
                 # Update tokens and cost
                 total_tokens = input_tokens + answer_tokens
-                cost = (input_tokens * 0.150 / 1_000_000) + (answer_tokens * 0.600 / 1_000_000)
+                cost = llm.cost(input_tokens, answer_tokens)
 
                 r.incrby(f"qa_session_tokens:{session_id}", total_tokens)
                 r.expire(f"qa_session_tokens:{session_id}", 86400)
@@ -203,7 +206,7 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
                     history_tokens=0,
                     answer_tokens=answer_tokens,
                     total_cost_usd=cost,
-                    model="gpt-4o-mini",
+                    model=model,
                     partial_content=result.partial,
                     success=True
                 )

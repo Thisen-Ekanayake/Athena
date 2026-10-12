@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 from loguru import logger
-from openai import OpenAI
 
-from athena.core.config_store import get_setting
+from athena.core import llm
 
-MODEL = "gpt-4o"
 MAX_TOKENS = 2000
 MAX_PAPERS_ON_OVERFLOW = 12
-PROMPT_OVERFLOW_CHARS = 300_000
+PROMPT_OVERFLOW_CHARS = 60_000  # about 15k tokens, inside the local 9B's 20k context with room for the answer
 
 SYSTEM_PROMPT = (
     "You are an expert academic research assistant. Your task is to write a "
@@ -53,13 +51,13 @@ def generate_lit_review(topic: str, papers: list[dict]) -> str:
 
     user_prompt = _build_user_prompt(topic, trimmed)
 
-    client = OpenAI(api_key=get_setting("OPENAI_API_KEY"))
-    response = client.chat.completions.create(
-        model=MODEL,
+    response = llm.chat_client().chat.completions.create(
+        model=llm.chat_model("lit_review"),
         max_tokens=MAX_TOKENS,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
         ],
+        extra_body=llm.chat_extra(),
     )
     return response.choices[0].message.content or ""

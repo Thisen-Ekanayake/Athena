@@ -1,7 +1,7 @@
 """
 Athena Layer 4 — Summarisation Core Logic
 
-Contains utilities for Redis-based budget tracking, Pydantic validation of OpenAI
+Contains utilities for Redis-based budget tracking, Pydantic validation of model
 responses, and core logic for formatting prompts and generating summaries.
 """
 import os
@@ -13,6 +13,7 @@ from pydantic import BaseModel, validator
 from loguru import logger
 from sqlalchemy import select
 
+from athena.core import llm
 from athena.core.models import PromptVersion, SummaryUsageLog, JobType
 from athena.core.redis_client import get_redis
 
@@ -101,11 +102,10 @@ def log_usage_and_update_spend(
     error_message: Optional[str] = None,
     item_id: Optional[str] = None,
     cluster_id: Optional[str] = None,
-    model: str = "gpt-4o-mini"
+    model: str = ""
 ):
-    """Logs usage to the DB and increments daily spend in Redis."""
-    # gpt-4o-mini pricing: $0.15 / 1M input, $0.60 / 1M output options
-    cost = (input_tokens * 0.00015 + output_tokens * 0.0006) / 1000
+    """Logs usage to the DB and increments daily spend in Redis (zero for local models)."""
+    cost = llm.cost(input_tokens, output_tokens)
 
     key = 'summary_spend:' + today_date()
     redis.incrbyfloat(key, cost)
