@@ -39,9 +39,9 @@ class Settings:
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 50
 
-    # Qdrant collection name
+    # Qdrant collection the embedding worker fills (athena.pipeline.embedding_worker.COLLECTION_NAME)
     QDRANT_COLLECTION: str = os.getenv(
-        "QDRANT_COLLECTION", "athena_embeddings"
+        "QDRANT_COLLECTION", "athena_content"
     )
 
 
