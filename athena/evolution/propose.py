@@ -109,7 +109,7 @@ def variants(query: str) -> list[str]:
     q = clean_query(query).lower().replace('"', "")
     out = [q, q.replace("-", " ")]
     words = q.split()
-    if 1 < len(words) <= 4:
+    if 1 < len(words) <= 4 and "-" not in q:  # "mixture-of-experts"; an already hyphenated query has its form
         out.append("-".join(words))
     return [v for v in dict.fromkeys(out) if v]
 
