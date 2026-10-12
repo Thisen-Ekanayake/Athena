@@ -3,11 +3,13 @@ import { Link, NavLink, useParams } from 'react-router-dom'
 import { ArrowDownWideNarrow, ArrowUpNarrowWide, Check, Eye, EyeOff, Pencil, RefreshCw, Trash2, X, ExternalLink } from 'lucide-react'
 import { apiClient, type Source } from '../api/client'
 import { apiErrorMessage } from '../api/error'
+import { useCreateUser, useCurrentUser, useIsAdmin, useResetPassword, useUpdateUser, useUsers, type AuthUser, type IssuedUser, type Role } from '../api/queries/auth'
 import { useApiKeys, useDeleteApiKey, useModelSettings, useSetApiKey, useTestModels, useUpdateModelSettings, type ModelTestResult } from '../api/queries/app_settings'
 import { useClusters, useFetchHealth, useScoringHealth } from '../api/queries/phase4'
 import { useAddSource, useSources, useToggleSource, useUpdateSource, type PreviewResponse } from '../api/queries/sources'
 import { timeAgo } from '../components/items/format'
 import { SyncLog } from '../components/layout/SyncLog'
+import { PasswordForm } from './AuthPages'
 import { useAppStore, type Accent } from '../store/appStore'
 import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
@@ -17,19 +19,22 @@ import { OwlCoin } from '../ui/OwlCoin'
 import { PageHeader } from '../ui/PageHeader'
 import { Spinner } from '../ui/Spinner'
 import { cn } from '../ui/cn'
+import { inputClass } from '../ui/inputClass'
 
+// Admin tabs change Athena for everyone; Account and Appearance are each person's own.
 const TABS = [
-  { id: 'sources', label: 'Sources' },
-  { id: 'keys', label: 'Models and keys' },
-  { id: 'appearance', label: 'Appearance' },
-  { id: 'clusters', label: 'Clusters' },
-  { id: 'health', label: 'Health' },
-  { id: 'sync', label: 'Sync log' },
+  { id: 'sources', label: 'Sources', admin: true },
+  { id: 'keys', label: 'Models and keys', admin: true },
+  { id: 'users', label: 'Users', admin: true },
+  { id: 'account', label: 'Account', admin: false },
+  { id: 'appearance', label: 'Appearance', admin: false },
+  { id: 'clusters', label: 'Clusters', admin: true },
+  { id: 'health', label: 'Health', admin: true },
+  { id: 'sync', label: 'Sync log', admin: true },
 ] as const
 
 type Tab = (typeof TABS)[number]['id']
 
-const inputClass = 'h-8 min-w-0 rounded-lg border border-line bg-surface-2 px-2.5 text-[13px] text-fg placeholder:text-fg-3 focus:border-accent-line focus:outline-none'
 
 function SectionTitle({ title, description }: { title: string; description?: ReactNode }) {
   return (
@@ -50,17 +55,19 @@ function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: st
   )
 }
 
-/** Where Athena fetches from, the keys it uses, how it looks, and how its pipeline is doing. */
+/** Your account and how Athena looks; for admins also where it fetches from, its models, users and pipeline. */
 export function SettingsPage() {
   const { tab } = useParams<{ tab?: string }>()
-  const active: Tab = TABS.some((t) => t.id === tab) ? (tab as Tab) : 'sources'
+  const isAdmin = useIsAdmin()
+  const tabs = TABS.filter((t) => isAdmin || !t.admin)
+  const active: Tab = tabs.some((t) => t.id === tab) ? (tab as Tab) : isAdmin ? 'sources' : 'account'
 
   return (
     <div className="mx-auto max-w-[1100px]">
       <PageHeader title="Settings" />
       <div className="grid gap-8 md:grid-cols-[200px_minmax(0,1fr)]">
         <nav className="flex gap-1 overflow-x-auto md:flex-col" aria-label="Settings sections">
-          {TABS.map((t) => (
+          {tabs.map((t) => (
             <NavLink
               key={t.id}
               to={`/settings/${t.id}`}
@@ -76,6 +83,8 @@ export function SettingsPage() {
         <div className="min-w-0">
           {active === 'sources' && <SourcesSection />}
           {active === 'keys' && <KeysSection />}
+          {active === 'users' && <UsersSection />}
+          {active === 'account' && <AccountSection />}
           {active === 'appearance' && <AppearanceSection />}
           {active === 'clusters' && <ClustersSection />}
           {active === 'health' && <HealthSection />}
@@ -445,6 +454,168 @@ function KeysSection() {
           {KEYS.map((k) => <KeyRow key={k.key} keyName={k.key} label={k.label} hint={k.hint} />)}
         </div>
       </div>
+    </section>
+  )
+}
+
+/* ── Account ── */
+
+function AccountSection() {
+  const user = useCurrentUser()
+  if (!user) return null
+  return (
+    <section className="grid gap-8">
+      <div>
+        <SectionTitle title="Account" />
+        <Card className="grid gap-1 p-4 text-[13px]">
+          <p className="flex items-center gap-2 text-[14px] font-medium text-fg">
+            {user.display_name} <Chip tone={user.role === 'admin' ? 'accent' : 'neutral'}>{user.role === 'admin' ? 'Admin' : 'User'}</Chip>
+          </p>
+          <p className="text-fg-2">{user.email}</p>
+          {user.last_login_at && <p className="text-[12px] text-fg-3">Last login {timeAgo(user.last_login_at)}</p>}
+        </Card>
+      </div>
+      <div>
+        <SectionTitle title="Password" description="Changing it logs out your other sessions. Forgot it? Your admin can issue a temporary one." />
+        <Card className="max-w-[420px] p-4"><PasswordForm /></Card>
+      </div>
+    </section>
+  )
+}
+
+/* ── Users ── */
+
+/** A temporary password is only ever shown once, right after it is made. */
+function IssuedPassword({ issued, onClose }: { issued: IssuedUser; onClose: () => void }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    navigator.clipboard?.writeText(issued.temporary_password).then(() => setCopied(true)).catch(() => {})
+  }
+  return (
+    <Notice tone="warn" title={`Temporary password for ${issued.email}`}>
+      <div className="mt-1 grid gap-2">
+        <p className="flex flex-wrap items-center gap-2">
+          <code className="rounded-md border border-line bg-surface-2 px-2 py-1 font-mono text-[13px] text-fg">{issued.temporary_password}</code>
+          <Button variant="secondary" size="sm" onClick={copy}>{copied ? <><Check /> Copied</> : 'Copy'}</Button>
+        </p>
+        <p>Give it to them privately. It is not shown again; they choose their own password when they first log in.</p>
+        <div><Button variant="ghost" size="sm" onClick={onClose}>Done</Button></div>
+      </div>
+    </Notice>
+  )
+}
+
+function UsersSection() {
+  const me = useCurrentUser()
+  const { data: users, isLoading, isError, error } = useUsers()
+  const create = useCreateUser()
+  const updateUser = useUpdateUser()
+  const reset = useResetPassword()
+  const [email, setEmail] = useState('')
+  const [name, setName] = useState('')
+  const [role, setRole] = useState<Role>('user')
+  const [issued, setIssued] = useState<IssuedUser | null>(null)
+
+  const add = (e: FormEvent) => {
+    e.preventDefault()
+    create.mutate({ email, display_name: name, role }, {
+      onSuccess: (made) => {
+        setIssued(made)
+        setEmail('')
+        setName('')
+        setRole('user')
+      },
+    })
+  }
+  const resetFor = (u: AuthUser) => {
+    if (!window.confirm(`Reset the password of ${u.email}? Their sessions end and they get a new temporary password.`)) return
+    reset.mutate(u.id, { onSuccess: setIssued })
+  }
+  const failure = updateUser.error ?? reset.error
+
+  return (
+    <section className="grid gap-6">
+      <SectionTitle
+        title="Users"
+        description="There is no public sign-up: add people here and pass on their temporary password. Users can read everything, save lists, ask questions and build maps up to a daily limit; admins can also change sources, models, users and maps."
+      />
+      <Card className="p-4">
+        <form onSubmit={add} className="grid gap-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto_auto] sm:items-end">
+          <label className="grid gap-1">
+            <span className="text-[12px] text-fg-3">Email</span>
+            <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={cn(inputClass, 'h-9')} />
+          </label>
+          <label className="grid gap-1">
+            <span className="text-[12px] text-fg-3">Name</span>
+            <input required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} className={cn(inputClass, 'h-9')} />
+          </label>
+          <label className="grid gap-1">
+            <span className="text-[12px] text-fg-3">Role</span>
+            <select value={role} onChange={(e) => setRole(e.target.value as Role)} className={cn(inputClass, 'h-9 pr-6')}>
+              <option value="user">User</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+          <Button type="submit" variant="primary" className="h-9" disabled={create.isPending}>{create.isPending ? 'Adding…' : 'Add user'}</Button>
+        </form>
+        {create.isError && <p className="mt-2 text-[12px] text-bad">{apiErrorMessage(create.error, 'The account could not be created.')}</p>}
+      </Card>
+      {issued && <IssuedPassword issued={issued} onClose={() => setIssued(null)} />}
+      {failure && <Notice tone="error">{apiErrorMessage(failure, 'That change could not be made.')}</Notice>}
+      {isLoading ? <Spinner label="Loading users…" /> : isError ? (
+        <Notice tone="error">{apiErrorMessage(error, 'The users could not be loaded.')}</Notice>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-line">
+          <table className="w-full min-w-[640px] text-left text-[13px]">
+            <thead className="border-b border-line bg-surface text-[12px] text-fg-3">
+              <tr>
+                <th className="px-4 py-2.5 font-medium">Name</th>
+                <th className="px-4 py-2.5 font-medium">Role</th>
+                <th className="px-4 py-2.5 font-medium">Last login</th>
+                <th className="px-4 py-2.5 font-medium">Status</th>
+                <th className="px-4 py-2.5" />
+              </tr>
+            </thead>
+            <tbody>
+              {(users ?? []).map((u) => {
+                const self = u.id === me?.id
+                return (
+                  <tr key={u.id} className="border-b border-line last:border-0">
+                    <td className="px-4 py-3">
+                      <p className="text-fg">{u.display_name}{self && <span className="text-fg-3"> (you)</span>}</p>
+                      <p className="text-[12px] text-fg-3">{u.email}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <select
+                        value={u.role}
+                        disabled={self || updateUser.isPending}
+                        onChange={(e) => updateUser.mutate({ id: u.id, role: e.target.value as Role })}
+                        aria-label={`Role of ${u.email}`}
+                        className={cn(inputClass, 'pr-6')}
+                      >
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </td>
+                    <td className="px-4 py-3 text-fg-2">{u.last_login_at ? timeAgo(u.last_login_at) : 'Never'}</td>
+                    <td className="px-4 py-3">
+                      {!u.is_active ? <Chip tone="bad">Deactivated</Chip> : u.must_change_password ? <Chip tone="warn">Temporary password</Chip> : <Chip tone="good">Active</Chip>}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex justify-end gap-1.5">
+                        <Button variant="ghost" size="sm" onClick={() => resetFor(u)} disabled={self || reset.isPending}>Reset password</Button>
+                        <Button variant="secondary" size="sm" onClick={() => updateUser.mutate({ id: u.id, is_active: !u.is_active })} disabled={self || updateUser.isPending}>
+                          {u.is_active ? 'Deactivate' : 'Reactivate'}
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   )
 }

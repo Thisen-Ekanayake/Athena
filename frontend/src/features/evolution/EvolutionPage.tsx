@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Form
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, GitBranch, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { apiErrorMessage } from '../../api/error'
+import { useIsAdmin } from '../../api/queries/auth'
 import { Button, ButtonLink } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
 import { EmptyState } from '../../ui/EmptyState'
@@ -203,6 +204,7 @@ function TopicList() {
 
 function TopicCard({ topic: t }: { topic: EvolutionTopic }) {
   const remove = useDeleteTopic()
+  const isAdmin = useIsAdmin()
   const onDelete = (e: MouseEvent) => {
     e.preventDefault()
     if (window.confirm(`Delete the map for “${t.name}”? Its papers stay available to other maps.`)) remove.mutate(t.slug)
@@ -213,7 +215,7 @@ function TopicCard({ topic: t }: { topic: EvolutionTopic }) {
         <h3 className="text-[15px] font-medium text-fg">{t.name}</h3>
         <span className="flex items-center gap-1">
           {t.status !== 'ready' && <Chip tone={t.status === 'failed' ? 'bad' : 'neutral'}>{STATUS_LABEL[t.status]}</Chip>}
-          {t.origin === 'search' && (
+          {t.origin === 'search' && isAdmin && (
             <Button variant="ghost" size="icon-sm" onClick={onDelete} disabled={remove.isPending} aria-label={`Delete ${t.name}`} title="Delete this map">
               <Trash2 />
             </Button>
@@ -413,11 +415,14 @@ function BuildFailed({ topic }: { topic: EvolutionTopic }) {
   )
 }
 
-/** Rebuild (for instance once a Semantic Scholar key is set) and delete, for maps built from a search. */
+/** Rebuild (for instance once a Semantic Scholar key is set) and delete, for maps built from a search. Admins only:
+ *  maps are shared by every user. */
 function SearchTopicActions({ topic, className }: { topic: EvolutionTopic; className?: string }) {
   const navigate = useNavigate()
   const rebuild = useRebuildTopic(topic.slug)
   const remove = useDeleteTopic()
+  const isAdmin = useIsAdmin()
+  if (!isAdmin) return null
   const busy = topic.status === 'refining' || isBuilding(topic.status)
   const onDelete = () => {
     if (window.confirm(`Delete the map for “${topic.name}”? Its papers stay available to other maps.`)) {

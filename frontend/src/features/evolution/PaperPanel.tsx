@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ExternalLink, Pin, PinOff, RotateCcw, X } from 'lucide-react'
+import { useIsAdmin } from '../../api/queries/auth'
 import { Button } from '../../ui/Button'
 import { Spinner } from '../../ui/Spinner'
 import { usePaperDetail, useSetMilestone, type EvolutionNode, type LooseMatch, type PaperGap, type StrictLink } from './api'
@@ -31,6 +32,7 @@ const YEAR_SOURCE: Record<string, string> = {
 export function PaperPanel({ slug, paperId, onSelect, onClose }: PaperPanelProps) {
   const { data: paper, isLoading, error } = usePaperDetail(slug, paperId)
   const setMilestone = useSetMilestone(slug)
+  const isAdmin = useIsAdmin()  // pinning changes the map for everyone
   const [note, setNote] = useState('')
   const [showAbstract, setShowAbstract] = useState(false)
 
@@ -50,9 +52,9 @@ export function PaperPanel({ slug, paperId, onSelect, onClose }: PaperPanelProps
   }
 
   const status = paper.milestone_override === 'pin'
-    ? 'Milestone (pinned by you)'
+    ? 'Milestone (pinned by an admin)'
     : paper.milestone_override === 'unpin'
-      ? 'Not a milestone (unpinned by you)'
+      ? 'Not a milestone (unpinned by an admin)'
       : paper.is_milestone ? 'Milestone (picked automatically)' : 'Not a milestone'
 
   const act = (action: 'pin' | 'unpin' | 'reset') =>
@@ -126,6 +128,7 @@ export function PaperPanel({ slug, paperId, onSelect, onClose }: PaperPanelProps
 
       <section className="flex flex-col gap-2">
         <h4 className="text-[11px] font-medium tracking-[0.08em] text-fg-3 uppercase">{status}</h4>
+        {isAdmin && (<>
         <input
           id="milestone-note"
           value={note}
@@ -152,6 +155,7 @@ export function PaperPanel({ slug, paperId, onSelect, onClose }: PaperPanelProps
           )}
         </div>
         {setMilestone.isError && <p className="text-[12px] text-bad">Saving failed. Check that the API is running and try again.</p>}
+        </>)}
       </section>
 
       <Links

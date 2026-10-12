@@ -35,7 +35,7 @@ export function TimelineStrip({ timeline, selectedId, onSelect }: TimelineStripP
                 )}
               >
                 <span className="line-clamp-2">
-                  {p.milestone_override === 'pin' && <Pin className="mr-1 mb-0.5 inline h-3 w-3 text-accent" aria-label="Pinned by you" />}
+                  {p.milestone_override === 'pin' && <Pin className="mr-1 mb-0.5 inline h-3 w-3 text-accent" aria-label="Pinned by an admin" />}
                   {p.named_method ?? p.title}
                 </span>
               </button>
