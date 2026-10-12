@@ -2,10 +2,10 @@
 OpenAlex client for building topic corpora.
 
 Costs (OpenAlex pricing as of 2026): single-record lookups by ID or DOI are
-free, list and filter calls cost $0.0001 each (title search $0.001). The
-free allowance is $0.10/day without a key and $1/day with a free key from
-openalex.org/settings/api. Responses are cached on disk so rebuilding a
-topic does not spend the allowance twice.
+free, list and filter calls cost $0.0001 each, and keyword or semantic
+searches $0.001. The free allowance is $0.10/day without a key and $1/day
+with a free key from openalex.org/settings/api. Responses are cached on disk
+so rebuilding a topic does not spend the allowance twice.
 
 OpenAlex metadata for ML preprints is imperfect: LoRA's arXiv DOI resolves
 to a record titled "LoRA Fine-Tuning of a 3B Code LLM for Algorithmic
@@ -39,6 +39,21 @@ WORK_FIELDS = ",".join([
 ])
 
 
+# OpenAlex's 26 fields (primary_topic.field). Filters take the ID: several names contain commas, which
+# would split a filter value.
+FIELD_IDS = {
+    "Agricultural and Biological Sciences": 11, "Arts and Humanities": 12,
+    "Biochemistry, Genetics and Molecular Biology": 13, "Business, Management and Accounting": 14,
+    "Chemical Engineering": 15, "Chemistry": 16, "Computer Science": 17, "Decision Sciences": 18,
+    "Earth and Planetary Sciences": 19, "Economics, Econometrics and Finance": 20, "Energy": 21, "Engineering": 22,
+    "Environmental Science": 23, "Immunology and Microbiology": 24, "Materials Science": 25, "Mathematics": 26,
+    "Medicine": 27, "Neuroscience": 28, "Nursing": 29, "Pharmacology, Toxicology and Pharmaceutics": 30,
+    "Physics and Astronomy": 31, "Psychology": 32, "Social Sciences": 33, "Veterinary": 34, "Dentistry": 35,
+    "Health Professions": 36,
+}
+SEMANTIC_MAX = 50  # search.semantic returns at most 50 works
+
+
 class OpenAlexBudgetError(RuntimeError):
     """The daily OpenAlex allowance is used up."""
 
@@ -64,6 +79,24 @@ def arxiv_id_from(raw: dict) -> str | None:
             if match:
                 return match.group(1)
     return None
+
+
+def search_expression(terms: list[str]) -> str:
+    """Terms for a ``.search`` filter, any of them: '"mixture of experts" OR moe'.
+
+    Phrases are quoted; commas and other punctuation are dropped, since a comma would end the filter.
+    """
+    parts = []
+    for term in terms:
+        clean = " ".join(re.sub(r"[^\w\s-]", " ", term.lower()).split())
+        if clean:
+            parts.append(f'"{clean}"' if re.search(r"[\s-]", clean) else clean)
+    return " OR ".join(dict.fromkeys(parts))
+
+
+def _field_filter(fields: list[str] | None) -> str:
+    ids = [str(FIELD_IDS[f]) for f in fields or [] if f in FIELD_IDS]
+    return f",primary_topic.field.id:{'|'.join(ids)}" if ids else ""
 
 
 def arxiv_year(arxiv_id: str | None) -> int | None:
@@ -211,6 +244,56 @@ class OpenAlexClient:
                 break
             page += 1
         return works
+
+    def search_works(self, terms: list[str], limit: int, fields: list[str] | None = None,
+                     in_title: bool = False) -> list[Work]:
+        """The ``limit`` most-cited works whose title and abstract (or only title) match any of ``terms``.
+
+        Each page of 200 is one search call ($0.001). ``fields`` are OpenAlex field names; empty means any.
+        """
+        expression = search_expression(terms)
+        if not expression or limit <= 0:
+            return []
+        kind = "title.search" if in_title else "title_and_abstract.search"
+        works: list[Work] = []
+        page = 1
+        while len(works) < limit:
+            per_page = min(PER_PAGE, limit - len(works))
+            data = self._get("/works", {"filter": f"{kind}:{expression}{_field_filter(fields)}",
+                                        "sort": "cited_by_count:desc", "per-page": per_page, "page": page,
+                                        "select": WORK_FIELDS})
+            batch = [Work.from_api(raw) for raw in data.get("results", [])]
+            works += batch
+            if len(batch) < per_page:
+                break
+            page += 1
+        return works
+
+    def semantic_search(self, query: str, limit: int = SEMANTIC_MAX, fields: list[str] | None = None) -> list[Work]:
+        """Works whose title and abstract are nearest ``query`` in OpenAlex's embedding space ($0.001).
+
+        Finds papers that never use the query's words (Switch Transformer for "mixture of experts").
+        Best effort: the endpoint is newer than the rest, so a failure returns nothing.
+        """
+        params = {"search.semantic": query[:2000], "per-page": min(limit, SEMANTIC_MAX), "select": WORK_FIELDS}
+        if fields:
+            params["filter"] = _field_filter(fields).lstrip(",")
+        try:
+            data = self._get("/works", params)
+        except httpx.HTTPError as exc:
+            logger.warning(f"OpenAlex semantic search failed: {exc}")
+            return []
+        return [Work.from_api(raw) for raw in data.get("results", [])]
+
+    def field_counts(self, terms: list[str]) -> list[tuple[str, int]]:
+        """How many works matching ``terms`` (title and abstract) fall in each field, largest first ($0.001)."""
+        expression = search_expression(terms)
+        if not expression:
+            return []
+        data = self._get("/works", {"filter": f"title_and_abstract.search:{expression}",
+                                    "group_by": "primary_topic.field.id"})
+        groups = [(g.get("key_display_name") or "", int(g.get("count") or 0)) for g in data.get("group_by", [])]
+        return sorted([g for g in groups if g[0] and g[1] > 0], key=lambda g: -g[1])
 
     # ── transport ───────────────────────────────────────────────────
 
