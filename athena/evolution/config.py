@@ -49,6 +49,8 @@ class TopicConfig:
     # Semantic Scholar search does; they still need min_links. Each 200 costs one search ($0.001).
     openalex_search_max: int = 0
     # Relevance: papers whose title (full weight) or abstract (half) mentions one of these are on-topic.
+    # A keyword matches at the start of a word ("detect" finds "detector"); in double quotes ('"mot"') it
+    # matches the whole word only.
     # Off-topic papers stay in the graph as context, but cannot be milestones or on the main path.
     # Empty means every paper is on-topic.
     keywords: list[str] = field(default_factory=list)

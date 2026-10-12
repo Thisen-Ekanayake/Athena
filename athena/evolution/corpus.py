@@ -73,11 +73,36 @@ class Corpus:
     edge_sources: dict[tuple[str, str], str] = field(default_factory=dict)  # openalex | s2; missing means openalex
 
 
+_SURVEY = re.compile(r"\b(survey|review|overview|tutorial|primer|taxonomy)\b", re.IGNORECASE)
+_DATASET = re.compile(r"\b(dataset|data set|corpus|database)\b", re.IGNORECASE)
+_BENCHMARK = re.compile(r"\b(benchmark|leaderboard|challenge)\b", re.IGNORECASE)
+
+
+def classify_kind(title: str, work_type: str | None = None) -> str:
+    """method | survey | dataset | benchmark, from the title (and OpenAlex's type for reviews)."""
+    if work_type == "review" or _SURVEY.search(title):
+        return "survey"
+    if _DATASET.search(title):
+        return "dataset"
+    if _BENCHMARK.search(title):
+        return "benchmark"
+    return "method"
+
+
+def _keyword_part(keyword: str) -> str:
+    k = keyword.lower()
+    if len(k) > 2 and k[0] == k[-1] == '"':
+        # Quoted: the whole word only (a plural too), for acronyms such as "mot" that start common words.
+        return re.escape(k[1:-1]) + r"(?:e?s)?(?![a-z0-9])"
+    return re.escape(k)
+
+
 @lru_cache(maxsize=64)
 def _keyword_pattern(keywords: tuple[str, ...]) -> re.Pattern:
     # Keywords match at the start of a word: "lora" finds "LoRA" and "LoRAs" but not "exploration",
-    # and the stem "detect" finds "detection" and "detector".
-    return re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(k.lower()) for k in keywords) + ")")
+    # and the stem "detect" finds "detection" and "detector". A quoted keyword ('"mot"') matches the
+    # whole word only, so it does not find "motion".
+    return re.compile(r"(?<![a-z0-9])(?:" + "|".join(_keyword_part(k) for k in keywords) + ")")
 
 
 def relevance(title: str, abstract: str | None, keywords: list[str]) -> float:
@@ -135,9 +160,11 @@ def add_openalex_hits(client: OpenAlexClient, seed_works: dict[str, Work], candi
     Without Semantic Scholar this is how a topic reaches papers its seeds' citer lists miss. They join
     the corpus only through ``min_links``, like every candidate.
     """
-    if not (config.openalex_search_max and search_terms):
+    # Short single words ("moe", "mot") mean other things in other fields; phrases are safer to search.
+    terms = [t.strip('"') for t in search_terms if len(t.strip('"')) >= 5 or re.search(r"[\s-]", t)]
+    if not (config.openalex_search_max and terms):
         return {}
-    hits = client.search_works(list(search_terms), config.openalex_search_max, config.fields)
+    hits = client.search_works(terms, config.openalex_search_max, config.fields)
     added = 0
     for work in hits:
         if work.openalex_id not in seed_works and work.openalex_id not in candidates:

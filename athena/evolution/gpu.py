@@ -33,10 +33,9 @@ from athena.core.models import EvoTopic
 from athena.database import evolution as db
 from athena.database.db import SessionLocal
 from athena.evolution import vectors
-from athena.evolution.classify import Classifier, auth_headers, managed_servers
+from athena.evolution.classify import CHAT_MODEL_DEFAULT, Classifier, auth_headers, managed_servers, model_path
 from athena.evolution.gaps import build_themes
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 # Phase 0: throughput is the same with one slot as with eight, and every input must fit one ubatch.
 MAX_CHUNK_TOKENS = 900
 EXTERNAL_MAX_WORDS = 600  # without a tokenizer endpoint, a word cap well inside common 8k contexts
@@ -112,21 +111,16 @@ def llama_server(url: str, model: Path, args: list[str], log_name: str):
             proc.kill()
 
 
-def _model_path(setting: str, default: str) -> Path:
-    path = Path(get_setting(setting, default))
-    return path if path.is_absolute() else REPO_ROOT / path
-
-
 def embed_server():
     url = get_setting("EVOLUTION_EMBED_URL", "http://127.0.0.1:8081").rstrip("/")
-    model = _model_path("EVOLUTION_EMBED_MODEL", "models/Qwen3-Embedding-8B-Q4_K_M.gguf")
+    model = model_path("EVOLUTION_EMBED_MODEL", "models/Qwen3-Embedding-8B-Q4_K_M.gguf")
     args = ["--embedding", "--pooling", "last", "-ngl", "99", "-c", "2048", "-np", "1", "-b", "2048", "-ub", "1024"]
     return url, llama_server(url, model, args, "embed-server.log")
 
 
 def chat_server():
     url = get_setting("EVOLUTION_CHAT_URL", "http://127.0.0.1:8080").rstrip("/")
-    model = _model_path("EVOLUTION_CHAT_MODEL", "models/Qwen3.5-9B-Q4_K_M.gguf")
+    model = model_path("EVOLUTION_CHAT_MODEL", CHAT_MODEL_DEFAULT)
     # Thinking is off per request; the budget only guards against a template that ignores that.
     args = ["-ngl", "99", "-c", "8192", "-np", "1", "--jinja", "--reasoning-budget", "512"]
     return url, llama_server(url, model, args, "chat-server.log")
