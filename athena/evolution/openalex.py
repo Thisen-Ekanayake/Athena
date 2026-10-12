@@ -173,6 +173,14 @@ class Work:
         )
 
 
+def _error_text(resp: httpx.Response) -> str:
+    try:
+        body = resp.json()
+        return str(body.get("message") or body.get("error") or "")[:300]
+    except ValueError:
+        return resp.text[:300]
+
+
 def _is_transient(exc: BaseException) -> bool:
     if isinstance(exc, httpx.TransportError):
         return True
@@ -269,15 +277,14 @@ class OpenAlexClient:
             page += 1
         return works
 
-    def semantic_search(self, query: str, limit: int = SEMANTIC_MAX, fields: list[str] | None = None) -> list[Work]:
+    def semantic_search(self, query: str, limit: int = SEMANTIC_MAX) -> list[Work]:
         """Works whose title and abstract are nearest ``query`` in OpenAlex's embedding space ($0.001).
 
         Finds papers that never use the query's words (Switch Transformer for "mixture of experts").
-        Best effort: the endpoint is newer than the rest, so a failure returns nothing.
+        It takes no field filter, so callers filter by field themselves. Best effort: the endpoint is
+        newer than the rest, so a failure returns nothing.
         """
         params = {"search.semantic": query[:2000], "per-page": min(limit, SEMANTIC_MAX), "select": WORK_FIELDS}
-        if fields:
-            params["filter"] = _field_filter(fields).lstrip(",")
         try:
             data = self._get("/works", params)
         except httpx.HTTPError as exc:
@@ -333,7 +340,11 @@ class OpenAlexClient:
             )
         if resp.status_code == 404:
             return {}
-        resp.raise_for_status()
+        if resp.is_error:
+            # Not raise_for_status(): its message carries the URL, and with it the API key, into logs and
+            # into a failed topic's status_detail, which the UI shows.
+            raise httpx.HTTPStatusError(f"OpenAlex answered {resp.status_code} for {path}: {_error_text(resp)}",
+                                        request=resp.request, response=resp)
         self.requests += 1
         self.spent_usd += float(resp.headers.get("x-ratelimit-cost-usd") or 0)
         if remaining is not None and float(remaining) < 0.01:
