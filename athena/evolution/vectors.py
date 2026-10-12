@@ -17,10 +17,12 @@ import numpy as np
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 
+from athena.core.llm import EMBED_DIM, truncate  # noqa: F401  (truncate is used through this module)
+
 COLLECTION = "paper_chunks"
 GAP_COLLECTION = "gap_statements"   # Phase 3: one vector per gap statement, for themes and loose links
 ABSTRACT_COLLECTION = "paper_abstracts"  # Tier 1: title and abstract of every topic paper, for topic search
-DIM = 1024
+DIM = EMBED_DIM
 
 
 def client() -> QdrantClient:
@@ -48,13 +50,6 @@ def ensure_collection(qdrant: QdrantClient | None = None, name: str = COLLECTION
     )
     for field, schema in _PAYLOAD_INDEXES[name]:
         qdrant.create_payload_index(name, field, field_schema=schema)
-
-
-def truncate(vectors: np.ndarray, dim: int = DIM) -> np.ndarray:
-    """Keep the first ``dim`` dimensions (Qwen3-Embedding is trained for this) and renormalise."""
-    cut = np.asarray(vectors, dtype=np.float32)[:, :dim]
-    norms = np.linalg.norm(cut, axis=1, keepdims=True)
-    return cut / np.where(norms == 0, 1, norms)
 
 
 def upsert(points: list[tuple[UUID, np.ndarray, dict]], qdrant: QdrantClient | None = None,
