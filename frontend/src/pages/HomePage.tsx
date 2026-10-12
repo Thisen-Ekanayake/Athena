@@ -122,7 +122,7 @@ export function HomePage() {
                     <span className="min-w-0 flex-1">
                       <span className="block text-[13.5px] font-medium text-fg">{t.name}</span>
                       <span className="block text-[12px] text-fg-3">
-                        {t.status === 'ready' ? `${t.paper_count ?? 0} papers · ${t.milestone_count ?? 0} milestones` : t.status_detail ?? 'Not built yet'}
+                        {t.status === 'ready' || t.status === 'refining' ? `${t.paper_count ?? 0} papers · ${t.milestone_count ?? 0} milestones` : t.status_detail ?? 'Not built yet'}
                       </span>
                     </span>
                     {t.status !== 'ready' && <Chip tone={t.status === 'failed' ? 'bad' : 'neutral'}>{t.status}</Chip>}
