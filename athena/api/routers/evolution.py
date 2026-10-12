@@ -45,7 +45,8 @@ def _cache_key(session: Session, topic, *parts) -> str:
     # built_at in the key: a rebuild gets fresh entries without waiting for the TTL. The labels
     # version does the same for full text and strict links, which arrive without a rebuild.
     built = topic.built_at.isoformat() if topic.built_at else "unbuilt"
-    return ":".join(["evo", topic.slug, *map(str, parts), built, db.labels_version(session)])
+    # The status too: a topic read while it builds must not stay cached as building once it is ready.
+    return ":".join(["evo", topic.slug, *map(str, parts), built, topic.status or "", db.labels_version(session)])
 
 
 @router.get("/topics")
