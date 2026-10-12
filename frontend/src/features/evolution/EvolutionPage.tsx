@@ -1,6 +1,7 @@
-import { useState, type CSSProperties, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, GitBranch, Search } from 'lucide-react'
+import { ArrowLeft, GitBranch, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { apiErrorMessage } from '../../api/error'
 import { Button, ButtonLink } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
 import { EmptyState } from '../../ui/EmptyState'
@@ -13,14 +14,23 @@ import { cn } from '../../ui/cn'
 import { EvolutionGraph } from './EvolutionGraph'
 import { GapsView } from './GapsView'
 import { PaperPanel } from './PaperPanel'
+import { ProposalPanel } from './ProposalPanel'
 import { TimelineStrip } from './TimelineStrip'
 import {
+  createProposal,
+  isBuilding,
   searchTopics,
+  useDeleteTopic,
   useEvolutionTopics,
+  useRebuildTopic,
   useTopicGraph,
+  useTopicStatus,
   useTopicTimeline,
   type EvolutionNode,
+  type EvolutionTopic,
+  type TopicProposal,
   type TopicSearchResult,
+  type TopicStatus,
 } from './api'
 
 const LIMITS = [
@@ -49,40 +59,84 @@ export function EvolutionPage() {
   )
 }
 
+const STATUS_LABEL: Record<TopicStatus, string> = {
+  pending: 'queued',
+  building: 'building',
+  refining: 'refining',
+  ready: 'ready',
+  failed: 'failed',
+}
+
+/** Finds the map for a query, or proposes one to build. ?q= (from ⌘K) runs a search on arrival. */
 function TopicSearch() {
   const navigate = useNavigate()
-  const [query, setQuery] = useState('')
+  const [params, setParams] = useSearchParams()
+  const [query, setQuery] = useState(params.get('q') ?? '')
   const [pending, setPending] = useState(false)
   const [result, setResult] = useState<TopicSearchResult | null>(null)
-  const [failed, setFailed] = useState(false)
+  const [proposal, setProposal] = useState<TopicProposal | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault()
-    const q = query.trim()
-    if (!q) return
+  const propose = useCallback(async (q: string) => {
     setPending(true)
-    setFailed(false)
+    setError(null)
     try {
-      const found = await searchTopics(q)
-      setResult(found)
-      if (found.found) navigate(`/evolution/${found.topic.slug}`)
-    } catch {
-      setFailed(true)
+      setProposal(await createProposal(q))
+    } catch (e) {
+      setError(apiErrorMessage(e, 'The proposal failed. Check that the API is running and try again.'))
     } finally {
       setPending(false)
     }
+  }, [])
+
+  const run = useCallback(async (raw: string) => {
+    const q = raw.trim()
+    if (!q) return
+    setPending(true)
+    setError(null)
+    setResult(null)
+    setProposal(null)
+    try {
+      const found = await searchTopics(q)
+      if (found.found && found.match.method === 'alias') {
+        navigate(`/evolution/${found.topic.slug}`)
+        return
+      }
+      setResult(found)
+      if (!found.found) await propose(q)
+    } catch (e) {
+      setError(apiErrorMessage(e, 'The search failed. Check that the API is running and try again.'))
+    } finally {
+      setPending(false)
+    }
+  }, [navigate, propose])
+
+  // A query handed over from ⌘K: search once, then drop it from the URL.
+  const handedOver = useRef(false)
+  useEffect(() => {
+    const q = params.get('q')
+    if (q && !handedOver.current) {
+      handedOver.current = true
+      setParams({}, { replace: true })
+      void run(q)
+    }
+  }, [params, setParams, run])
+
+  const onSubmit = (e: FormEvent) => {
+    e.preventDefault()
+    void run(query)
   }
 
   return (
-    <div className="mb-6 grid max-w-2xl gap-3">
-      <form onSubmit={onSubmit} className="flex gap-2">
+    <div className="mb-6 grid gap-3">
+      <form onSubmit={onSubmit} className="flex max-w-2xl gap-2">
         <label className="flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-lg border border-line bg-surface px-3 focus-within:border-accent-line">
           <Search className="h-4 w-4 shrink-0 text-fg-3" aria-hidden="true" />
           <input
             id="evolution-topic-search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Find a topic, e.g. object detection or LoRA"
+            placeholder="Any research topic, e.g. object tracking or mixture of experts"
             maxLength={200}
             aria-label="Topic"
             className="min-w-0 flex-1 bg-transparent text-[13.5px] text-fg placeholder:text-fg-3 focus:outline-none"
@@ -92,10 +146,20 @@ function TopicSearch() {
           {pending ? <Spinner className="h-4 w-4" /> : 'Show evolution'}
         </Button>
       </form>
-      {failed && <Notice tone="error" title="The search failed">Check that the API is running and try again.</Notice>}
-      {result && !result.found && (
-        <Notice title={result.message}>Topics are built ahead of time. Available now: {result.available.join(', ') || 'none yet'}.</Notice>
+      {error && <Notice tone="error" title="Something went wrong" className="max-w-2xl">{error}</Notice>}
+      {result?.found && !proposal && (
+        <div className="flex max-w-2xl flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-line bg-surface px-4 py-3 text-[13px]">
+          <span className="min-w-0 flex-1 text-fg-2">
+            The closest map is <span className="text-fg">{result.topic.name}</span>, whose papers match “{result.query}”.
+          </span>
+          <ButtonLink to={`/evolution/${result.topic.slug}`} variant="secondary" size="sm">Open it</ButtonLink>
+          <Button variant="ghost" size="sm" onClick={() => void propose(result.query)} disabled={pending}>
+            Propose a map for “{result.query}”
+          </Button>
+        </div>
       )}
+      {pending && !result && <Spinner label="Looking for papers in OpenAlex…" />}
+      {proposal && <ProposalPanel key={proposal.id} proposal={proposal} onCancel={() => { setProposal(null); setResult(null) }} />}
     </div>
   )
 }
@@ -110,29 +174,57 @@ function TopicList() {
     )
   }
   if (error) return <Notice tone="error" title="Topics could not be loaded">Check that the API is running.</Notice>
-  if (!topics?.length) {
+  const curated = (topics ?? []).filter((t) => t.origin !== 'search')
+  const searched = (topics ?? []).filter((t) => t.origin === 'search')
+  if (!curated.length && !searched.length) {
     return (
       <EmptyState icon={GitBranch} title="No research maps yet">
-        Seed and build one with <code className="font-mono text-[12px]">python3 scripts/seed_evolution_topics.py</code> and{' '}
-        <code className="font-mono text-[12px]">python3 scripts/build_evolution_topic.py --all</code>.
+        Search for a topic above to build one, or seed the curated maps with <code className="font-mono text-[12px]">python3 scripts/seed_evolution_topics.py</code>.
       </EmptyState>
     )
   }
   return (
-    <div className="grid gap-3 md:grid-cols-2">
-      {topics.map((t) => (
-        <Link key={t.slug} to={`/evolution/${t.slug}`} className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 transition-colors hover:border-line-strong hover:bg-surface-2/50">
-          <div className="flex items-start justify-between gap-3">
-            <h2 className="text-[15px] font-medium text-fg">{t.name}</h2>
-            {t.status !== 'ready' && <Chip tone={t.status === 'failed' ? 'bad' : 'neutral'}>{t.status}</Chip>}
-          </div>
-          {t.description && <p className="line-clamp-2 text-[13px] leading-relaxed text-fg-2">{t.description}</p>}
-          <p className="mt-auto font-mono text-[12px] text-fg-3 tabular-nums">
-            {t.paper_count ?? 0} papers · {t.milestone_count ?? 0} milestones
-          </p>
-        </Link>
-      ))}
+    <div className="grid gap-6">
+      {searched.length > 0 && (
+        <section className="grid gap-2.5">
+          <h2 className="text-[11px] font-medium tracking-[0.08em] text-fg-3 uppercase">Your maps</h2>
+          <div className="grid gap-3 md:grid-cols-2">{searched.map((t) => <TopicCard key={t.slug} topic={t} />)}</div>
+        </section>
+      )}
+      {curated.length > 0 && (
+        <section className="grid gap-2.5">
+          <h2 className="text-[11px] font-medium tracking-[0.08em] text-fg-3 uppercase">Curated maps</h2>
+          <div className="grid gap-3 md:grid-cols-2">{curated.map((t) => <TopicCard key={t.slug} topic={t} />)}</div>
+        </section>
+      )}
     </div>
+  )
+}
+
+function TopicCard({ topic: t }: { topic: EvolutionTopic }) {
+  const remove = useDeleteTopic()
+  const onDelete = (e: MouseEvent) => {
+    e.preventDefault()
+    if (window.confirm(`Delete the map for “${t.name}”? Its papers stay available to other maps.`)) remove.mutate(t.slug)
+  }
+  return (
+    <Link to={`/evolution/${t.slug}`} className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 transition-colors hover:border-line-strong hover:bg-surface-2/50">
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="text-[15px] font-medium text-fg">{t.name}</h3>
+        <span className="flex items-center gap-1">
+          {t.status !== 'ready' && <Chip tone={t.status === 'failed' ? 'bad' : 'neutral'}>{STATUS_LABEL[t.status]}</Chip>}
+          {t.origin === 'search' && (
+            <Button variant="ghost" size="icon-sm" onClick={onDelete} disabled={remove.isPending} aria-label={`Delete ${t.name}`} title="Delete this map">
+              <Trash2 />
+            </Button>
+          )}
+        </span>
+      </div>
+      {t.description && <p className="line-clamp-2 text-[13px] leading-relaxed text-fg-2">{t.description}</p>}
+      <p className="mt-auto font-mono text-[12px] text-fg-3 tabular-nums">
+        {isBuilding(t.status) ? t.status_detail ?? 'Waiting to build' : `${t.paper_count ?? 0} papers · ${t.milestone_count ?? 0} milestones`}
+      </p>
+    </Link>
   )
 }
 
@@ -145,8 +237,12 @@ function TopicView({ slug }: { slug: string }) {
   const [showCitations, setShowCitations] = useState(false)
   const [showLoose, setShowLoose] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const graph = useTopicGraph(slug, limit)
-  const timeline = useTopicTimeline(slug)
+  const status = useTopicStatus(slug)
+  const current = status.data
+  const readable = !!current && !isBuilding(current.status) && current.status !== 'failed'
+  const version = current ? `${current.status}:${current.built_at ?? ''}` : ''
+  const graph = useTopicGraph(slug, limit, version, readable)
+  const timeline = useTopicTimeline(slug, version, readable)
   const selectInMap = (id: string) => {
     setSelectedId(id)
     setTab('map')
@@ -154,6 +250,18 @@ function TopicView({ slug }: { slug: string }) {
 
   const back = <ButtonLink to="/evolution" variant="ghost" size="sm" className="mb-3 -ml-2.5"><ArrowLeft /> Evolution</ButtonLink>
 
+  if (status.isLoading) {
+    return <>{back}<Spinner label="Loading the topic…" /></>
+  }
+  if (status.error || !current) {
+    return <>{back}<Notice tone="error" title="This topic could not be loaded">It may not exist, or the API is not running.</Notice></>
+  }
+  if (isBuilding(current.status)) {
+    return <>{back}<BuildProgress topic={current} /></>
+  }
+  if (current.status === 'failed') {
+    return <>{back}<BuildFailed topic={current} /></>
+  }
   if (graph.isLoading || timeline.isLoading) {
     return <>{back}<Spinner label="Loading the topic…" /></>
   }
@@ -161,18 +269,22 @@ function TopicView({ slug }: { slug: string }) {
     return <>{back}<Notice tone="error" title="This topic could not be loaded">It may not exist, or the API is not running.</Notice></>
   }
   const { topic, nodes, edges, loose_edges, total_papers } = graph.data
-  if (topic.status !== 'ready' || nodes.length === 0) {
+  if (nodes.length === 0) {
     return (
       <>
         {back}
-        <Notice tone="warn" title={`${topic.name} is ${topic.status}`}>
-          Build it with <code>python3 scripts/build_evolution_topic.py {topic.slug}</code>.
-          {topic.status_detail && <span className="mt-1 block">{topic.status_detail}</span>}
+        <Notice tone="warn" title={`No papers in ${topic.name} yet`}>
+          {current.origin === 'search'
+            ? 'No papers were linked to the anchor papers. Delete this map and search again with other anchors or a broader topic.'
+            : <>Build it with <code>python3 scripts/build_evolution_topic.py {topic.slug}</code>.</>}
+          {current.status_detail && <span className="mt-1 block">{current.status_detail}</span>}
         </Notice>
+        {current.origin === 'search' && <SearchTopicActions topic={current} className="mt-3" />}
       </>
     )
   }
   const milestones = nodes.filter((n) => n.is_milestone).length
+  const s2Skipped = String(current.build_stats?.s2 ?? '').startsWith('skipped')
 
   return (
     <div className="grid gap-6">
@@ -183,11 +295,24 @@ function TopicView({ slug }: { slug: string }) {
           title={topic.name}
           description={topic.description}
           actions={
-            <span className="font-mono text-[12px] text-fg-3 tabular-nums">
-              {total_papers} papers · {milestones} milestones · built {topic.built_at ? new Date(topic.built_at).toLocaleDateString() : '—'}
+            <span className="flex flex-wrap items-center justify-end gap-3">
+              {current.status === 'refining' && (
+                <span title="Embedding the abstracts to drop papers that only mention the topic; the map updates when done">
+                  <Chip><Spinner className="h-3 w-3" /> Refining</Chip>
+                </span>
+              )}
+              <span className="font-mono text-[12px] text-fg-3 tabular-nums">
+                {total_papers} papers · {milestones} milestones · built {topic.built_at ? new Date(topic.built_at).toLocaleDateString() : '—'}
+              </span>
+              {current.origin === 'search' && <SearchTopicActions topic={current} />}
             </span>
           }
         />
+        {current.origin === 'search' && s2Skipped && (
+          <Notice className="mt-3 max-w-3xl" title="Built from OpenAlex alone">
+            Semantic Scholar was skipped ({current.build_stats.s2?.replace(/^skipped \((.*)\)$/, '$1')}), so recent arXiv papers may be missing citations. Add a key in Settings, then rebuild.
+          </Notice>
+        )}
       </div>
 
       <section className="grid gap-2.5">
@@ -255,6 +380,62 @@ function TopicView({ slug }: { slug: string }) {
         <NoFullTextList papers={timeline.data.without_full_text} onSelect={selectInMap} />
       )}
     </div>
+  )
+}
+
+function BuildProgress({ topic }: { topic: EvolutionTopic }) {
+  return (
+    <div className="grid max-w-2xl gap-4 rounded-xl border border-line bg-surface p-5">
+      <div className="flex items-center gap-3">
+        <Spinner className="h-5 w-5" />
+        <div className="grid gap-0.5">
+          <h1 className="text-[15px] font-medium text-fg">{topic.status === 'pending' ? 'Waiting to build' : 'Building'} the map for {topic.name}</h1>
+          <p className="text-[13px] text-fg-2">{topic.status_detail ?? 'Starting'}</p>
+        </div>
+      </div>
+      <p className="text-[12.5px] text-fg-3">
+        Collecting the anchors’ references and citing papers, then scoring milestones. This usually takes a few minutes; the map opens here by itself, and you can leave the page meanwhile.
+        {topic.status === 'pending' && ' Builds run one at a time, so this one may wait for another job on the evolution worker.'}
+      </p>
+    </div>
+  )
+}
+
+function BuildFailed({ topic }: { topic: EvolutionTopic }) {
+  return (
+    <div className="grid max-w-2xl gap-3">
+      <Notice tone="error" title={`The map for ${topic.name} could not be built`}>
+        {topic.status_detail ?? 'The build stopped without a message.'}
+        {topic.origin !== 'search' && <span className="mt-1 block">Rebuild it with <code>python3 scripts/build_evolution_topic.py {topic.slug}</code>.</span>}
+      </Notice>
+      {topic.origin === 'search' && <SearchTopicActions topic={topic} />}
+    </div>
+  )
+}
+
+/** Rebuild (for instance once a Semantic Scholar key is set) and delete, for maps built from a search. */
+function SearchTopicActions({ topic, className }: { topic: EvolutionTopic; className?: string }) {
+  const navigate = useNavigate()
+  const rebuild = useRebuildTopic(topic.slug)
+  const remove = useDeleteTopic()
+  const busy = topic.status === 'refining' || isBuilding(topic.status)
+  const onDelete = () => {
+    if (window.confirm(`Delete the map for “${topic.name}”? Its papers stay available to other maps.`)) {
+      remove.mutate(topic.slug, { onSuccess: () => navigate('/evolution') })
+    }
+  }
+  return (
+    <span className={cn('flex items-center gap-1', className)}>
+      <Button variant="secondary" size="sm" onClick={() => rebuild.mutate()} disabled={busy || rebuild.isPending} title="Build this map again">
+        <RefreshCw /> Rebuild
+      </Button>
+      <Button variant="ghost" size="sm" onClick={onDelete} disabled={remove.isPending} title="Delete this map">
+        <Trash2 /> Delete
+      </Button>
+      {(rebuild.error || remove.error) && (
+        <span className="text-[12px] text-bad">{apiErrorMessage(rebuild.error ?? remove.error, 'That did not work')}</span>
+      )}
+    </span>
   )
 }
 

@@ -102,6 +102,7 @@ function PaletteDialog() {
       out.push(
         { id: 'all', group: 'Search', icon: Search, label: <>See all results for “{q}”</>, run: go(`/search?q=${encodeURIComponent(q)}`) },
         { id: 'review', group: 'Ask Athena', icon: Sparkles, ai: true, label: <>Write a literature review on “{q}”</>, run: go(`/search?q=${encodeURIComponent(q)}&review=1`) },
+        { id: 'evolution', group: 'Ask Athena', icon: GitBranch, label: <>Trace how “{q}” evolved</>, run: go(`/evolution?q=${encodeURIComponent(q)}`) },
       )
     }
     for (const p of pages) out.push({ id: `page:${p.to}`, group: 'Go to', icon: p.icon, label: p.label, run: go(p.to) })

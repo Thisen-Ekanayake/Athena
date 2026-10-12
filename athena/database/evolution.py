@@ -57,9 +57,9 @@ def _chunks(rows: list, size: int = _BATCH):
 
 
 def upsert_topic(slug: str, name: str, aliases: list[str], description: str, seeds: list[dict],
-                 config: dict) -> None:
+                 config: dict, origin: str = "curated", query: str | None = None) -> None:
     values = {"slug": slug, "name": name, "aliases": aliases, "description": description, "seeds": seeds,
-              "config": config}
+              "config": config, "origin": origin, "query": query}
     with SessionLocal() as session:
         stmt = insert(EvoTopic).values(id=uuid4(), status="pending", **values)
         stmt = stmt.on_conflict_do_update(index_elements=["slug"], set_=values)
@@ -71,16 +71,35 @@ def get_topic(session: Session, slug: str) -> EvoTopic | None:
     return session.execute(select(EvoTopic).where(EvoTopic.slug == slug)).scalar_one_or_none()
 
 
-def set_topic_status(slug: str, status: str, detail: str | None = None) -> None:
+def set_topic_status(slug: str, status: str, status_detail: str | None = None, stats: dict | None = None) -> None:
+    """``stats`` marks a finished build: it is stored, and ``built_at`` moves on so cached reads expire."""
     with SessionLocal() as session:
         topic = get_topic(session, slug)
         if topic is None:
             return
         topic.status = status
-        topic.status_detail = detail
-        if status == "ready":
+        topic.status_detail = status_detail
+        if stats is not None:
+            topic.build_stats = stats
             topic.built_at = datetime.now(timezone.utc)
         session.commit()
+
+
+def delete_topic(session: Session, topic: EvoTopic) -> None:
+    """Remove a topic with its scores, main path, overrides and gap themes. Papers are shared and stay."""
+    # The database cascades to every topic table, in one statement rather than one per row.
+    session.execute(delete(EvoTopic).where(EvoTopic.id == topic.id))
+    session.commit()
+
+
+def active_search_builds(session: Session) -> int:
+    """Search-built topics waiting for, or in, their first build."""
+    return session.execute(select(func.count()).select_from(EvoTopic).where(
+        EvoTopic.origin == "search", EvoTopic.status.in_(["pending", "building"]))).scalar_one()
+
+
+def slug_taken(session: Session, slug: str) -> bool:
+    return session.execute(select(EvoTopic.id).where(EvoTopic.slug == slug)).first() is not None
 
 
 def find_topic(session: Session, query: str) -> EvoTopic | None:
@@ -133,6 +152,9 @@ def topic_summary(topic: EvoTopic) -> dict:
         "status": topic.status,
         "status_detail": topic.status_detail,
         "built_at": topic.built_at.isoformat() if topic.built_at else None,
+        "origin": getattr(topic, "origin", None) or "curated",
+        "query": getattr(topic, "query", None),
+        "build_stats": getattr(topic, "build_stats", None) or {},
     }
 
 

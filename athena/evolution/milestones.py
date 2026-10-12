@@ -21,27 +21,14 @@ from typing import TYPE_CHECKING
 
 from athena.evolution import graph as g
 from athena.evolution.config import TopicConfig
-from athena.evolution.corpus import Corpus, relevance
+from athena.evolution.corpus import Corpus, classify_kind, relevance
 from athena.evolution.names import NAME_TOKEN
 
 if TYPE_CHECKING:
     from athena.evolution.membership import Membership
 
-_SURVEY = re.compile(r"\b(survey|review|overview|tutorial|primer|taxonomy)\b", re.IGNORECASE)
-_DATASET = re.compile(r"\b(dataset|data set|corpus|database)\b", re.IGNORECASE)
-_BENCHMARK = re.compile(r"\b(benchmark|leaderboard|challenge)\b", re.IGNORECASE)
 _NAMED = re.compile(r"^\s*([^:]{1,40}?)\s*:\s+\S")
 _NAME_TOKEN = NAME_TOKEN
-
-
-def classify_kind(title: str, work_type: str | None = None) -> str:
-    if work_type == "review" or _SURVEY.search(title):
-        return "survey"
-    if _DATASET.search(title):
-        return "dataset"
-    if _BENCHMARK.search(title):
-        return "benchmark"
-    return "method"
 
 
 def named_method(title: str) -> str | None:

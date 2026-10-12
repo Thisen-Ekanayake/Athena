@@ -42,7 +42,7 @@ SEARCH_FIELDS = "paperId,externalIds,title,year,citationCount,abstract,venue,pub
 
 
 class SemanticScholarAuthError(RuntimeError):
-    """The API key was rejected (403)."""
+    """The API key was rejected (403), or there is none and the caller will not use the keyless pool."""
 
 
 @dataclass
@@ -115,8 +115,12 @@ def _is_transient(exc: BaseException) -> bool:
 
 class SemanticScholarClient:
     def __init__(self, api_key: str | None = None, cache_dir: str | None = None, http: httpx.Client | None = None,
-                 min_interval: float | None = None):
+                 min_interval: float | None = None, keyless_ok: bool = True):
         self.api_key = api_key if api_key is not None else get_setting("SEMANTIC_SCHOLAR_API_KEY")
+        # False: no key, or a rejected one, raises SemanticScholarAuthError instead of using the slow shared pool.
+        self.keyless_ok = keyless_ok
+        if not self.api_key and not keyless_ok:
+            raise SemanticScholarAuthError("no Semantic Scholar API key")
         if cache_dir is None:
             cache_dir = get_setting("S2_CACHE_DIR", str(Path.home() / ".athena" / "s2_cache"))
         self.cache_dir = Path(cache_dir) if cache_dir else None
@@ -234,6 +238,8 @@ class SemanticScholarClient:
                 raise
             if not self.api_key:
                 raise SemanticScholarAuthError("Semantic Scholar refused the request (403) without a key") from exc
+            if not self.keyless_ok:
+                raise SemanticScholarAuthError("the Semantic Scholar API key was rejected") from exc
             # An expired or revoked key gets 403 on every call, while the keyless pool still answers.
             logger.warning("Semantic Scholar rejected the API key (403); continuing without it, more slowly. "
                            "Replace SEMANTIC_SCHOLAR_API_KEY in the Settings page.")

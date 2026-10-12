@@ -62,6 +62,21 @@ def work(wid: str, title: str, refs=(), arxiv_id=None, doi=None, year=2022) -> W
 
 
 class TestClient:
+    def test_without_keyless_use_a_missing_or_rejected_key_raises_at_once(self):
+        with pytest.raises(SemanticScholarAuthError):
+            SemanticScholarClient(api_key="", cache_dir="", keyless_ok=False)
+        seen = []
+
+        def handler(request):
+            seen.append(request)
+            return httpx.Response(403, json={})
+
+        http = httpx.Client(base_url="https://api.semanticscholar.org/graph/v1", transport=httpx.MockTransport(handler))
+        client = SemanticScholarClient(api_key="expired", cache_dir="", http=http, min_interval=0, keyless_ok=False)
+        with pytest.raises(SemanticScholarAuthError, match="rejected"):
+            client.get_papers(["ARXIV:1"])
+        assert len(seen) == 1  # no retry against the keyless pool
+
     def test_lookup_id_prefers_arxiv_then_doi_then_mag(self):
         assert lookup_id("2106.09685", "10.1/x", "W1") == "ARXIV:2106.09685"
         assert lookup_id(None, "10.1/x", "W1") == "DOI:10.1/x"

@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 
@@ -127,6 +128,21 @@ def managed_servers() -> bool:
     return get_setting("EVOLUTION_MANAGED_SERVERS", "true").strip().lower() not in ("false", "0", "no")
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CHAT_MODEL_DEFAULT = "models/Qwen3.5-9B-Q4_K_M.gguf"
+
+
+def model_path(setting: str, default: str) -> Path:
+    """A GGUF path from the settings, relative to the repository unless absolute."""
+    path = Path(get_setting(setting, default))
+    return path if path.is_absolute() else REPO_ROOT / path
+
+
+def chat_available() -> bool:
+    """Whether the 9B (or an external chat endpoint) can be asked at all; says nothing about the GPU being free."""
+    return not managed_servers() or model_path("EVOLUTION_CHAT_MODEL", CHAT_MODEL_DEFAULT).exists()
+
+
 def auth_headers() -> dict:
     key = get_setting("EVOLUTION_API_KEY")
     return {"Authorization": f"Bearer {key}"} if key else {}
@@ -140,12 +156,13 @@ class Classifier:
         self.local = managed_servers() if local is None else local
         self.http = http or httpx.Client(timeout=900.0, headers=auth_headers())
 
-    def ask(self, prompt: str, schema: dict, name: str, think: bool = False) -> dict | None:
+    def ask(self, prompt: str, schema: dict, name: str, think: bool = False,
+            max_tokens: int | None = None) -> dict | None:
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
             "temperature": 0,
-            "max_tokens": THINK_TOKENS if think else 64,
+            "max_tokens": max_tokens or (THINK_TOKENS if think else 64),
             "response_format": {"type": "json_schema", "json_schema": {"name": name, "schema": schema}},
         }
         if self.local:

@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -30,7 +31,9 @@ from loguru import logger
 
 from athena.evolution.config import TopicConfig
 from athena.evolution.openalex import OpenAlexClient, Work, arxiv_year
-from athena.evolution.semantic_scholar import CANDIDATE_FIELDS, S2Paper, S2Ref, SemanticScholarClient, lookup_id
+from athena.evolution.semantic_scholar import (
+    CANDIDATE_FIELDS, S2Paper, S2Ref, SemanticScholarAuthError, SemanticScholarClient, lookup_id,
+)
 
 # OpenAlex work types that are never research contributions.
 EXCLUDED_TYPES = {"paratext", "erratum", "retraction", "editorial", "letter", "peer-review", "supplementary-materials"}
@@ -70,11 +73,36 @@ class Corpus:
     edge_sources: dict[tuple[str, str], str] = field(default_factory=dict)  # openalex | s2; missing means openalex
 
 
+_SURVEY = re.compile(r"\b(survey|review|overview|tutorial|primer|taxonomy)\b", re.IGNORECASE)
+_DATASET = re.compile(r"\b(dataset|data set|corpus|database)\b", re.IGNORECASE)
+_BENCHMARK = re.compile(r"\b(benchmark|leaderboard|challenge)\b", re.IGNORECASE)
+
+
+def classify_kind(title: str, work_type: str | None = None) -> str:
+    """method | survey | dataset | benchmark, from the title (and OpenAlex's type for reviews)."""
+    if work_type == "review" or _SURVEY.search(title):
+        return "survey"
+    if _DATASET.search(title):
+        return "dataset"
+    if _BENCHMARK.search(title):
+        return "benchmark"
+    return "method"
+
+
+def _keyword_part(keyword: str) -> str:
+    k = keyword.lower()
+    if len(k) > 2 and k[0] == k[-1] == '"':
+        # Quoted: the whole word only (a plural too), for acronyms such as "mot" that start common words.
+        return re.escape(k[1:-1]) + r"(?:e?s)?(?![a-z0-9])"
+    return re.escape(k)
+
+
 @lru_cache(maxsize=64)
 def _keyword_pattern(keywords: tuple[str, ...]) -> re.Pattern:
     # Keywords match at the start of a word: "lora" finds "LoRA" and "LoRAs" but not "exploration",
-    # and the stem "detect" finds "detection" and "detector".
-    return re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(k.lower()) for k in keywords) + ")")
+    # and the stem "detect" finds "detection" and "detector". A quoted keyword ('"mot"') matches the
+    # whole word only, so it does not find "motion".
+    return re.compile(r"(?<![a-z0-9])(?:" + "|".join(_keyword_part(k) for k in keywords) + ")")
 
 
 def relevance(title: str, abstract: str | None, keywords: list[str]) -> float:
@@ -123,6 +151,27 @@ def fetch_candidates(client: OpenAlexClient, seeds: list[Seed],
     logger.info(f"Fetched {len(seed_works)} seeds and {len(candidates)} candidates "
                 f"({client.requests} requests, ${client.spent_usd:.4f}, {client.cache_hits} cache hits)")
     return seed_works, candidates
+
+
+def add_openalex_hits(client: OpenAlexClient, seed_works: dict[str, Work], candidates: dict[str, Work],
+                      search_terms: list[str], config: TopicConfig) -> dict:
+    """The most-cited OpenAlex works matching the topic's name or aliases, as candidates.
+
+    Without Semantic Scholar this is how a topic reaches papers its seeds' citer lists miss. They join
+    the corpus only through ``min_links``, like every candidate.
+    """
+    # Short single words ("moe", "mot") mean other things in other fields; phrases are safer to search.
+    terms = [t.strip('"') for t in search_terms if len(t.strip('"')) >= 5 or re.search(r"[\s-]", t)]
+    if not (config.openalex_search_max and terms):
+        return {}
+    hits = client.search_works(terms, config.openalex_search_max, config.fields)
+    added = 0
+    for work in hits:
+        if work.openalex_id not in seed_works and work.openalex_id not in candidates:
+            candidates[work.openalex_id] = work
+            added += 1
+    logger.info(f"OpenAlex search: {len(hits)} hits, {added} new candidates")
+    return {"openalex_search_hits": len(hits), "openalex_search_added": added}
 
 
 # ── Semantic Scholar ───────────────────────────────────────────────────
@@ -494,14 +543,25 @@ def select_corpus(seed_works: dict[str, Work], candidates: dict[str, Work], seed
 
 
 def build_corpus(client: OpenAlexClient, seeds: list[Seed], config: TopicConfig,
-                 s2: SemanticScholarClient | None = None, search_terms: list[str] = ()) -> Corpus:
+                 s2: SemanticScholarClient | None = None, search_terms: list[str] = (),
+                 on_stage: Callable[[str], None] | None = None) -> Corpus:
+    stage = on_stage or (lambda _: None)
+    stage("Collecting the anchors' references and citing papers from OpenAlex")
     seed_works, candidates = fetch_candidates(client, seeds, config)
-    s2_stats = {}
+    oa_stats = add_openalex_hits(client, seed_works, candidates, list(search_terms), config)
+    s2_stats: dict = {"s2": "off"}
     if config.s2:
-        s2 = s2 or SemanticScholarClient()
-        s2_stats = augment_with_s2(s2, client, seed_works, candidates, seeds, config, search_terms)
-        s2_stats |= {"s2_requests": s2.requests, "s2_cache_hits": s2.cache_hits}
+        stage("Adding references from Semantic Scholar")
+        try:
+            s2 = s2 or SemanticScholarClient(keyless_ok=config.s2_keyless)
+            s2_stats = augment_with_s2(s2, client, seed_works, candidates, seeds, config, search_terms)
+            s2_stats |= {"s2": "used", "s2_requests": s2.requests, "s2_cache_hits": s2.cache_hits}
+        except SemanticScholarAuthError as exc:
+            # Only without keyless use: the build goes on with OpenAlex alone, and a rebuild adds it later.
+            logger.warning(f"Skipping Semantic Scholar: {exc}")
+            s2_stats = {"s2": f"skipped ({exc})"}
+    stage("Selecting the papers linked to the anchors")
     corpus = select_corpus(seed_works, candidates, seeds, config)
     corpus.stats.update({"openalex_requests": client.requests, "openalex_spent_usd": round(client.spent_usd, 4),
-                         "openalex_cache_hits": client.cache_hits} | s2_stats)
+                         "openalex_cache_hits": client.cache_hits} | oa_stats | s2_stats)
     return corpus

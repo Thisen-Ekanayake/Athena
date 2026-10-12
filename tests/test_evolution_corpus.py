@@ -125,3 +125,58 @@ class TestStoredYearMerge:
 
     def test_otherwise_the_earliest_year_wins(self):
         assert self.merged(2018, "openalex", 2017, "citers") == (2017, "citers")
+
+
+class FakeOpenAlex:
+    """Seeds by ID, no citers, and fixed search hits."""
+
+    def __init__(self, seeds: list[Work], hits: list[Work]):
+        self.seeds = {w.openalex_id: w for w in seeds}
+        self.hits = hits
+        self.searches: list[tuple] = []
+        self.requests = self.cache_hits = 0
+        self.spent_usd = 0.0
+
+    def get_work(self, wid):
+        return self.seeds.get(wid)
+
+    def get_works(self, ids):
+        return []
+
+    def citing_works(self, wid, limit):
+        return []
+
+    def search_works(self, terms, limit, fields=None, in_title=False):
+        self.searches.append((tuple(terms), limit, tuple(fields or ())))
+        return self.hits[:limit]
+
+
+class TestOpenAlexSearchAndSkippedS2:
+    def setup_method(self):
+        from athena.evolution import corpus as c
+        self.c = c
+        self.s1, self.s2 = work("S1", year=2015), work("S2", year=2016)
+        # H1 cites both seeds and joins; H2 cites one seed only and stays out.
+        self.hits = [work("H1", refs=["S1", "S2"], year=2018), work("H2", refs=["S1"], year=2019)]
+
+    def run(self, **config):
+        oa = FakeOpenAlex([self.s1, self.s2], self.hits)
+        seeds = [Seed(openalex_id="S1"), Seed(openalex_id="S2")]
+        corpus = self.c.build_corpus(oa, seeds, TopicConfig(**config), search_terms=["object tracking"])
+        return corpus, oa
+
+    def test_search_hits_join_only_through_links(self):
+        corpus, oa = self.run(s2=False, openalex_search_max=1000, fields=["Computer Science"])
+        assert set(corpus.papers) == {"S1", "S2", "H1"}
+        assert oa.searches == [(("object tracking",), 1000, ("Computer Science",))]
+        assert corpus.stats["openalex_search_hits"] == 2 and corpus.stats["s2"] == "off"
+
+    def test_no_search_by_default(self):
+        corpus, oa = self.run(s2=False)
+        assert oa.searches == [] and set(corpus.papers) == {"S1", "S2"}
+
+    def test_no_key_skips_semantic_scholar_when_keyless_is_off(self, monkeypatch):
+        monkeypatch.setattr("athena.evolution.semantic_scholar.get_setting", lambda key, default=None: default)
+        corpus, _ = self.run(s2=True, s2_keyless=False)
+        assert corpus.stats["s2"].startswith("skipped")
+        assert set(corpus.papers) == {"S1", "S2"}

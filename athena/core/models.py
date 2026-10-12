@@ -385,7 +385,7 @@ class AppSetting(Base):
 
 
 class EvoTopic(Base):
-    """A curated research topic whose evolution graph is built ahead of time."""
+    """A research topic whose evolution graph is built ahead of time (curated) or from a search."""
     __tablename__ = "evo_topics"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -393,11 +393,15 @@ class EvoTopic(Base):
     name = Column(String, nullable=False)
     aliases = Column(ARRAY(String), default=[])
     description = Column(String, nullable=True)
-    seeds = Column(JSONB, default=[])   # [{openalex_id, title, year, arxiv_id}] hand-picked anchors
+    seeds = Column(JSONB, default=[])   # [{openalex_id, title, year, arxiv_id}] anchors, hand-picked or proposed
     config = Column(JSONB, default={})  # corpus limits and milestone weights; see athena.evolution.config
-    status = Column(String, default="pending")  # pending | building | ready | failed
+    # pending | building | refining (graph viewable, abstracts being embedded) | ready | failed
+    status = Column(String, default="pending")
     status_detail = Column(String, nullable=True)
     built_at = Column(DateTime(timezone=True), nullable=True)
+    origin = Column(String, nullable=False, server_default="curated")  # curated | search
+    query = Column(String, nullable=True)            # the search a search-built topic came from
+    build_stats = Column(JSONB, nullable=True)       # the last build's summary (corpus, Semantic Scholar, timing)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     topic_papers = relationship("EvoTopicPaper", back_populates="topic", cascade="all, delete-orphan")
