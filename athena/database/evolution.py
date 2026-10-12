@@ -72,17 +72,16 @@ def get_topic(session: Session, slug: str) -> EvoTopic | None:
 
 
 def set_topic_status(slug: str, status: str, detail: str | None = None, stats: dict | None = None) -> None:
-    """``ready`` and ``refining`` both mean a fresh graph was saved; ``stats`` is that build's summary."""
+    """``stats`` marks a finished build: it is stored, and ``built_at`` moves on so cached reads expire."""
     with SessionLocal() as session:
         topic = get_topic(session, slug)
         if topic is None:
             return
         topic.status = status
         topic.status_detail = detail
-        if status in ("ready", "refining"):
-            topic.built_at = datetime.now(timezone.utc)
         if stats is not None:
             topic.build_stats = stats
+            topic.built_at = datetime.now(timezone.utc)
         session.commit()
 
 

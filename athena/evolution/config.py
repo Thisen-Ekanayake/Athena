@@ -42,6 +42,12 @@ class TopicConfig:
     s2_search_max: int = 1000
     s2_expand_min_citers: int = 3   # an outside paper needs this many pool papers citing it to be fetched
     s2_expand_max: int = 1500       # fetch at most this many, the most cited by the pool first
+    # Without a working key, wait out the shared keyless pool (curated builds) or skip Semantic Scholar
+    # (search-built topics, where someone is waiting for the map).
+    s2_keyless: bool = True
+    # The most-cited OpenAlex works matching the topic's name or aliases join the candidates, as the
+    # Semantic Scholar search does; they still need min_links. Each 200 costs one search ($0.001).
+    openalex_search_max: int = 0
     # Relevance: papers whose title (full weight) or abstract (half) mentions one of these are on-topic.
     # Off-topic papers stay in the graph as context, but cannot be milestones or on the main path.
     # Empty means every paper is on-topic.

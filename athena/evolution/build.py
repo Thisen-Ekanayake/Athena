@@ -28,8 +28,13 @@ def topic_membership(corpus, config: TopicConfig) -> Membership:
     return semantic_membership(corpus, config.keywords, abstract_vectors(list(corpus.papers)), seeds)
 
 
-def build_topic(slug: str, client: OpenAlexClient | None = None,
-                s2: SemanticScholarClient | None = None) -> dict:
+def build_topic(slug: str, client: OpenAlexClient | None = None, s2: SemanticScholarClient | None = None,
+                stage_status: str = "building", status_after: str = "ready") -> dict:
+    """Build ``slug`` and save it. Progress goes to ``status_detail`` under ``stage_status``.
+
+    A search-built topic's first pass ends at ``refining`` (the map is viewable while its abstracts are
+    embedded), and its second pass keeps that status while it runs, so the map stays up.
+    """
     with SessionLocal() as session:
         topic = db.get_topic(session, slug)
         if topic is None:
@@ -38,17 +43,22 @@ def build_topic(slug: str, client: OpenAlexClient | None = None,
         seeds = [Seed(**s) for s in (topic.seeds or [])]
         search_terms = [topic.name, *(topic.aliases or [])]
 
+    def stage(text: str) -> None:
+        db.set_topic_status(slug, stage_status, text)
+
     start = time.time()
-    db.set_topic_status(slug, "building")
+    stage("Starting")
     try:
-        corpus = build_corpus(client or OpenAlexClient(), seeds, config, s2, search_terms)
+        corpus = build_corpus(client or OpenAlexClient(), seeds, config, s2, search_terms, on_stage=stage)
+        stage("Scoring milestones")
         membership = topic_membership(corpus, config)
         scores = score_topic(corpus, config, membership)
+        stage("Saving the map")
         db.save_topic_build(slug, corpus, scores)
     except Exception as exc:
         db.set_topic_status(slug, "failed", str(exc)[:500])
         raise
     summary = corpus.stats | scores.stats | {"seconds": round(time.time() - start, 1)}
-    db.set_topic_status(slug, "ready", ", ".join(f"{k}={v}" for k, v in summary.items()))
+    db.set_topic_status(slug, status_after, ", ".join(f"{k}={v}" for k, v in summary.items()), stats=summary)
     logger.info(f"Built topic {slug}: {summary}")
     return summary
