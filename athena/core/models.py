@@ -84,7 +84,7 @@ class ContentItem(Base):
     is_trending = Column(Boolean, default=False)
     category_rank = Column(Integer, nullable=True)
     embedding_id = Column(String, nullable=True)
-    embedding_model = Column(String, default="text-embedding-3-small")
+    embedding_model = Column(String, nullable=True)  # the EMBED_MODEL that made the vector
     embedded_at = Column(DateTime(timezone=True), nullable=True)
     cluster_id = Column(PG_UUID(as_uuid=True), ForeignKey("clusters.id"), nullable=True)
     cluster_distance = Column(Float, nullable=True)  # distance to cluster centroid

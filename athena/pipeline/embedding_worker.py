@@ -1,13 +1,12 @@
 import os
-import time
 from typing import List
 from datetime import datetime
 from loguru import logger
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
-from openai import OpenAI, RateLimitError
 from sqlalchemy import select, update
 
+from athena.core import llm
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem
 from athena.core.redis_client import get_redis
@@ -17,25 +16,20 @@ from athena.pipeline.celery_app import celery_app
 # Config
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 COLLECTION_NAME = "athena_content"
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIM = 1536
+EMBEDDING_DIM = llm.EMBED_DIM
 BATCH_SIZE = 20
 
 # Clients
 qdrant = QdrantClient(url=QDRANT_URL)
 
 
-def _get_openai_client() -> OpenAI:
-    from athena.core.config_store import get_setting
-    return OpenAI(api_key=get_setting("OPENAI_API_KEY"))
-
-
 def init_qdrant():
-    """Ensure the Qdrant collection exists with correct config."""
-    collections = qdrant.get_collections().collections
-    exists = any(c.name == COLLECTION_NAME for c in collections)
+    """Ensure the Qdrant collection exists with the right size, and holds vectors from the configured model.
 
-    if not exists:
+    Raises llm.EmbedSpaceMismatch for a collection built by another model (e.g. the old 1536-dimension
+    OpenAI one): re-embed with scripts/backfill_embeddings.py --reset.
+    """
+    if not qdrant.collection_exists(COLLECTION_NAME):
         logger.info(f"Creating Qdrant collection: {COLLECTION_NAME}")
         qdrant.create_collection(
             collection_name=COLLECTION_NAME,
@@ -44,8 +38,8 @@ def init_qdrant():
                 distance=qmodels.Distance.COSINE
             )
         )
-    else:
-        logger.info(f"Qdrant collection {COLLECTION_NAME} already exists.")
+    size = qdrant.get_collection(COLLECTION_NAME).config.params.vectors.size
+    llm.check_embed_space("feed", collection_dim=size)
 
 
 @celery_app.task
@@ -53,7 +47,11 @@ def process_embedding_queue():
     """
     Pull items from 'athena:embedding_queue' and process them in batches.
     """
-    init_qdrant()
+    try:
+        init_qdrant()
+    except llm.EmbedSpaceMismatch as e:
+        logger.error(f"Feed embedding paused: {e}")
+        return
 
     r = get_redis()
 
@@ -96,7 +94,8 @@ def process_batch(item_ids: List[str]):
                     text=content,
                     title=item.title or "",
                     authors=item.authors or [],
-                    abstract=item.abstract or ""
+                    abstract=item.abstract or "",
+                    max_tokens=llm.embed_input_tokens()
                 )
                 batch_texts.append(processed_text)
                 valid_items.append(item)
@@ -107,31 +106,9 @@ def process_batch(item_ids: List[str]):
             return
 
         try:
-            # 1. Generate Embeddings (with rate-limit backoff)
-            MAX_RETRIES = 3
-            embeddings = None
-            for attempt in range(MAX_RETRIES):
-                try:
-                    response = _get_openai_client().embeddings.create(
-                        input=batch_texts,
-                        model=EMBEDDING_MODEL
-                    )
-                    embeddings = [data.embedding for data in response.data]
-                    break
-                except RateLimitError as e:
-                    if attempt < MAX_RETRIES - 1:
-                        wait = 2 ** attempt  # 1s, 2s, 4s
-                        logger.warning(
-                            f"OpenAI rate limit hit, retrying in {wait}s "
-                            f"(attempt {attempt + 1}/{MAX_RETRIES})"
-                        )
-                        time.sleep(wait)
-                    else:
-                        raise e
-
-            if not embeddings:
-                logger.error("Failed to generate embeddings after retries")
-                return
+            # 1. Generate Embeddings (the client retries rate limits itself)
+            model = llm.embed_model()
+            embeddings = [vec.tolist() for vec in llm.embed(batch_texts)]
 
             # 2. Upsert to Qdrant
             points = []
@@ -158,7 +135,7 @@ def process_batch(item_ids: List[str]):
                 session.execute(
                     update(ContentItem).where(ContentItem.id == item.id).values(
                         embedding_id=str(item.id),
-                        embedding_model=EMBEDDING_MODEL,
+                        embedding_model=model,
                         embedded_at=datetime.utcnow()
                     )
                 )

@@ -885,6 +885,18 @@ def mark_abstracts(session: Session, paper_ids: list[UUID]) -> None:
     session.commit()
 
 
+def forget_vectors(session: Session) -> None:
+    """Mark every chunk, gap statement and abstract as not embedded, and drop the loose links found with them.
+
+    For a switch of embedding model: the next GPU lane embeds everything again and rebuilds the themes.
+    """
+    session.execute(update(EvoChunk).values(embedded_at=None))
+    session.execute(update(EvoGapStatement).values(embedded_at=None, loose_checked_at=None))
+    session.execute(update(EvoPaper).values(abstract_embedded_at=None))
+    session.execute(delete(EvoLooseLink))
+    session.commit()
+
+
 def themes_to_label(session: Session) -> list[tuple[EvoGapTheme, str, list[str]]]:
     """Gap themes without a 9B label, with their topic's name and up to six statements (own text first)."""
     out = []

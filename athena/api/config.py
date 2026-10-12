@@ -18,7 +18,6 @@ class Settings:
     )
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:6333")
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     JWT_SECRET: str = os.getenv("JWT_SECRET", "athena-dev-secret-change-me")
     JWT_ALGORITHM: str = "HS256"
 
