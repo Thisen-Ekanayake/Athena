@@ -71,14 +71,14 @@ def get_topic(session: Session, slug: str) -> EvoTopic | None:
     return session.execute(select(EvoTopic).where(EvoTopic.slug == slug)).scalar_one_or_none()
 
 
-def set_topic_status(slug: str, status: str, detail: str | None = None, stats: dict | None = None) -> None:
+def set_topic_status(slug: str, status: str, status_detail: str | None = None, stats: dict | None = None) -> None:
     """``stats`` marks a finished build: it is stored, and ``built_at`` moves on so cached reads expire."""
     with SessionLocal() as session:
         topic = get_topic(session, slug)
         if topic is None:
             return
         topic.status = status
-        topic.status_detail = detail
+        topic.status_detail = status_detail
         if stats is not None:
             topic.build_stats = stats
             topic.built_at = datetime.now(timezone.utc)
