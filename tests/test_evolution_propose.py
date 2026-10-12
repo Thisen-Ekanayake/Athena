@@ -168,6 +168,17 @@ class TestRefine:
         assert "1. Paper 1 (2001, 1 citations)\n   We track objects." in prompt
         assert schema["properties"]["anchors"]["items"]["enum"] == [1, 2, 3, 4, 5]
 
+    def test_rule_anchors_fill_periods_the_9b_left_out(self):
+        proposal = PROPOSAL | {
+            "anchors": ["W1", "W4", "W5"],
+            "candidates": [{"openalex_id": "W1", "title": "A", "year": 2002, "citations": 9},
+                           {"openalex_id": "W2", "title": "B", "year": 2006, "citations": 9},
+                           {"openalex_id": "W3", "title": "C", "year": 2010, "citations": 9},
+                           {"openalex_id": "W4", "title": "D", "year": 2016, "citations": 9},
+                           {"openalex_id": "W5", "title": "E", "year": 2022, "citations": 9}]}
+        out = p.merge_refinement(proposal, {"anchors": [1, 2, 3], "keywords": [], "name": "", "aliases": []})
+        assert out["anchors"] == ["W1", "W2", "W3", "W5", "W4"]  # 2022 is farther from the 9B's years than 2016
+
     def test_too_few_anchors_or_no_answer_keep_the_rules(self):
         out = p.refine(PROPOSAL, FakeClassifier({"anchors": [4], "keywords": [], "name": "", "aliases": []}))
         assert out["anchors"] == ["W1", "W2"] and not out["anchors_from_model"]

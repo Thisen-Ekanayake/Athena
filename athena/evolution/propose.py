@@ -51,6 +51,8 @@ TITLE_HITS = 50
 TITLE_CANDIDATES = 22
 SEMANTIC_CANDIDATES = 8
 MAX_ANCHORS = 5
+MAX_MERGED_ANCHORS = 6      # the 9B's picks plus rule picks from periods it left out
+ANCHOR_GAP_YEARS = 5        # a rule pick this far from every 9B pick covers a period the 9B missed
 MAX_KEYWORDS = 20
 MAX_ALIASES = 8
 SUGGESTION_MIN_PAPERS = 3
@@ -370,7 +372,8 @@ def refine_prompt(proposal: dict) -> str:
         "topic (at most 15). Use specific terms, including the names of the topic's main methods. Avoid words "
         "used across all of machine learning, such as model, network, transformer or fine-tuning.\n"
         "- anchors: the numbers of 2 to 5 listed papers that introduced or defined the topic's main methods, "
-        "from different periods. Pick surveys only if nothing else fits, and only listed numbers."
+        "spread over its history: early, middle and recent. Pick surveys only if nothing else fits, and only "
+        "listed numbers."
     )
 
 
@@ -400,6 +403,8 @@ def merge_refinement(proposal: dict, answer: dict | None) -> dict:
         if isinstance(n, int) and 1 <= n <= len(candidates):
             picks.append(candidates[n - 1]["openalex_id"])
     picks = list(dict.fromkeys(picks))[:MAX_ANCHORS]
+    if len(picks) >= 2:
+        picks = _keep_spread(picks, proposal["anchors"], candidates)
     name = " ".join(str(answer.get("name") or "").split())
     description = " ".join(str(answer.get("description") or "").split())
     aliases = [" ".join(str(a).split()) for a in answer.get("aliases") or [] if str(a).strip()]
@@ -413,6 +418,25 @@ def merge_refinement(proposal: dict, answer: dict | None) -> dict:
         "anchors": picks if len(picks) >= 2 else proposal["anchors"],
         "anchors_from_model": len(picks) >= 2,
     }
+
+
+def _keep_spread(model: list[str], rules: list[str], candidates: list[dict]) -> list[str]:
+    """The 9B's anchors, plus the rules' picks for periods it left out, farthest first.
+
+    Asked for anchors "from different periods", the 9B still chose four object-tracking papers from
+    2002-2010, so the corpus would have grown from the classic trackers only.
+    """
+    years = {c["openalex_id"]: c["year"] for c in candidates}
+    chosen = [years[a] for a in model if years.get(a)]
+    gaps = []
+    for a in rules:
+        if a in model or not years.get(a) or not chosen:
+            continue
+        distance = min(abs(years[a] - y) for y in chosen)
+        if distance > ANCHOR_GAP_YEARS:
+            gaps.append((distance, a))
+    added = [a for _, a in sorted(gaps, reverse=True)]
+    return (model + added)[:max(MAX_MERGED_ANCHORS, len(model))]
 
 
 def refine(proposal: dict, classifier: "Classifier") -> dict:
