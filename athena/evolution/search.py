@@ -25,7 +25,6 @@ from loguru import logger
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from athena.core.config_store import get_setting
 from athena.core.models import EvoPaper, EvoTopic, EvoTopicPaper
 
 QUERY_INSTRUCT = "Given a research topic, retrieve titles and abstracts of papers about it"
@@ -68,15 +67,18 @@ def _vote(session: Session, weights: dict[UUID, float],
     return topics[best], ranking
 
 
-def semantic_weights(query: str, timeout: float = 3.0) -> dict[UUID, float] | None:
-    """Paper -> similarity for the papers nearest the query, or None when no embedding endpoint answers."""
+def semantic_weights(query: str, timeout: float = 10.0) -> dict[UUID, float] | None:
+    """Paper -> similarity for the papers nearest the query, or None when no embedding endpoint answers.
+
+    The timeout leaves room for the router to swap the embedder in (about 1.5 s) behind a running request.
+    """
     from athena.evolution import vectors
-    from athena.evolution.classify import auth_headers
-    url = get_setting("EVOLUTION_EMBED_URL", "http://127.0.0.1:8081").rstrip("/")
+    from athena.evolution.classify import auth_headers, embed_model_name, embed_url
+    url = embed_url()
     try:
-        resp = httpx.post(f"{url}/v1/embeddings", timeout=timeout, headers=auth_headers(), json={
+        resp = httpx.post(f"{url}/v1/embeddings", timeout=timeout, headers=auth_headers(url), json={
             "input": [f"Instruct: {QUERY_INSTRUCT}\nQuery: {query}"],
-            "model": get_setting("EVOLUTION_EMBED_MODEL_NAME", "qwen3-embedding-8b")})
+            "model": embed_model_name()})
         resp.raise_for_status()
     except httpx.HTTPError:
         return None

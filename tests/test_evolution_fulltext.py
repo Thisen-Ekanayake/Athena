@@ -236,9 +236,10 @@ class TestExternalEndpoints:
         import numpy as np
         import pytest
 
-        from athena.evolution import gpu
+        from athena.evolution import classify, gpu
         settings = {"EVOLUTION_EMBED_MODEL_NAME": "text-embedding-3-large", "EVOLUTION_EMBED_DIMENSIONS": "1024"}
-        monkeypatch.setattr(gpu, "get_setting", lambda key, default="": settings.get(key, default))
+        for module in (gpu, classify):
+            monkeypatch.setattr(module, "get_setting", lambda key, default="": settings.get(key, default))
         sizes = iter([3072, 768])
         bodies = []
 
@@ -256,7 +257,7 @@ class TestExternalEndpoints:
 
     def test_external_text_is_cut_by_words(self, monkeypatch):
         from athena.evolution import gpu
-        monkeypatch.setattr(gpu, "managed_servers", lambda: False)
+        monkeypatch.setattr(gpu, "is_local", lambda: False)
         text, cut = gpu._fit(None, "https://api.example.com", "word " * 700)
         assert cut and len(text.split()) == gpu.EXTERNAL_MAX_WORDS
 
