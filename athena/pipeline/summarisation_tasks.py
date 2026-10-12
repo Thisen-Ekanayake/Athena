@@ -29,6 +29,33 @@ BRIEF_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["b
                 "properties": {"brief": {"type": "string"}, "theme": {"type": "string"}}}
 
 
+MIN_SUMMARY_WORDS = 80    # below this a summary (3-5 takeaways, a concrete number) would have to be invented
+MAX_SUMMARY_WORDS = 9000  # about 12k tokens, inside the local 9B's 20k context with the prompt and the answer
+
+
+def _text_to_summarise(item: ContentItem, staged: str) -> Optional[str]:
+    """The staged text, or the article fetched the way Q&A fetches it when the staged text is too thin.
+
+    Staged text is often only a title and a one-line teaser. Returns None when even the fetched article
+    has too few words to summarise without inventing details.
+    """
+    import asyncio
+    from athena.core.qa_fetcher import fetch_article_content
+
+    text = staged
+    if len(text.split()) < MIN_SUMMARY_WORDS:
+        try:
+            fetched = asyncio.run(fetch_article_content(item))
+            if not fetched.partial and fetched.word_count > len(text.split()):
+                text = fetched.text
+        except Exception as e:
+            logger.warning(f"Could not fetch the article for {item.id}: {e}")
+    words = text.split()
+    if len(words) < MIN_SUMMARY_WORDS:
+        return None
+    return text if len(words) <= MAX_SUMMARY_WORDS else " ".join(words[:MAX_SUMMARY_WORDS])
+
+
 def _complete(system_prompt: str, user_msg: str, name: str, schema: dict):
     """One summary-model call with a JSON-schema answer; returns the response and the model used."""
     model = llm.chat_model("summary")
@@ -103,17 +130,23 @@ def summarise_item_worker(self, item_id: str, tier: int = 2):
         if not _does_item_need_resummary(item, active_prompt.version):
             logger.info(f"Item {item_id} already summarised with active version.")
             return
-
-        # Load staged file
-        if not item.full_text_path or not os.path.exists(item.full_text_path):
-            logger.error(f"Text file missing for {item_id}: {item.full_text_path}")
-            # Could trigger re-stage, but for now mark failed
-            item.summary_status = SummaryStatus.FAILED
-            session.commit()
+        if (item.extra_data or {}).get("summary_skipped"):
+            # Fetching again would find the same thin text; drop the flag from extra_data to try again.
+            logger.info(f"Item {item_id} was skipped for too little text.")
             return
 
-        with open(item.full_text_path, 'r', encoding='utf-8') as f:
-            text_content = f.read()
+        # Load the staged text; a missing or thin file falls back to fetching the article.
+        staged = ""
+        if item.full_text_path and os.path.exists(item.full_text_path):
+            with open(item.full_text_path, 'r', encoding='utf-8') as f:
+                staged = f.read()
+        text_content = _text_to_summarise(item, staged)
+        if text_content is None:
+            logger.warning(f"Too little text to summarise {item_id} without inventing details; skipped.")
+            item.summary_status = SummaryStatus.FAILED
+            item.extra_data = {**(item.extra_data or {}), "summary_skipped": "too little text"}
+            session.commit()
+            return
 
         user_msg = build_item_summary_prompt(item, text_content, active_prompt.user_prompt_tpl)
 

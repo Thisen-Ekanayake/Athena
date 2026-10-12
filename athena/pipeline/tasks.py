@@ -91,6 +91,7 @@ def generate_all_trending_briefs():
 @celery_app.task
 def enqueue_tier2_summaries():
     """Phase 3: Periodic background job to enqueue Tier 2 items for summarisation."""
+    from sqlalchemy import or_
     from athena.database.db import SessionLocal
     from athena.core.models import ContentItem, SummaryStatus
     import athena.pipeline.summarisation_tasks
@@ -102,12 +103,13 @@ def enqueue_tier2_summaries():
         return
 
     with SessionLocal() as session:
-        # Get items with score 0.40 <= score < 0.75 and summary_status != COMPLETE
-        # We only batch up to 500 at a time
+        # Get items with score 0.40 <= score < 0.75 and summary_status != COMPLETE, leaving out those
+        # skipped for having too little text. We only batch up to 500 at a time
         items = session.query(ContentItem).filter(
             ContentItem.score >= 0.40,
             ContentItem.score < 0.75,
-            ContentItem.summary_status != SummaryStatus.COMPLETE
+            ContentItem.summary_status != SummaryStatus.COMPLETE,
+            or_(ContentItem.extra_data.is_(None), ~ContentItem.extra_data.has_key("summary_skipped")),
         ).limit(500).all()
 
         for item in items:
