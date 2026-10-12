@@ -27,7 +27,7 @@ FRONTEND_URL="http://localhost:5173"
 # ---------------------------------------------------------------------------
 stop_all() {
   echo ">> Stopping local processes..."
-  for svc in api worker evolution frontend llm; do
+  for svc in api worker summary evolution frontend llm; do
     pidfile="$RUN_DIR/$svc.pid"
     if [ -f "$pidfile" ]; then
       pid="$(cat "$pidfile")"
@@ -150,6 +150,9 @@ esac
 start_proc api      uvicorn athena.api.main:app --host 127.0.0.1 --port 8000 --reload
 start_proc worker   celery -A athena.pipeline.tasks worker -l info --pool=threads \
                       -B --schedule "$RUN_DIR/celerybeat-schedule"
+# Summaries and cluster labels: their own queues, one at a time (the model server answers one request at a time).
+start_proc summary  celery -A athena.pipeline.tasks worker -l info --pool=solo -c 1 -n "summary@%h" \
+                      -Q summary_urgent,summary_standard,summary_lazy,summary_cluster,summary_trend
 # Research-evolution topic builds: own queue, one at a time (later phases share a single GPU).
 start_proc evolution celery -A athena.pipeline.tasks worker -l info -Q evolution -c 1 --pool=solo \
                       -n "evolution@%h"
@@ -169,6 +172,6 @@ echo " Athena is running (native services, dockerised infra)"
 echo "   Frontend : ${FRONTEND_URL}"
 echo "   API      : ${API_URL}        (docs: ${API_URL}/docs)"
 echo
-echo "   Logs : ${RUN_DIR}/{api,worker,evolution,frontend,llm}.log"
+echo "   Logs : ${RUN_DIR}/{api,worker,summary,evolution,frontend,llm}.log"
 echo "   Stop : ./run_native.sh --stop"
 echo "==================================================================="
