@@ -62,3 +62,33 @@ def build_topic(slug: str, client: OpenAlexClient | None = None, s2: SemanticSch
     db.set_topic_status(slug, status_after, ", ".join(f"{k}={v}" for k, v in summary.items()), stats=summary)
     logger.info(f"Built topic {slug}: {summary}")
     return summary
+
+
+def build_search_topic(slug: str) -> dict:
+    """A search-built topic: the map from keywords first, then again once its abstracts have vectors.
+
+    The first pass ends at ``refining``, so the map can be read while the GPU embeds the abstracts. If the
+    embedder cannot run (no model, the card busy elsewhere), the map stays as built, with keyword
+    membership, and says why.
+    """
+    summary = build_topic(slug, status_after="refining")
+    try:
+        from athena.evolution.gpu import embed_abstracts  # numpy and Qdrant: the worker image only
+        db.set_topic_status(slug, "refining", "Embedding the papers' abstracts")
+        embedded = embed_abstracts()
+    except Exception as exc:
+        logger.warning(f"Topic {slug}: abstracts not embedded, keeping keyword membership: {exc}")
+        note = f"Kept keyword membership: the abstracts could not be embedded ({exc})"
+        db.set_topic_status(slug, "ready", note[:500], stats=summary | {"refine": f"skipped ({str(exc)[:200]})"})
+        return summary
+    try:
+        refined = build_topic(slug, stage_status="refining")
+    except Exception as exc:
+        # The first pass's map is still stored; show it rather than a failure.
+        logger.warning(f"Topic {slug}: the refining rebuild failed, keeping the first map: {exc}")
+        db.set_topic_status(slug, "ready", f"The refining rebuild failed ({exc})"[:500],
+                            stats=summary | {"refine": f"failed ({str(exc)[:200]})"})
+        return summary
+    refined |= {"abstracts_embedded": embedded, "refine": "done"}
+    db.set_topic_status(slug, "ready", ", ".join(f"{k}={v}" for k, v in refined.items()), stats=refined)
+    return refined

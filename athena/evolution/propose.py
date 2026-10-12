@@ -421,6 +421,32 @@ def refine(proposal: dict, classifier: "Classifier") -> dict:
     return merge_refinement(proposal, answer)
 
 
+def run_refinement(proposal_id: str, r=None) -> str:
+    """The Celery side: start (or reuse) the 9B, refine a pending proposal, store the answer."""
+    from athena.core.redis_client import get_redis
+    from athena.evolution.classify import Classifier
+    from athena.evolution.gpu import chat_server  # the worker image only
+
+    r = r or get_redis(decode_responses=True)
+    proposal = load(r, proposal_id)
+    if proposal is None or (proposal.get("refine") or {}).get("status") != "pending":
+        return "skipped"  # built already, or gone
+    proposal["refine"] = {**proposal["refine"], "status": "running", "started_at": time.time()}
+    save(r, proposal)
+    try:
+        url, server = chat_server()
+        with server:
+            clf = Classifier(base_url=url)
+            state = {"status": "done", "model": clf.model, **refine(proposal, clf)}
+    except Exception as exc:
+        state = {"status": "failed", "error": str(exc)[:300]}
+    latest = load(r, proposal_id) or proposal
+    if (latest.get("refine") or {}).get("status") == "running":
+        latest["refine"] = state
+        save(r, latest)
+    return state["status"]
+
+
 # ── storage ────────────────────────────────────────────────────────────
 
 

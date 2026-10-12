@@ -248,6 +248,13 @@ def _loose_links(http: httpx.Client, url: str, session) -> int:
     return found
 
 
+def embed_abstracts() -> int:
+    """Tier 1 only: abstracts without a vector (a new search-built topic's), with no chunks, gaps or links."""
+    url, server = embed_server()
+    with server, httpx.Client(timeout=600.0, headers=auth_headers()) as http, SessionLocal() as session:
+        return _embed_abstracts(http, url, session)
+
+
 def embed_pending(limit: int | None = None) -> dict:
     """Embed chunks and gap statements that have no vector yet, search loose links, then embed abstracts."""
     vectors.ensure_collection()
