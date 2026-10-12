@@ -2,6 +2,7 @@
 Athena Layer 5 — Saved Lists Router
 
 User-created collections (e.g. "NLP", "Computer Vision") of content items.
+Each list belongs to one account; another account's list answers 404.
 
 GET    /api/v1/lists                       — list all lists (with item counts)
 POST   /api/v1/lists                       — create a list
@@ -19,13 +20,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func, delete
 from sqlalchemy.orm import Session
 
+from athena.api.auth import active_user
 from athena.api.deps import get_db
 from athena.api.schemas import (
     SavedListResponse, SavedListCreateRequest, SavedListUpdateRequest,
     AddItemToListRequest,
 )
 from athena.api.routers.feed import _build_feed_item
-from athena.core.models import SavedList, SavedListItem, ContentItem
+from athena.core.models import SavedList, SavedListItem, ContentItem, User
 
 router = APIRouter(prefix="/api/v1", tags=["Saved Lists"])
 
@@ -37,9 +39,9 @@ def _parse_uuid(value: str, label: str = "ID") -> UUID:
         raise HTTPException(status_code=400, detail=f"Invalid {label} format")
 
 
-def _get_list_or_404(db: Session, list_uuid: UUID) -> SavedList:
+def _get_list_or_404(db: Session, list_uuid: UUID, user: User) -> SavedList:
     saved_list = db.execute(
-        select(SavedList).where(SavedList.id == list_uuid)
+        select(SavedList).where(SavedList.id == list_uuid, SavedList.user_id == user.id)
     ).scalar_one_or_none()
     if not saved_list:
         raise HTTPException(status_code=404, detail="List not found")
@@ -50,11 +52,14 @@ def _get_list_or_404(db: Session, list_uuid: UUID) -> SavedList:
 def list_lists(
     item_id: str | None = Query(None),
     db: Session = Depends(get_db),
+    user: User = Depends(active_user),
 ):
-    """All saved lists with their item counts, newest first."""
+    """The user's saved lists with their item counts, newest first."""
+    mine = select(SavedList.id).where(SavedList.user_id == user.id)
     counts = dict(
         db.execute(
             select(SavedListItem.list_id, func.count(SavedListItem.id))
+            .where(SavedListItem.list_id.in_(mine))
             .group_by(SavedListItem.list_id)
         ).all()
     )
@@ -66,12 +71,12 @@ def list_lists(
             row[0]
             for row in db.execute(
                 select(SavedListItem.list_id)
-                .where(SavedListItem.item_id == item_uuid)
+                .where(SavedListItem.item_id == item_uuid, SavedListItem.list_id.in_(mine))
             ).all()
         }
 
     lists = db.execute(
-        select(SavedList).order_by(SavedList.created_at.desc())
+        select(SavedList).where(SavedList.user_id == user.id).order_by(SavedList.created_at.desc())
     ).scalars().all()
 
     return [
@@ -90,19 +95,20 @@ def list_lists(
 def create_list(
     request: SavedListCreateRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(active_user),
 ):
-    """Create a new (uniquely named) list."""
+    """Create a new list, named uniquely among the user's lists."""
     name = request.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="List name cannot be empty")
 
     existing = db.execute(
-        select(SavedList).where(func.lower(SavedList.name) == name.lower())
+        select(SavedList).where(func.lower(SavedList.name) == name.lower(), SavedList.user_id == user.id)
     ).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=409, detail=f"A list named '{name}' already exists")
 
-    saved_list = SavedList(name=name)
+    saved_list = SavedList(name=name, user_id=user.id)
     db.add(saved_list)
     db.commit()
     db.refresh(saved_list)
@@ -120,10 +126,11 @@ def rename_list(
     list_id: str,
     request: SavedListUpdateRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(active_user),
 ):
     """Rename a list."""
     list_uuid = _parse_uuid(list_id, "list ID")
-    saved_list = _get_list_or_404(db, list_uuid)
+    saved_list = _get_list_or_404(db, list_uuid, user)
 
     name = request.name.strip()
     if not name:
@@ -133,6 +140,7 @@ def rename_list(
         select(SavedList).where(
             func.lower(SavedList.name) == name.lower(),
             SavedList.id != list_uuid,
+            SavedList.user_id == user.id,
         )
     ).scalar_one_or_none()
     if clash:
@@ -157,10 +165,11 @@ def rename_list(
 def delete_list(
     list_id: str,
     db: Session = Depends(get_db),
+    user: User = Depends(active_user),
 ):
     """Delete a list and all of its memberships."""
     list_uuid = _parse_uuid(list_id, "list ID")
-    saved_list = _get_list_or_404(db, list_uuid)
+    saved_list = _get_list_or_404(db, list_uuid, user)
     db.delete(saved_list)
     db.commit()
 
@@ -169,10 +178,11 @@ def delete_list(
 def get_list_items(
     list_id: str,
     db: Session = Depends(get_db),
+    user: User = Depends(active_user),
 ):
     """Content items saved in a list, newest-added first, as feed cards."""
     list_uuid = _parse_uuid(list_id, "list ID")
-    _get_list_or_404(db, list_uuid)
+    _get_list_or_404(db, list_uuid, user)
 
     rows = db.execute(
         select(ContentItem)
@@ -189,10 +199,11 @@ def add_item_to_list(
     list_id: str,
     request: AddItemToListRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(active_user),
 ):
     """Add a content item to a list (idempotent)."""
     list_uuid = _parse_uuid(list_id, "list ID")
-    _get_list_or_404(db, list_uuid)
+    _get_list_or_404(db, list_uuid, user)
 
     item = db.execute(
         select(ContentItem).where(ContentItem.id == request.item_id)
@@ -218,10 +229,12 @@ def remove_item_from_list(
     list_id: str,
     item_id: str,
     db: Session = Depends(get_db),
+    user: User = Depends(active_user),
 ):
     """Remove a content item from a list."""
     list_uuid = _parse_uuid(list_id, "list ID")
     item_uuid = _parse_uuid(item_id, "item ID")
+    _get_list_or_404(db, list_uuid, user)
 
     db.execute(
         delete(SavedListItem).where(

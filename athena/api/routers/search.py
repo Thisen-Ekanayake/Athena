@@ -10,10 +10,11 @@ from sqlalchemy import select, or_
 from sqlalchemy.orm import Session
 from loguru import logger
 
-from athena.api.deps import get_db
+from athena.api import auth
+from athena.api.deps import get_db, get_redis
 from athena.api.config import settings
 from athena.api.routers.feed import _build_feed_item
-from athena.core.models import ContentItem, Source
+from athena.core.models import ContentItem, Source, User
 from athena.search.arxiv_live import search_arxiv
 from athena.search.lit_review import generate_lit_review
 from athena.search.local import embed_query, search_local
@@ -174,7 +175,8 @@ class SearchResponse(BaseModel):
 
 
 @router.post("/search", response_model=SearchResponse)
-def research_search(payload: SearchRequest) -> SearchResponse:
+def research_search(payload: SearchRequest, user: User = Depends(auth.active_user),
+                    r=Depends(get_redis)) -> SearchResponse:
     """Research search: combine local Qdrant hits + Semantic Scholar + LLM lit review."""
     query = payload.query.strip()
     limit = payload.limit
@@ -187,6 +189,7 @@ def research_search(payload: SearchRequest) -> SearchResponse:
 
     lit_review_text: str | None = None
     if payload.generate_review and merged:
+        auth.use(r, user, "lit_review")
         try:
             lit_review_text = generate_lit_review(query, merged)
         except Exception as exc:

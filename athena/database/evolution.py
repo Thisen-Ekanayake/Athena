@@ -57,11 +57,12 @@ def _chunks(rows: list, size: int = _BATCH):
 
 
 def upsert_topic(slug: str, name: str, aliases: list[str], description: str, seeds: list[dict],
-                 config: dict, origin: str = "curated", query: str | None = None) -> None:
+                 config: dict, origin: str = "curated", query: str | None = None,
+                 created_by: UUID | None = None) -> None:
     values = {"slug": slug, "name": name, "aliases": aliases, "description": description, "seeds": seeds,
               "config": config, "origin": origin, "query": query}
     with SessionLocal() as session:
-        stmt = insert(EvoTopic).values(id=uuid4(), status="pending", **values)
+        stmt = insert(EvoTopic).values(id=uuid4(), status="pending", created_by=created_by, **values)
         stmt = stmt.on_conflict_do_update(index_elements=["slug"], set_=values)
         session.execute(stmt)
         session.commit()
@@ -155,6 +156,7 @@ def topic_summary(topic: EvoTopic) -> dict:
         "origin": getattr(topic, "origin", None) or "curated",
         "query": getattr(topic, "query", None),
         "build_stats": getattr(topic, "build_stats", None) or {},
+        "created_by": str(topic.created_by) if getattr(topic, "created_by", None) else None,
     }
 
 
