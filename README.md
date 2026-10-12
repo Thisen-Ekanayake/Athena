@@ -59,6 +59,8 @@ Needs `python3`, `uvicorn`, `celery`, `npm` on `PATH`; logs land in `${TMPDIR:-/
 
 Once up — Frontend http://localhost:5173 · API http://localhost:8000 (`/docs`).
 
+The first visit asks you to create the admin account. There is no public sign-up: the admin adds people in Settings → Users and passes on a temporary password, which they replace at their first login. Users can read everything, keep their own saved lists, ask questions and build research maps within a daily allowance (`LIMIT_*_PER_DAY`); admins also manage sources, models, users and maps.
+
 | Service | Port |
 |---|---|
 | Frontend (Vite) | 5173 |

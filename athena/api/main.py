@@ -13,11 +13,13 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from loguru import logger
 
 from athena.api.routers import (
-    feed, items, clusters, trending, search, sources, sync, app_settings, saved, evolution,
+    feed, items, clusters, trending, search, sources, sync, app_settings, saved, evolution, auth as auth_routes,
+    users,
 )
 from athena.api import qa_api
 from athena.api import score_api
 from athena.api import summary_api
+from athena.api.auth import active_user, require_admin
 from athena.api.config import settings
 
 _basic_auth = HTTPBasic()
@@ -90,24 +92,30 @@ def create_app() -> FastAPI:
                 return get_redoc_html(openapi_url="/openapi.json", title="Athena API")
 
     # ── Routers ─────────────────────────────────────────
-    app.include_router(feed.router)
-    app.include_router(items.router)
-    app.include_router(clusters.router)
-    app.include_router(trending.router)
-    app.include_router(search.router)
-    app.include_router(sources.router)
-    app.include_router(sync.router)
-    app.include_router(app_settings.router)
-    app.include_router(saved.router)
-    app.include_router(evolution.router)
-    app.include_router(qa_api.router, prefix="/api/v1", tags=["QA"])
+    # Every route needs a logged-in account, except logging in itself and /health.
+    # Admin-only routes add require_admin themselves (see routers/users.py, sources.py, evolution.py, ...).
+    login = [Depends(active_user)]
+    admin = [Depends(require_admin)]
+    app.include_router(auth_routes.router)
+    app.include_router(users.router)
+    app.include_router(feed.router, dependencies=login)
+    app.include_router(items.router, dependencies=login)
+    app.include_router(clusters.router, dependencies=login)
+    app.include_router(trending.router, dependencies=login)
+    app.include_router(search.router, dependencies=login)
+    app.include_router(sources.router, dependencies=login)
+    app.include_router(sync.router, dependencies=admin)
+    app.include_router(app_settings.router, dependencies=admin)
+    app.include_router(saved.router, dependencies=login)
+    app.include_router(evolution.router, dependencies=login)
+    app.include_router(qa_api.router, prefix="/api/v1", tags=["QA"], dependencies=login)
     app.include_router(
         score_api.app.router, prefix="/api/v1",
-        tags=["Scoring"],
+        tags=["Scoring"], dependencies=login,
     )
     app.include_router(
         summary_api.app.router, prefix="/api/v1",
-        tags=["Summarisation"],
+        tags=["Summarisation"], dependencies=login,
     )
 
     # ── Health check ────────────────────────────────────

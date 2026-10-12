@@ -14,9 +14,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from athena.core import llm
-from athena.core.models import ContentItem, QAFetchCache, QAUsageLog
+from athena.core.models import ContentItem, QAFetchCache, QAUsageLog, User
 from athena.core.qa_fetcher import fetch_article_content
-from athena.api.deps import get_db, get_current_user_required
+from athena.api.auth import require_admin, spend
+from athena.api.deps import get_db
 
 
 router = APIRouter()
@@ -101,7 +102,8 @@ def est_tokens(text: str) -> int:
 
 
 @router.post("/items/{item_id}/qa")
-async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_db)):
+async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_db),
+                       user: User = Depends(spend("qa"))):
     from athena.api.deps import get_redis
     r = get_redis()
 
@@ -109,7 +111,7 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
     if not item:
         raise HTTPException(status_code=404, detail="Item not found")
 
-    session_id = f"session_{item_id}"
+    session_id = f"session_{user.id}_{item_id}"
 
     # 1. Budget Checks
     today_str = datetime.utcnow().strftime('%Y-%m-%d')
@@ -197,6 +199,7 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
                 db_sess = next(get_db())
                 log = QAUsageLog(
                     item_id=item_id,
+                    user_id=user.id,
                     session_id=session_id,
                     turn_number=len(req.history) // 2 + 1,
                     question_length=len(req.question),
@@ -230,7 +233,7 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
 def get_qa_sessions_dashboard(
     limit: int = 100,
     db: Session = Depends(get_db),
-    user: dict = Depends(get_current_user_required)
+    user=Depends(require_admin)
 ):
     from athena.api.deps import get_redis
     r = get_redis()
