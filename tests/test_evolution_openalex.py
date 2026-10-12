@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from athena.evolution.openalex import (
-    OpenAlexBudgetError, OpenAlexClient, Work, arxiv_id_from, arxiv_year, reconstruct_abstract,
+    OpenAlexBudgetError, OpenAlexClient, Work, arxiv_id_from, arxiv_year, reconstruct_abstract, search_expression,
 )
 
 
@@ -99,3 +99,57 @@ class TestClient:
         with pytest.raises(OpenAlexBudgetError):
             client.get_works(["W1"])
         assert len(seen) == 1
+
+
+class TestSearch:
+    def test_search_expression_quotes_phrases_and_drops_commas(self):
+        assert search_expression(["Mixture of Experts", "mixture-of-experts", "MoE", "moe", "a, b"]) == \
+            '"mixture of experts" OR "mixture-of-experts" OR moe OR "a b"'
+
+    def test_search_works_pages_most_cited_first_with_field_ids(self):
+        def handler(request):
+            page = int(request.url.params["page"])
+            count = 200 if page == 1 else 50
+            return httpx.Response(200, json={"results": [raw_work(page * 1000 + i) for i in range(count)]})
+
+        client, seen = make_client(handler)
+        works = client.search_works(["object tracking"], limit=1000,
+                                    fields=["Computer Science", "Biochemistry, Genetics and Molecular Biology"])
+        assert len(works) == 250 and len(seen) == 2
+        assert seen[0].url.params["filter"] == \
+            'title_and_abstract.search:"object tracking",primary_topic.field.id:17|13'
+        assert seen[0].url.params["sort"] == "cited_by_count:desc"
+
+    def test_title_search_and_no_fields(self):
+        client, seen = make_client(lambda r: httpx.Response(200, json={"results": []}))
+        assert client.search_works(["lora"], limit=10, in_title=True) == []
+        assert seen[0].url.params["filter"] == "title.search:lora"
+
+    def test_semantic_search_failure_returns_nothing(self):
+        client, _ = make_client(lambda r: httpx.Response(400, json={"error": "bad"}))
+        assert client.semantic_search("speculative decoding") == []
+
+    def test_semantic_search_params(self):
+        client, seen = make_client(lambda r: httpx.Response(200, json={"results": [raw_work(1)]}))
+        assert [w.openalex_id for w in client.semantic_search("speculative decoding")] == ["W1"]
+        assert seen[0].url.params["search.semantic"] == "speculative decoding"
+        assert seen[0].url.params["per-page"] == "50"
+        assert "filter" not in seen[0].url.params  # semantic search refuses field filters
+
+    def test_errors_do_not_carry_the_api_key(self):
+        http = httpx.Client(base_url="https://api.openalex.org",
+                            transport=httpx.MockTransport(lambda r: httpx.Response(400, json={"message": "bad"})))
+        client = OpenAlexClient(api_key="SECRET", mailto="", cache_dir="", http=http)
+        with pytest.raises(httpx.HTTPStatusError) as err:
+            client.get_works(["W1"])
+        assert "SECRET" not in str(err.value) and "bad" in str(err.value)
+
+    def test_field_counts_largest_first(self):
+        groups = [{"key": "https://openalex.org/fields/17", "key_display_name": "Computer Science", "count": 643},
+                  {"key": "https://openalex.org/fields/13",
+                   "key_display_name": "Biochemistry, Genetics and Molecular Biology", "count": 5914},
+                  {"key": "unknown", "key_display_name": "", "count": 3}]
+        client, seen = make_client(lambda r: httpx.Response(200, json={"group_by": groups}))
+        assert client.field_counts(["protein structure prediction"]) == [
+            ("Biochemistry, Genetics and Molecular Biology", 5914), ("Computer Science", 643)]
+        assert seen[0].url.params["group_by"] == "primary_topic.field.id"
