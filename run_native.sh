@@ -2,7 +2,8 @@
 #
 # run_native.sh — start Athena the "native" way: only the infrastructure
 #            (Postgres, Redis, Qdrant) runs in Docker; the API, Celery
-#            worker, and frontend run as local processes on the host.
+#            workers, frontend and the local model server (llama-server
+#            router) run as local processes on the host.
 #
 # Usage:
 #   ./run_native.sh          Start infra (docker) + API + worker + frontend (local)
@@ -26,7 +27,7 @@ FRONTEND_URL="http://localhost:5173"
 # ---------------------------------------------------------------------------
 stop_all() {
   echo ">> Stopping local processes..."
-  for svc in api worker frontend; do
+  for svc in api worker evolution frontend llm; do
     pidfile="$RUN_DIR/$svc.pid"
     if [ -f "$pidfile" ]; then
       pid="$(cat "$pidfile")"
@@ -59,7 +60,7 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 if [ ! -f .env ]; then
-  echo "WARNING: .env not found. Copy .env.example to .env and set OPENAI_API_KEY." >&2
+  echo "WARNING: .env not found. Copy .env.example to .env." >&2
 fi
 
 # Refuse to fight the containerised app stack (run_docker.sh) for ports 8000 / 5173.
@@ -128,6 +129,24 @@ wait_for_http() {
 
 # --- 4. local services ------------------------------------------------------
 echo ">> Starting local services..."
+# The model server: llama-server in router mode serves the chat and embedding models and swaps them on
+# the GPU. Skipped when LLM_BASE_URL (env or .env) points elsewhere, or something already holds :8080.
+# A server address saved in Settings is not visible here.
+env_value() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2-; }
+LLM_URL="${LLM_BASE_URL:-$(env_value LLM_BASE_URL)}"
+LLAMA_BIN="${LLAMA_SERVER_BIN:-$(env_value LLAMA_SERVER_BIN)}"
+LLAMA_BIN="${LLAMA_BIN:-llama-server}"
+case "${LLM_URL:-http://127.0.0.1:8080/v1}" in
+  http://127.0.0.1:8080*|http://localhost:8080*)
+    if lsof -tiTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
+      echo "   a model server is already listening on :8080; using it"
+    elif command -v "$LLAMA_BIN" >/dev/null 2>&1; then
+      start_proc llm "$LLAMA_BIN" --models-preset config/llama-router.ini --models-max 1 --host 127.0.0.1 --port 8080
+    else
+      echo "WARNING: '$LLAMA_BIN' not found, so AI features have no model server (see config/llama-router.ini)." >&2
+    fi ;;
+  *) echo "   using the model server at $LLM_URL" ;;
+esac
 start_proc api      uvicorn athena.api.main:app --host 127.0.0.1 --port 8000 --reload
 start_proc worker   celery -A athena.pipeline.tasks worker -l info --pool=threads \
                       -B --schedule "$RUN_DIR/celerybeat-schedule"
@@ -150,6 +169,6 @@ echo " Athena is running (native services, dockerised infra)"
 echo "   Frontend : ${FRONTEND_URL}"
 echo "   API      : ${API_URL}        (docs: ${API_URL}/docs)"
 echo
-echo "   Logs : ${RUN_DIR}/{api,worker,frontend}.log"
+echo "   Logs : ${RUN_DIR}/{api,worker,evolution,frontend,llm}.log"
 echo "   Stop : ./run_native.sh --stop"
 echo "==================================================================="

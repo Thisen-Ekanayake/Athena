@@ -11,6 +11,10 @@ services:
       DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
+      # The model server runs on the host, where the GPU is (config/llama-router.ini); LLM_BASE_URL wins.
+      LLM_DEFAULT_BASE_URL: http://host.docker.internal:8080/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - db
       - redis
@@ -31,6 +35,9 @@ services:
       # Keep container staging on the mounted volume regardless of .env's value.
       ATHENA_STAGING_DIR: /tmp/athena/staging
       GROBID_URL: http://grobid:8070
+      LLM_DEFAULT_BASE_URL: http://host.docker.internal:8080/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - redis
       - db
