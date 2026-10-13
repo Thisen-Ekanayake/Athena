@@ -25,8 +25,12 @@ class MilestoneWeights:
     # reference milestones picked at w = 0 / 0.05 / 0.10 / 0.15 were object detection 9/9/9/8 of 11, PEFT
     # 8/8/9/9 of 12, diffusion 7/6/5/4 of 12, RAG 7/6/5/1 of 10. A name is found for 55-75% of each topic's top
     # 150 candidates, so the feature mostly reshuffles them (RAG lost RETRO, Contriever and Active RAG to R3 and
-    # BERTserini). No weight gains on a topic without losing on another, so it stays off.
+    # BERTserini). No weight gains on a topic without losing on another, so it stays off by default; an admin can
+    # turn it on for one map (NAMED_METHOD_ON, from the map's Changes tab), which applies at the next build.
     named_method: float = 0.0
+
+
+NAMED_METHOD_ON = 0.10  # the weight a map gets when an admin turns the named-method feature on (PEFT's best)
 
 
 @dataclass

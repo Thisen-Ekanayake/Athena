@@ -904,6 +904,13 @@ def take_snapshot(session: Session, topic: EvoTopic, reason: str) -> dict:
     return {"id": str(row.id), "stats": stats, "changes": row.changes}
 
 
+def _named_method_in_scores(session: Session, topic: EvoTopic) -> bool:
+    """Whether the stored build gave any paper a named-method part."""
+    return session.execute(select(EvoTopicPaper.id).where(
+        EvoTopicPaper.topic_id == topic.id,
+        EvoTopicPaper.score_detail["named_method"].as_float() > 0).limit(1)).first() is not None
+
+
 def topic_changes(session: Session, topic: EvoTopic, limit: int = 20) -> dict:
     """Snapshots newest first, each with what changed since the one before."""
     rows = session.execute(select(EvoSnapshot.id, EvoSnapshot.taken_at, EvoSnapshot.reason, EvoSnapshot.built_at,
@@ -912,6 +919,9 @@ def topic_changes(session: Session, topic: EvoTopic, limit: int = 20) -> dict:
                            .order_by(EvoSnapshot.taken_at.desc()).limit(limit)).all()
     config = TopicConfig.from_dict(topic.config)
     return {"topic": topic_summary(topic), "refresh_days": config.refresh_days,
+            "named_method": config.weights.named_method > 0,
+            # Built since the setting changed? The scores follow the setting only from the next build.
+            "named_method_in_scores": _named_method_in_scores(session, topic),
             "snapshots": [{"id": str(r.id), "taken_at": r.taken_at.isoformat(), "reason": r.reason,
                            "built_at": r.built_at.isoformat() if r.built_at else None, "stats": r.stats or {},
                            "changes": r.changes} for r in rows]}
