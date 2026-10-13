@@ -5,6 +5,7 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from athena.database.db import init_db  # noqa: E402
+from scripts.seed_prompts import seed_prompts  # noqa: E402
 from athena.database.operations import upsert_source  # noqa: E402
 from athena.core.schemas import SourceCreate  # noqa: E402
 from athena.core.models import SourceType, SourceCategory  # noqa: E402
@@ -13,6 +14,7 @@ from athena.core.models import SourceType, SourceCategory  # noqa: E402
 def setup():
     print("Initializing Database...")
     init_db()
+    seed_prompts()  # summaries and cluster labels need their prompt templates; does nothing once seeded
 
     print("Seeding Initial Sources...")
 
