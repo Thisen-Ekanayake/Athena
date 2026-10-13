@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session, aliased
 
 from athena.core.models import (
     EvoChunk, EvoCitation, EvoCitationContext, EvoGapStatement, EvoGapTheme, EvoGapThemeMember, EvoLooseLink,
-    EvoIdeaCheck, EvoMainPathEdge, EvoMilestoneOverride, EvoPaper, EvoPaperNote, EvoReadingProgress, EvoSection,
-    EvoTopic, EvoTopicPaper,
+    EvoIdeaCheck, EvoMainPathEdge, EvoMapQuestion, EvoMilestoneOverride, EvoPaper, EvoPaperNote, EvoReadingProgress,
+    EvoSection, EvoTopic, EvoTopicPaper,
 )
 from athena.database.db import SessionLocal
 from athena.evolution.config import TopicConfig
@@ -704,6 +704,43 @@ def delete_idea_check(session: Session, user_id: UUID, check_id: UUID) -> bool:
                                                          EvoIdeaCheck.user_id == user_id)).rowcount
     session.commit()
     return bool(deleted)
+
+
+# ── questions to a map (E3) ────────────────────────────────────────────
+
+
+def save_map_question(user_id: UUID, topic_id: UUID, question: str, answer: str, sources: list[dict],
+                      sections: list[str], input_tokens: int, output_tokens: int, model: str) -> UUID:
+    """Runs after a streamed answer, so it opens its own session (the request's has closed)."""
+    with SessionLocal() as session:
+        row = EvoMapQuestion(user_id=user_id, topic_id=topic_id, question=question, answer=answer, sources=sources,
+                             sections=sections, input_tokens=input_tokens, output_tokens=output_tokens, model=model,
+                             created_at=datetime.now(timezone.utc))
+        session.add(row)
+        session.commit()
+        return row.id
+
+
+def map_questions(session: Session, user_id: UUID, topic_id: UUID, limit: int = 30) -> list[dict]:
+    """A user's questions to one map, oldest first, so the page can show them as a conversation."""
+    rows = list(session.execute(select(EvoMapQuestion).where(
+        EvoMapQuestion.user_id == user_id, EvoMapQuestion.topic_id == topic_id)
+        .order_by(EvoMapQuestion.created_at.desc()).limit(limit)).scalars())
+    return [{"id": str(q.id), "question": q.question, "answer": q.answer, "sources": q.sources or [],
+             "sections": q.sections or [], "created_at": q.created_at.isoformat()} for q in reversed(rows)]
+
+
+def delete_map_question(session: Session, user_id: UUID, question_id: UUID | None = None,
+                        topic_id: UUID | None = None) -> int:
+    """One of a user's questions, or all of them for a topic."""
+    stmt = delete(EvoMapQuestion).where(EvoMapQuestion.user_id == user_id)
+    if question_id is not None:
+        stmt = stmt.where(EvoMapQuestion.id == question_id)
+    if topic_id is not None:
+        stmt = stmt.where(EvoMapQuestion.topic_id == topic_id)
+    deleted = session.execute(stmt).rowcount
+    session.commit()
+    return deleted
 
 
 # ── names citing papers use (E9) ───────────────────────────────────────
