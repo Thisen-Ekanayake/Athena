@@ -304,3 +304,18 @@ def test_questions_are_per_user(client):
     assert read.call_args.args[1:] == (USER.id, TOPIC.id)
     with patch(f"{ROUTER_DB}.delete_map_question", return_value=0):
         assert c.delete(f"/api/v1/evolution/questions/{uuid4()}").status_code == 404
+
+
+# ── E7 links between maps ──────────────────────────────────────────────
+
+
+def test_links_are_cached_until_any_map_changes(client):
+    c, _ = client
+    payload = {"topic": {}, "shared": {"total": 0, "papers": []}, "borrowed": [], "lent": [], "cross_gaps": [],
+               "cross_min_score": 0.68}
+    with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), patch(f"{ROUTER_DB}.labels_version", return_value="0"), \
+            patch(f"{ROUTER_DB}.maps_version", side_effect=["1-6-0", "1-6-0", "2-6-0"]), \
+            patch(f"{ROUTER_DB}.topic_links", return_value=payload) as build:
+        for _ in range(3):
+            assert c.get("/api/v1/evolution/topics/object-detection/links").json() == payload
+    assert build.call_count == 2
