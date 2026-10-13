@@ -63,6 +63,19 @@ def short_id(value: str | None) -> str:
     return value.rsplit("/", 1)[-1] if value else ""
 
 
+def parse_authorships(raw: list | None, limit: int = 10) -> list[dict]:
+    """The first ``limit`` authors with their OpenAlex IDs and up to three institutions each."""
+    out = []
+    for a in (raw or [])[:limit]:
+        author = a.get("author") or {}
+        institutions = [{"id": short_id(i.get("id")) or None, "name": i["display_name"],
+                         "country": i.get("country_code")}
+                        for i in (a.get("institutions") or []) if i.get("display_name")][:3]
+        out.append({"id": short_id(author.get("id")) or None, "name": author.get("display_name") or "",
+                    "institutions": institutions})
+    return out
+
+
 _ARXIV_DOI = re.compile(r"10\.48550/arxiv\.(.+)$", re.IGNORECASE)
 _ARXIV_URL = re.compile(r"arxiv\.org/(?:abs|pdf)/([^\s?#]+?)(?:v\d+)?(?:\.pdf)?/?$", re.IGNORECASE)
 
@@ -132,6 +145,8 @@ class Work:
     work_type: str | None = None
     venue: str | None = None
     authors: list[str] = field(default_factory=list)
+    # [{id, name, institutions: [{id, name, country}]}]: OpenAlex's author and institution IDs, for the people view
+    authorships: list[dict] = field(default_factory=list)
     cited_by_count: int = 0
     referenced_works: list[str] = field(default_factory=list)
     is_oa: bool = False
@@ -164,6 +179,7 @@ class Work:
             work_type=raw.get("type"),
             venue=source.get("display_name"),
             authors=[(a.get("author") or {}).get("display_name", "") for a in (raw.get("authorships") or [])][:10],
+            authorships=parse_authorships(raw.get("authorships")),
             cited_by_count=raw.get("cited_by_count") or 0,
             referenced_works=[short_id(r) for r in (raw.get("referenced_works") or [])],
             is_oa=bool((raw.get("open_access") or {}).get("is_oa")),

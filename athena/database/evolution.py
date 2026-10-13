@@ -24,6 +24,7 @@ from athena.core.models import (
 from athena.database.db import SessionLocal
 from athena.evolution.config import TopicConfig
 from athena.evolution.eras import on_topic_method, stored_eras
+from athena.evolution.people import PeoplePaper, key_people, milestone_people, people_by_era
 from athena.evolution.names import detect_method_name
 from athena.evolution.reading_path import PathCandidate, build_path
 
@@ -197,6 +198,8 @@ def _merge_paper(oid: str, paper, existing: EvoPaper | None, now: datetime) -> d
         "id": existing.id if existing is not None else uuid4(), "openalex_id": oid, "doi": w.doi,
         "arxiv_id": arxiv_id, "title": title, "abstract": abstract, "year": year, "year_source": year_source,
         "openalex_year": w.year, "venue": w.venue, "work_type": w.work_type, "authors": w.authors,
+        # A build from an older cache entry may lack them; keep what a backfill stored.
+        "authorships": w.authorships or getattr(existing, "authorships", None) or [],
         "cited_by_count": w.cited_by_count, "s2_paper_id": s2_paper_id, "s2_cited_by_count": s2_cited_by_count,
         "primary_topic": w.primary_topic, "is_oa": is_oa,
         "oa_pdf_url": oa_pdf_url,
@@ -548,6 +551,69 @@ def note_context(session: Session, topic: EvoTopic, paper_ids: list[UUID]) -> li
             "builds_on": [label(o) for o in paper_ids[:i] if o in cites.get(pid, set()) and o in rows][-3:],
         })
     return out
+
+
+# ── people (E8) ────────────────────────────────────────────────────────
+
+
+def topic_people(session: Session, topic: EvoTopic) -> dict:
+    """Key authors and labs per era and overall, and who introduced each milestone."""
+    overrides = _overrides(session, topic.id)
+    rows = _topic_rows(session, topic.id)
+    weight = TopicConfig.from_dict(topic.config).weights.relevance
+    on_topic = [(tp, p) for tp, p in rows if on_topic_method(tp.kind, tp.score_detail, weight)]
+    milestones = {p.id for tp, p in rows
+                  if effective_milestone(tp.is_milestone_auto, overrides[p.id].action if p.id in overrides else None)}
+    names = method_names(session, {p.id: p.title for _, p in rows if p.id in milestones})
+
+    def person_paper(tp: EvoTopicPaper, p: EvoPaper) -> PeoplePaper:
+        return PeoplePaper(id=str(p.id), title=p.title, year=p.year, milestone_score=tp.milestone_score or 0.0,
+                           is_milestone=p.id in milestones, named_method=names.get(p.id) or tp.named_method,
+                           authorships=p.authorships or [], authors=p.authors or [])
+
+    papers = [person_paper(tp, p) for tp, p in on_topic]
+    # Milestones a person pinned although they are not on-topic method papers still had authors.
+    pinned = [person_paper(tp, p) for tp, p in rows
+              if p.id in milestones and not on_topic_method(tp.kind, tp.score_detail, weight)]
+    with_ids = sum(bool(p.authorships) for p in papers)
+    return {
+        "topic": topic_summary(topic),
+        "eras": people_by_era(papers, topic_eras(topic, rows)),
+        "overall": key_people(papers),
+        "milestones": milestone_people(papers + pinned),
+        "papers": len(papers),
+        "papers_with_ids": with_ids,  # the rest are told apart by name only
+    }
+
+
+# ── names citing papers use (E9) ───────────────────────────────────────
+
+
+def save_cited_name(session: Session, paper_id: UUID, value: dict) -> None:
+    session.execute(update(EvoPaper).where(EvoPaper.id == paper_id).values(cited_name=value))
+    session.commit()
+
+
+def cited_names_fetched_since(session: Session, paper_ids: list[UUID], days: int) -> set[UUID]:
+    """Papers whose cited name was fetched in the last ``days`` days."""
+    cutoff = datetime.now(timezone.utc).timestamp() - days * 86400
+    out = set()
+    for pid, value in session.execute(select(EvoPaper.id, EvoPaper.cited_name).where(
+            EvoPaper.id.in_(paper_ids), EvoPaper.cited_name.isnot(None))):
+        try:
+            if datetime.fromisoformat(value["fetched_at"]).timestamp() >= cutoff:
+                out.add(pid)
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def cited_names(openalex_ids: list[str]) -> dict[str, str]:
+    """OpenAlex ID -> the name citing papers use, for papers where one was found."""
+    with SessionLocal() as session:
+        rows = session.execute(select(EvoPaper.openalex_id, EvoPaper.cited_name).where(
+            EvoPaper.openalex_id.in_(openalex_ids), EvoPaper.cited_name.isnot(None))).all()
+    return {oid: v["name"] for oid, v in rows if isinstance(v, dict) and v.get("name")}
 
 
 # ── exports (E6) ───────────────────────────────────────────────────────
