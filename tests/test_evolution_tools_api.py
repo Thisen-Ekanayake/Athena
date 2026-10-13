@@ -170,3 +170,53 @@ def test_new_papers_for_one_map(client):
     with patch(f"{ROUTER_DB}.new_feed_papers", return_value=[]) as read:
         assert c.get("/api/v1/evolution/new-papers", params={"days": 14, "topic": "peft"}).json() == []
     assert read.call_args.args[1:] == (14, "peft")
+
+
+# ── E2 idea checks ─────────────────────────────────────────────────────
+
+IDEA = {"idea": "Fine-tune adapters in two bits without losing accuracy."}
+
+
+def test_idea_check_is_saved_to_the_account(client):
+    c, _ = client
+    as_user()
+    result = {"papers": [], "themes": [], "unthemed_gaps": [], "verdict": None, "usage": None}
+    with patch("athena.evolution.ideas.check_idea", return_value=result) as check, \
+            patch(f"{ROUTER_DB}.save_idea_check", return_value={"id": "1", "result": result}) as save:
+        resp = c.post("/api/v1/evolution/idea-checks", json=IDEA)
+    assert resp.status_code == 201
+    assert check.call_args.kwargs == {"verdict": True}
+    assert save.call_args.args[1:] == (USER.id, IDEA["idea"], result)
+
+
+def test_idea_checks_have_a_daily_limit(client):
+    c, redis = client
+    as_user()
+    with patch("athena.evolution.ideas.check_idea", return_value={}), \
+            patch(f"{ROUTER_DB}.save_idea_check", return_value={}):
+        codes = [c.post("/api/v1/evolution/idea-checks", json=IDEA).status_code for _ in range(21)]
+    assert codes[:20] == [201] * 20 and codes[20] == 429
+
+
+def test_idea_check_without_an_embedder_is_503(client):
+    c, _ = client
+    from athena.evolution.ideas import IdeaCheckUnavailable
+    with patch("athena.evolution.ideas.check_idea", side_effect=IdeaCheckUnavailable("no model")):
+        resp = c.post("/api/v1/evolution/idea-checks", json=IDEA)
+    assert resp.status_code == 503 and resp.json()["detail"] == "no model"
+
+
+def test_idea_checks_are_private(client):
+    c, _ = client
+    as_user()
+    check_id = uuid4()
+    with patch(f"{ROUTER_DB}.get_idea_check", return_value=None) as read:
+        assert c.get(f"/api/v1/evolution/idea-checks/{check_id}").status_code == 404
+    assert read.call_args.args[1:] == (USER.id, check_id)
+    with patch(f"{ROUTER_DB}.delete_idea_check", return_value=False):
+        assert c.delete(f"/api/v1/evolution/idea-checks/{check_id}").status_code == 404
+
+
+def test_short_ideas_are_rejected(client):
+    c, _ = client
+    assert c.post("/api/v1/evolution/idea-checks", json={"idea": "too short"}).status_code == 422
