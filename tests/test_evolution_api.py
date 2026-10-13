@@ -16,8 +16,8 @@ from tests.conftest import ADMIN
 ROUTER_DB = "athena.api.routers.evolution.db"
 TOPIC = SimpleNamespace(slug="object-detection", name="Object detection", built_at=None, status="ready",
                         origin="curated", status_detail=None)
-SEARCH_TOPIC = SimpleNamespace(slug="object-tracking", name="Object tracking", built_at=None, status="ready",
-                               origin="search", status_detail=None)
+SEARCH_TOPIC = SimpleNamespace(id=uuid4(), slug="object-tracking", name="Object tracking", built_at=None,
+                               status="ready", origin="search", status_detail=None)
 ROUTER = "athena.api.routers.evolution"
 SUMMARY = {"slug": "object-detection", "name": "Object detection", "status": "ready"}
 
@@ -219,9 +219,10 @@ def test_create_topic_stores_a_search_topic_and_queues_its_build(client):
             patch(f"{ROUTER_DB}.upsert_topic") as upsert, patch(f"{ROUTER_DB}.set_topic_status"), \
             patch(f"{ROUTER_DB}.get_topic", return_value=SEARCH_TOPIC), \
             patch(f"{ROUTER_DB}.topic_summary", return_value={"slug": "object-tracking-2"}), \
-            patch(f"{ROUTER}._enqueue") as enqueue:
+            patch(f"{ROUTER}._enqueue") as enqueue, patch(f"{ROUTER}.watch_db.follow_map") as follow:
         resp = c.post("/api/v1/evolution/topics", json=TOPIC_BODY)
     assert resp.status_code == 201
+    assert follow.call_args.args[1:] == (ADMIN.id, SEARCH_TOPIC.id)  # the builder follows the new map
     slug, name, aliases, _, seeds, config = upsert.call_args.args
     assert slug == "object-tracking-2"  # "object-tracking" was taken
     assert seeds == [{"openalex_id": "W1", "alt_ids": ["W2"]}]
