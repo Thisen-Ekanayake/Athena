@@ -148,3 +148,25 @@ def test_people_are_served_and_cached(client):
         assert c.get("/api/v1/evolution/topics/object-detection/people").json() == payload
         assert c.get("/api/v1/evolution/topics/object-detection/people").json() == payload
     assert build.call_count == 1
+
+
+# ── E5 the feed and the maps ───────────────────────────────────────────
+
+
+def test_feed_item_place(client):
+    c, _ = client
+    item_id = uuid4()
+    place = {"item_id": str(item_id), "places": [], "cites": [{"topic": "peft"}], "maps_cited": {"peft": 1},
+             "references": 30, "checked_at": None}
+    with patch(f"{ROUTER_DB}.feed_place", return_value=place) as read:
+        assert c.get(f"/api/v1/evolution/items/{item_id}").json() == place
+    assert read.call_args.args[1] == item_id
+    with patch(f"{ROUTER_DB}.feed_place", return_value=None):
+        assert c.get(f"/api/v1/evolution/items/{item_id}").status_code == 404
+
+
+def test_new_papers_for_one_map(client):
+    c, _ = client
+    with patch(f"{ROUTER_DB}.new_feed_papers", return_value=[]) as read:
+        assert c.get("/api/v1/evolution/new-papers", params={"days": 14, "topic": "peft"}).json() == []
+    assert read.call_args.args[1:] == (14, "peft")
