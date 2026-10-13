@@ -53,7 +53,7 @@ def build_topic(slug: str, client: OpenAlexClient | None = None, s2: SemanticSch
         corpus = build_corpus(client or OpenAlexClient(), seeds, config, s2, search_terms, on_stage=stage)
         stage("Scoring milestones")
         membership = topic_membership(corpus, config)
-        scores = score_topic(corpus, config, membership)
+        scores = score_topic(corpus, config, membership, db.cited_names(list(corpus.papers)))
         stage("Saving the map")
         db.save_topic_build(slug, corpus, scores)
     except Exception as exc:

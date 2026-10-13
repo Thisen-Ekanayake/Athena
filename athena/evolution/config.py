@@ -18,9 +18,10 @@ class MilestoneWeights:
     flow: float = 0.15         # share of the topic's citation paths running through the paper
     relevance: float = 0.10    # topic keywords in the title (full) or only the abstract (half)
     specificity: float = 0.10  # share of the paper's citations that come from this topic
-    # Title proxy for "introduced a named method" ("LoRA: ..."). Off: it penalised iconic papers whose
-    # titles do not follow the pattern (Fast R-CNN, "Focal Loss ..." for RetinaNet). Phase 2 detects
-    # named methods from citing sentences instead.
+    # Introduced a named method: citing papers call it by a name ("LoRA [15]"), read from Semantic Scholar's
+    # citing sentences for each topic's top candidates (athena.evolution.method_names). The earlier title
+    # proxy ("LoRA: ...") penalised iconic papers whose titles do not follow the pattern (Fast R-CNN).
+    # See scripts/evolution_bench/eval_named_method.py for the evaluation behind this weight.
     named_method: float = 0.0
 
 

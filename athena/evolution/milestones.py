@@ -88,8 +88,13 @@ def select_milestones(scores: dict[str, PaperScore], years: dict[str, int | None
     return picked
 
 
-def score_topic(corpus: Corpus, config: TopicConfig, membership: "Membership | None" = None) -> TopicScores:
-    """Scores and milestones. ``membership`` says which papers are on-topic; keywords decide without it."""
+def score_topic(corpus: Corpus, config: TopicConfig, membership: "Membership | None" = None,
+                cited_names: dict[str, str] | None = None) -> TopicScores:
+    """Scores and milestones. ``membership`` says which papers are on-topic; keywords decide without it.
+
+    ``cited_names`` (OpenAlex ID -> the name citing papers use, from ``athena.evolution.method_names``) feeds
+    the named-method feature; without it the feature is off for every paper.
+    """
     years = {pid: p.year for pid, p in corpus.papers.items()}
     cg = g.build_graph(corpus.papers, corpus.edges, years)
     in_deg, out_deg = g.degrees(cg)
@@ -123,7 +128,7 @@ def score_topic(corpus: Corpus, config: TopicConfig, membership: "Membership | N
             "flow": w.flow * features["flow"][pid],
             "relevance": w.relevance * rel[pid],
             "specificity": w.specificity * features["specificity"][pid],
-            "named_method": w.named_method * (1.0 if name else 0.0),
+            "named_method": w.named_method * (1.0 if pid in (cited_names or {}) else 0.0),
         }
         scores[pid] = PaperScore(
             kind=classify_kind(paper.title, paper.work.work_type),
