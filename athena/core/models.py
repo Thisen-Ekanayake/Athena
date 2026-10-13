@@ -464,6 +464,8 @@ class EvoPaper(Base):
     venue = Column(String, nullable=True)
     work_type = Column(String, nullable=True)
     authors = Column(JSONB, default=[])
+    # [{id, name, institutions: [{id, name, country}]}] from OpenAlex, for the people view; ``authors`` keeps names
+    authorships = Column(JSONB, default=[])
     cited_by_count = Column(Integer, default=0)      # OpenAlex's count
     s2_paper_id = Column(String, nullable=True, index=True)  # Semantic Scholar paperId
     s2_cited_by_count = Column(Integer, nullable=True)       # often far higher for ML preprints
@@ -474,6 +476,9 @@ class EvoPaper(Base):
     abstract_embedded_at = Column(DateTime(timezone=True), nullable=True)  # Tier 1: in Qdrant's paper_abstracts
     merged_ids = Column(ARRAY(String), default=[])   # duplicate OpenAlex records folded into this one
     content_item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=True)
+    # The name citing papers give it, read from Semantic Scholar's citing sentences ({name, users, citers,
+    # fetched_at}; name is null when none stands out). A milestone-score feature: see athena.evolution.method_names.
+    cited_name = Column(JSONB, nullable=True)
     extra = Column(JSONB, default={})
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -635,6 +640,7 @@ class EvoGapStatement(Base):
     labelled_at = Column(DateTime(timezone=True), nullable=True)
     embedded_at = Column(DateTime(timezone=True), nullable=True)      # vector in Qdrant's gap_statements
     loose_checked_at = Column(DateTime(timezone=True), nullable=True)  # loose links searched
+    cross_checked_at = Column(DateTime(timezone=True), nullable=True)  # other maps' papers searched (E7)
 
 
 class EvoGapTheme(Base):
@@ -681,3 +687,100 @@ class EvoLooseLink(Base):
     chunk_id = Column(PG_UUID(as_uuid=True), nullable=False)
     score = Column(Float, nullable=False)            # cosine similarity of the best matching chunk
     cites = Column(Boolean, default=False)           # whether the later paper cites the gap's paper anyway
+
+
+class EvoCrossLink(Base):
+    """A paper in another map whose text matches a gap statement: a loose link across maps.
+
+    Like ``EvoLooseLink``, ``chunk_id`` is not a foreign key; a link to a chunk that is gone drops out of reads.
+    """
+    __tablename__ = "evo_cross_links"
+    __table_args__ = (
+        UniqueConstraint("gap_id", "paper_id", name="uq_evo_cross_link"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    gap_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_gap_statements.id", ondelete="CASCADE"),
+                    nullable=False, index=True)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    chunk_id = Column(PG_UUID(as_uuid=True), nullable=False)
+    score = Column(Float, nullable=False)
+
+
+# ── Research evolution: reading, questions and history ───────────────
+
+
+class EvoPaperNote(Base):
+    """Model-written text about a paper's place in one topic, kept for the build it was written for.
+
+    kind "why": the reading path's one line on why the paper matters.
+    """
+    __tablename__ = "evo_paper_notes"
+    __table_args__ = (
+        UniqueConstraint("topic_id", "paper_id", "kind", name="uq_evo_paper_note"),
+    )
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"), nullable=False)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"), nullable=False)
+    kind = Column(String, nullable=False)
+    text = Column(String, nullable=False)
+    model = Column(String, nullable=True)
+    built_at = Column(DateTime(timezone=True), nullable=True)  # the topic build it describes; stale once rebuilt
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class EvoReadingProgress(Base):
+    """A paper a user has marked as read. Per paper, so reading it in one map counts in every map."""
+    __tablename__ = "evo_reading_progress"
+
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"), primary_key=True)
+    read_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class EvoIdeaCheck(Base):
+    """An idea or abstract checked against every map: the closest papers, the gaps it touches, a verdict."""
+    __tablename__ = "evo_idea_checks"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    idea = Column(String, nullable=False)
+    result = Column(JSONB, nullable=False, default={})
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class EvoMapQuestion(Base):
+    """A question asked of one map, its answer and the passages it cited."""
+    __tablename__ = "evo_map_questions"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    question = Column(String, nullable=False)
+    answer = Column(String, nullable=False, default="")
+    sources = Column(JSONB, nullable=False, default=[])
+    sections = Column(JSONB, nullable=False, default=[])   # section-type filters the question was asked with
+    input_tokens = Column(Integer, default=0)
+    output_tokens = Column(Integer, default=0)
+    model = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class EvoSnapshot(Base):
+    """A topic's milestones and gap themes at one point, and what changed since the snapshot before it."""
+    __tablename__ = "evo_snapshots"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"),
+                      nullable=False, index=True)
+    taken_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    built_at = Column(DateTime(timezone=True), nullable=True)  # the build it describes
+    reason = Column(String, nullable=False)          # baseline | build | refresh | full_text
+    milestones = Column(JSONB, nullable=False, default=[])  # [{paper_id, title, year, named_method, score}]
+    themes = Column(JSONB, nullable=False, default=[])      # [{label, status, size, first_year, last_year, members}]
+    paper_ids = Column(JSONB, nullable=False, default=[])
+    stats = Column(JSONB, nullable=False, default={})
+    changes = Column(JSONB, nullable=True)           # against the previous snapshot; null for the first

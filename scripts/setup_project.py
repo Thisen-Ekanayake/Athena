@@ -6,6 +6,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from athena.database.db import init_db  # noqa: E402
 from athena.api.migrations.add_users import run_migration as add_users  # noqa: E402
+from athena.api.migrations.add_evolution_tools import run_migration as add_evolution_tools  # noqa: E402
 from scripts.seed_prompts import seed_prompts  # noqa: E402
 from athena.database.operations import upsert_source  # noqa: E402
 from athena.core.schemas import SourceCreate  # noqa: E402
@@ -16,6 +17,7 @@ def setup():
     print("Initializing Database...")
     init_db()
     add_users()  # accounts on databases made before them
+    add_evolution_tools()  # reading paths, idea checks, map questions, snapshots, cross-map links
     seed_prompts()  # summaries and cluster labels need their prompt templates; does nothing once seeded
 
     print("Seeding Initial Sources...")
