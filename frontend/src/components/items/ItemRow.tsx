@@ -1,4 +1,4 @@
-import { ExternalLink, Flame } from 'lucide-react'
+import { ExternalLink, Flame, GitBranch } from 'lucide-react'
 import type { FeedItem } from '../../api/client'
 import { usePanelStore } from '../../store/panelStore'
 import { buttonClass } from '../../ui/buttonClass'
@@ -29,6 +29,11 @@ export function ItemRow({ item, showSummary = true }: { item: FeedItem; showSumm
           <time dateTime={item.published_at}>{timeAgo(item.published_at)}</time>
           {CATEGORY_LABELS[item.category] && <Chip>{CATEGORY_LABELS[item.category]}</Chip>}
           {item.is_trending && <Chip tone="accent"><Flame aria-hidden="true" />Trending</Chip>}
+          {!!item.milestones_cited && (
+            <span title="Cites milestones of your evolution maps; open it to see which">
+              <Chip><GitBranch aria-hidden="true" />Cites {item.milestones_cited} {item.milestones_cited === 1 ? 'milestone' : 'milestones'}</Chip>
+            </span>
+          )}
         </div>
       </div>
       <div className="relative z-10 flex shrink-0 items-start gap-0.5">

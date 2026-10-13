@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -17,12 +17,16 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, aliased
 
 from athena.core.models import (
-    EvoChunk, EvoCitation, EvoCitationContext, EvoGapStatement, EvoGapTheme, EvoGapThemeMember, EvoLooseLink,
-    EvoMainPathEdge, EvoMilestoneOverride, EvoPaper, EvoSection, EvoTopic, EvoTopicPaper,
+    EvoChunk, EvoCitation, EvoCitationContext, EvoCrossLink, EvoGapStatement, EvoGapTheme, EvoGapThemeMember,
+    EvoIdeaCheck, EvoLooseLink, EvoMainPathEdge, EvoMapQuestion, EvoMilestoneOverride, EvoPaper, EvoPaperNote,
+    EvoReadingProgress, EvoSection, EvoSnapshot, EvoTopic, EvoTopicPaper,
 )
 from athena.database.db import SessionLocal
 from athena.evolution.config import TopicConfig
+from athena.evolution.eras import find_era, on_topic_method, stored_eras
+from athena.evolution.people import PeoplePaper, key_people, milestone_people, people_by_era
 from athena.evolution.names import detect_method_name
+from athena.evolution.reading_path import PathCandidate, build_path
 
 if TYPE_CHECKING:
     from athena.evolution.corpus import Corpus
@@ -133,6 +137,7 @@ def _topic_rows(session: Session, topic_id) -> list[tuple[EvoTopicPaper, EvoPape
 
 def list_topics(session: Session) -> list[dict]:
     out = []
+    changes = latest_changes(session)
     for topic in session.execute(select(EvoTopic).order_by(EvoTopic.name)).scalars():
         rows = _topic_rows(session, topic.id)
         overrides = _overrides(session, topic.id)
@@ -140,7 +145,8 @@ def list_topics(session: Session) -> list[dict]:
             effective_milestone(tp.is_milestone_auto, overrides[p.id].action if p.id in overrides else None)
             for tp, p in rows
         )
-        out.append(topic_summary(topic) | {"paper_count": len(rows), "milestone_count": milestones})
+        out.append(topic_summary(topic) | {"paper_count": len(rows), "milestone_count": milestones,
+                                           "last_change": changes.get(topic.slug)})
     return out
 
 
@@ -194,6 +200,8 @@ def _merge_paper(oid: str, paper, existing: EvoPaper | None, now: datetime) -> d
         "id": existing.id if existing is not None else uuid4(), "openalex_id": oid, "doi": w.doi,
         "arxiv_id": arxiv_id, "title": title, "abstract": abstract, "year": year, "year_source": year_source,
         "openalex_year": w.year, "venue": w.venue, "work_type": w.work_type, "authors": w.authors,
+        # A build from an older cache entry may lack them; keep what a backfill stored.
+        "authorships": w.authorships or getattr(existing, "authorships", None) or [],
         "cited_by_count": w.cited_by_count, "s2_paper_id": s2_paper_id, "s2_cited_by_count": s2_cited_by_count,
         "primary_topic": w.primary_topic, "is_oa": is_oa,
         "oa_pdf_url": oa_pdf_url,
@@ -281,8 +289,7 @@ def _node(tp: EvoTopicPaper, p: EvoPaper, override: EvoMilestoneOverride | None,
         "milestone_override": action,
         "override_note": override.note if override else None,
         "full_text_status": p.full_text_status,
-        "url": f"https://arxiv.org/abs/{p.arxiv_id}" if p.arxiv_id else (
-            f"https://doi.org/{p.doi}" if p.doi else f"https://openalex.org/{p.openalex_id}"),
+        "url": _paper_url(p),
     }
 
 
@@ -402,6 +409,650 @@ def topic_timeline(session: Session, topic: EvoTopic, notable: int = 40) -> dict
                   for y, ps in sorted(by_year.items())],
         "without_full_text": without_full_text,
     }
+
+
+def topic_eras(topic: EvoTopic, rows: list[tuple[EvoTopicPaper, EvoPaper]]) -> list[tuple[int, int]]:
+    """The eras milestones were picked in, from a built topic's stored rows."""
+    config = TopicConfig.from_dict(topic.config)
+    return stored_eras(((tp.kind, tp.score_detail, p.year) for tp, p in rows), config.eras, config.max_era_years,
+                       config.weights.relevance)
+
+
+# ── reading path (E1) ──────────────────────────────────────────────────
+
+NOTE_WHY = "why"
+
+
+def current_notes(session: Session, topic: EvoTopic, paper_ids: list[UUID], kind: str = NOTE_WHY) -> dict[UUID, str]:
+    """Notes written for the topic's current build; a rebuild makes the old ones stale."""
+    if not paper_ids:
+        return {}
+    rows = session.execute(select(EvoPaperNote).where(
+        EvoPaperNote.topic_id == topic.id, EvoPaperNote.paper_id.in_(paper_ids), EvoPaperNote.kind == kind)).scalars()
+    return {n.paper_id: n.text for n in rows if n.built_at == topic.built_at}
+
+
+def save_note(session: Session, topic: EvoTopic, paper_id: UUID, text: str, model: str,
+              kind: str = NOTE_WHY) -> None:
+    values = {"text": text, "model": model, "built_at": topic.built_at, "created_at": datetime.now(timezone.utc)}
+    stmt = insert(EvoPaperNote).values(id=uuid4(), topic_id=topic.id, paper_id=paper_id, kind=kind, **values)
+    session.execute(stmt.on_conflict_do_update(constraint="uq_evo_paper_note", set_=values))
+    session.commit()
+
+
+def read_papers(session: Session, user_id: UUID | None, paper_ids: list[UUID]) -> set[UUID]:
+    if user_id is None or not paper_ids:
+        return set()
+    return set(session.execute(select(EvoReadingProgress.paper_id).where(
+        EvoReadingProgress.user_id == user_id, EvoReadingProgress.paper_id.in_(paper_ids))).scalars())
+
+
+def set_read(session: Session, user_id: UUID, paper_id: UUID, read: bool) -> bool:
+    """Tick or untick a paper for a user. Returns False if the paper is unknown."""
+    if session.get(EvoPaper, paper_id) is None:
+        return False
+    if read:
+        session.execute(insert(EvoReadingProgress).values(user_id=user_id, paper_id=paper_id)
+                        .on_conflict_do_nothing(index_elements=["user_id", "paper_id"]))
+    else:
+        session.execute(delete(EvoReadingProgress).where(EvoReadingProgress.user_id == user_id,
+                                                         EvoReadingProgress.paper_id == paper_id))
+    session.commit()
+    return True
+
+
+def reading_path(session: Session, topic: EvoTopic, user_id: UUID | None, n: int = 10) -> dict:
+    """A survey, then milestones in year order: ``n`` papers, with notes, links between steps and read ticks."""
+    overrides = _overrides(session, topic.id)
+    rows = _topic_rows(session, topic.id)
+    by_id = {p.id: (tp, p) for tp, p in rows}
+    relevance_weight = TopicConfig.from_dict(topic.config).weights.relevance
+    candidates = [
+        PathCandidate(id=p.id, year=p.year, kind=tp.kind, milestone_score=tp.milestone_score or 0.0,
+                      on_main_path=bool(tp.on_main_path),
+                      # on_topic_method asks for a method paper too; here only the relevance counts
+                      on_topic=on_topic_method("method", tp.score_detail, relevance_weight),
+                      is_milestone=effective_milestone(tp.is_milestone_auto,
+                                                       overrides[p.id].action if p.id in overrides else None))
+        for tp, p in rows
+    ]
+    milestones = [c.id for c in candidates if c.is_milestone]
+    surveys = {c.id: c for c in candidates if c.kind == "survey"}
+    for citing, count in session.execute(
+            select(EvoCitation.citing_id, func.count()).where(EvoCitation.citing_id.in_(list(surveys)),
+                                                              EvoCitation.cited_id.in_(milestones))
+            .group_by(EvoCitation.citing_id)):
+        surveys[citing].milestones_cited = count
+    survey, others, steps = build_path(candidates, n, topic_eras(topic, rows))
+    path = ([survey] if survey else []) + steps
+    ids = [c.id for c in path]
+    names = method_names(session, {i: by_id[i][1].title for i in ids})
+    notes = current_notes(session, topic, ids)
+    read = read_papers(session, user_id, ids)
+    position = {pid: i for i, pid in enumerate(ids)}
+    cites: dict[UUID, set[UUID]] = defaultdict(set)
+    for citing, cited in session.execute(select(EvoCitation.citing_id, EvoCitation.cited_id).where(
+            EvoCitation.citing_id.in_(ids), EvoCitation.cited_id.in_(ids))):
+        cites[citing].add(cited)
+    fixes: dict[UUID, set[UUID]] = defaultdict(set)
+    for ctx in _strict(session, citing=ids, cited=ids):
+        fixes[ctx.citing_id].add(ctx.cited_id)
+
+    def earlier(pid: UUID, targets: set[UUID]) -> list[int]:
+        return sorted(position[t] + 1 for t in targets if position.get(t, len(ids)) < position[pid])
+
+    def entry(c: PathCandidate) -> dict:
+        tp, p = by_id[c.id]
+        return _node(tp, p, overrides.get(c.id), names.get(c.id)) | {
+            "position": position[c.id] + 1,
+            "why": notes.get(c.id),
+            "read": c.id in read,
+            # Earlier steps this one cites, and earlier steps whose stated limitation it takes on (by number).
+            "builds_on": earlier(c.id, cites.get(c.id, set())),
+            "addresses": earlier(c.id, fixes.get(c.id, set())),
+        }
+
+    def other(c: PathCandidate) -> dict:
+        tp, p = by_id[c.id]
+        return _node(tp, p, overrides.get(c.id))
+
+    return {
+        "topic": topic_summary(topic),
+        "n": n,
+        "survey": entry(survey) if survey else None,
+        "other_surveys": [other(c) for c in others],
+        "steps": [entry(c) for c in steps],
+        "read_count": len(read),
+        "total": len(ids),
+    }
+
+
+def note_context(session: Session, topic: EvoTopic, paper_ids: list[UUID]) -> list[dict]:
+    """What the note writer needs about each paper: title, year, name, abstract and the earlier papers in
+    ``paper_ids`` it cites."""
+    rows = {p.id: (tp, p) for tp, p in session.execute(
+        select(EvoTopicPaper, EvoPaper).join(EvoPaper, EvoTopicPaper.paper_id == EvoPaper.id)
+        .where(EvoTopicPaper.topic_id == topic.id, EvoPaper.id.in_(paper_ids))).all()}
+    names = method_names(session, {pid: p.title for pid, (_, p) in rows.items()})
+    cites: dict[UUID, set[UUID]] = defaultdict(set)
+    for citing, cited in session.execute(select(EvoCitation.citing_id, EvoCitation.cited_id).where(
+            EvoCitation.citing_id.in_(paper_ids), EvoCitation.cited_id.in_(paper_ids))):
+        cites[citing].add(cited)
+    out = []
+    for i, pid in enumerate(paper_ids):
+        if pid not in rows:
+            continue
+        tp, p = rows[pid]
+
+        def label(other: UUID) -> str:
+            _, q = rows[other]
+            return f"{names.get(other) or q.title} ({q.year})"
+        out.append({
+            "paper_id": pid, "title": p.title, "year": p.year, "kind": tp.kind, "abstract": p.abstract,
+            "name": names.get(pid) or tp.named_method,
+            "builds_on": [label(o) for o in paper_ids[:i] if o in cites.get(pid, set()) and o in rows][-3:],
+        })
+    return out
+
+
+# ── people (E8) ────────────────────────────────────────────────────────
+
+
+def topic_people(session: Session, topic: EvoTopic) -> dict:
+    """Key authors and labs per era and overall, and who introduced each milestone."""
+    overrides = _overrides(session, topic.id)
+    rows = _topic_rows(session, topic.id)
+    weight = TopicConfig.from_dict(topic.config).weights.relevance
+    on_topic = [(tp, p) for tp, p in rows if on_topic_method(tp.kind, tp.score_detail, weight)]
+    milestones = {p.id for tp, p in rows
+                  if effective_milestone(tp.is_milestone_auto, overrides[p.id].action if p.id in overrides else None)}
+    names = method_names(session, {p.id: p.title for _, p in rows if p.id in milestones})
+
+    def person_paper(tp: EvoTopicPaper, p: EvoPaper) -> PeoplePaper:
+        return PeoplePaper(id=str(p.id), title=p.title, year=p.year, milestone_score=tp.milestone_score or 0.0,
+                           is_milestone=p.id in milestones, named_method=names.get(p.id) or tp.named_method,
+                           authorships=p.authorships or [], authors=p.authors or [])
+
+    papers = [person_paper(tp, p) for tp, p in on_topic]
+    # Milestones a person pinned although they are not on-topic method papers still had authors.
+    pinned = [person_paper(tp, p) for tp, p in rows
+              if p.id in milestones and not on_topic_method(tp.kind, tp.score_detail, weight)]
+    with_ids = sum(bool(p.authorships) for p in papers)
+    return {
+        "topic": topic_summary(topic),
+        "eras": people_by_era(papers, topic_eras(topic, rows)),
+        "overall": key_people(papers),
+        "milestones": milestone_people(papers + pinned),
+        "papers": len(papers),
+        "papers_with_ids": with_ids,  # the rest are told apart by name only
+    }
+
+
+# ── the feed and the maps (E5) ─────────────────────────────────────────
+
+
+def map_membership(session: Session, paper_ids: list[UUID]) -> dict[UUID, list[dict]]:
+    """Each paper's place in every built map: topic, milestone or not (pins applied), and its name."""
+    if not paper_ids:
+        return {}
+    rows = session.execute(
+        select(EvoTopicPaper, EvoTopic, EvoPaper)
+        .join(EvoTopic, EvoTopicPaper.topic_id == EvoTopic.id).join(EvoPaper, EvoTopicPaper.paper_id == EvoPaper.id)
+        .where(EvoTopicPaper.paper_id.in_(paper_ids), EvoTopic.built_at.isnot(None))).all()
+    pins = {(o.topic_id, o.paper_id): o.action for o in session.execute(select(EvoMilestoneOverride).where(
+        EvoMilestoneOverride.paper_id.in_(paper_ids))).scalars()}
+    out: dict[UUID, list[dict]] = defaultdict(list)
+    for tp, topic, p in rows:
+        name = tp.named_method or ((p.cited_name or {}).get("name") if isinstance(p.cited_name, dict) else None)
+        out[p.id].append({"topic": topic.slug, "topic_name": topic.name, "title": p.title, "year": p.year,
+                          "named_method": name,
+                          "milestone": effective_milestone(tp.is_milestone_auto, pins.get((topic.id, p.id)))})
+    return out
+
+
+def feed_place(session: Session, item_id: UUID) -> dict | None:
+    """Where a feed item sits in the maps (when it is a map paper), and the milestones it cites."""
+    from athena.core.models import ContentItem
+    item = session.get(ContentItem, item_id)
+    if item is None:
+        return None
+    places = []
+    for p in session.execute(select(EvoPaper).where(EvoPaper.content_item_id == item_id)).scalars():
+        for tp, topic in session.execute(
+                select(EvoTopicPaper, EvoTopic).join(EvoTopic, EvoTopicPaper.topic_id == EvoTopic.id)
+                .where(EvoTopicPaper.paper_id == p.id, EvoTopic.built_at.isnot(None))).all():
+            rows = _topic_rows(session, topic.id)
+            override = _overrides(session, topic.id).get(p.id)
+            rank = 1 + sum((other.milestone_score or 0) > (tp.milestone_score or 0) for other, _ in rows)
+            era = find_era(p.year, topic_eras(topic, rows))
+            in_topic = {q.id for _, q in rows}
+            gaps = [g.sentence for g in session.execute(select(EvoGapStatement).where(
+                EvoGapStatement.paper_id == p.id, EvoGapStatement.label == "gap",
+                EvoGapStatement.origin == "own")).scalars()]
+            fixes = {}
+            for ctx in _strict(session, citing=[p.id], within=in_topic):
+                if ctx.label == "addresses_limitation":
+                    fixes.setdefault(ctx.cited_id, ctx.sentence)
+            titles = dict(session.execute(
+                select(EvoPaper.id, EvoPaper.title).where(EvoPaper.id.in_(list(fixes)))).all())
+            loose = session.execute(select(func.count()).select_from(EvoLooseLink).where(
+                EvoLooseLink.paper_id == p.id, EvoLooseLink.score >= LOOSE_MIN_SCORE)).scalar_one()
+            places.append({
+                "topic": topic_summary(topic), "paper_id": str(p.id), "kind": tp.kind, "year": p.year,
+                "era": list(era) if era else None,
+                "is_milestone": effective_milestone(tp.is_milestone_auto, override.action if override else None),
+                "on_main_path": tp.on_main_path, "rank": rank, "of": len(rows),
+                "gaps_stated": gaps[:5], "gaps_stated_count": len(gaps),
+                "solves": [{"paper_id": str(pid), "title": titles.get(pid), "sentence": sentence}
+                           for pid, sentence in fixes.items()][:5],
+                "loose_matches": loose,
+            })
+    state = (item.extra_data or {}).get("evolution") or {}
+    return {"item_id": str(item.id), "places": places, "cites": state.get("cites", []),
+            "maps_cited": state.get("maps", {}), "references": state.get("references"),
+            "checked_at": state.get("checked_at")}
+
+
+def new_feed_papers(session: Session, days: int = 30, topic: str | None = None) -> list[dict]:
+    """Recent feed papers that cite milestones, the ones citing the most first."""
+    from athena.core.models import ContentItem
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    out = []
+    for item in session.execute(select(ContentItem).where(ContentItem.published_at >= since,
+                                                          ContentItem.extra_data.has_key("evolution"))).scalars():
+        cites = [c for c in ((item.extra_data or {}).get("evolution") or {}).get("cites", [])
+                 if topic is None or c["topic"] == topic]
+        if cites:
+            out.append({"id": str(item.id), "title": item.title, "url": item.url,
+                        "published_at": item.published_at.isoformat(), "score": item.score, "cites": cites})
+    out.sort(key=lambda x: x["published_at"], reverse=True)
+    out.sort(key=lambda x: len(x["cites"]), reverse=True)  # stable: newest first among equals
+    return out
+
+
+# ── idea checks (E2) ───────────────────────────────────────────────────
+
+
+def _idea_check(c: EvoIdeaCheck, full: bool = True) -> dict:
+    result = c.result or {}
+    themes = result.get("themes") or []
+    out = {"id": str(c.id), "idea": c.idea if full else c.idea[:240], "created_at": c.created_at.isoformat(),
+           "papers": len(result.get("papers") or []), "themes": len(themes),
+           "open_themes": sum(bool(t.get("open")) for t in themes)}
+    return out | {"result": result} if full else out
+
+
+def save_idea_check(session: Session, user_id: UUID, idea: str, result: dict) -> dict:
+    check = EvoIdeaCheck(user_id=user_id, idea=idea, result=result, created_at=datetime.now(timezone.utc))
+    session.add(check)
+    session.commit()
+    return _idea_check(check)
+
+
+def list_idea_checks(session: Session, user_id: UUID, limit: int = 50) -> list[dict]:
+    rows = session.execute(select(EvoIdeaCheck).where(EvoIdeaCheck.user_id == user_id)
+                           .order_by(EvoIdeaCheck.created_at.desc()).limit(limit)).scalars()
+    return [_idea_check(c, full=False) for c in rows]
+
+
+def get_idea_check(session: Session, user_id: UUID, check_id: UUID) -> dict | None:
+    """A user's own check; another user's is as good as missing."""
+    check = session.get(EvoIdeaCheck, check_id)
+    return _idea_check(check) if check is not None and check.user_id == user_id else None
+
+
+def delete_idea_check(session: Session, user_id: UUID, check_id: UUID) -> bool:
+    deleted = session.execute(delete(EvoIdeaCheck).where(EvoIdeaCheck.id == check_id,
+                                                         EvoIdeaCheck.user_id == user_id)).rowcount
+    session.commit()
+    return bool(deleted)
+
+
+# ── questions to a map (E3) ────────────────────────────────────────────
+
+
+def save_map_question(user_id: UUID, topic_id: UUID, question: str, answer: str, sources: list[dict],
+                      sections: list[str], input_tokens: int, output_tokens: int, model: str) -> UUID:
+    """Runs after a streamed answer, so it opens its own session (the request's has closed)."""
+    with SessionLocal() as session:
+        row = EvoMapQuestion(user_id=user_id, topic_id=topic_id, question=question, answer=answer, sources=sources,
+                             sections=sections, input_tokens=input_tokens, output_tokens=output_tokens, model=model,
+                             created_at=datetime.now(timezone.utc))
+        session.add(row)
+        session.commit()
+        return row.id
+
+
+def map_questions(session: Session, user_id: UUID, topic_id: UUID, limit: int = 30) -> list[dict]:
+    """A user's questions to one map, oldest first, so the page can show them as a conversation."""
+    rows = list(session.execute(select(EvoMapQuestion).where(
+        EvoMapQuestion.user_id == user_id, EvoMapQuestion.topic_id == topic_id)
+        .order_by(EvoMapQuestion.created_at.desc()).limit(limit)).scalars())
+    return [{"id": str(q.id), "question": q.question, "answer": q.answer, "sources": q.sources or [],
+             "sections": q.sections or [], "created_at": q.created_at.isoformat()} for q in reversed(rows)]
+
+
+def delete_map_question(session: Session, user_id: UUID, question_id: UUID | None = None,
+                        topic_id: UUID | None = None) -> int:
+    """One of a user's questions, or all of them for a topic."""
+    stmt = delete(EvoMapQuestion).where(EvoMapQuestion.user_id == user_id)
+    if question_id is not None:
+        stmt = stmt.where(EvoMapQuestion.id == question_id)
+    if topic_id is not None:
+        stmt = stmt.where(EvoMapQuestion.topic_id == topic_id)
+    deleted = session.execute(stmt).rowcount
+    session.commit()
+    return deleted
+
+
+# ── links between maps (E7) ────────────────────────────────────────────
+
+
+def maps_version(session: Session) -> str:
+    """Changes when any map is built or deleted."""
+    latest, count = session.execute(select(func.max(EvoTopic.built_at), func.count(EvoTopic.id))).one()
+    return f"{int(latest.timestamp()) if latest else 0}-{count}"
+
+
+def pending_cross(session: Session, limit: int) -> list[tuple[EvoGapStatement, int | None]]:
+    """Embedded gap statements not yet searched against other maps' papers, with the stating paper's year."""
+    source = aliased(EvoPaper)
+    return session.execute(
+        select(EvoGapStatement, source.year).join(source, EvoGapStatement.source_paper_id == source.id)
+        .where(EvoGapStatement.label == "gap", EvoGapStatement.embedded_at.isnot(None),
+               EvoGapStatement.cross_checked_at.is_(None)).limit(limit)).all()
+
+
+def paper_topic_kinds(session: Session, paper_ids: list[UUID]) -> dict[UUID, dict[str, str]]:
+    """Paper -> {topic id: kind} for every topic it is in, read fresh (the chunks' topic payload can be stale)."""
+    out: dict[UUID, dict[str, str]] = defaultdict(dict)
+    for pid, tid, kind in session.execute(select(EvoTopicPaper.paper_id, EvoTopicPaper.topic_id, EvoTopicPaper.kind)
+                                          .where(EvoTopicPaper.paper_id.in_(paper_ids))):
+        out[pid][str(tid)] = kind
+    return out
+
+
+def save_cross_links(session: Session, gap_id: UUID, links: list[dict]) -> None:
+    """Replace a gap statement's cross-map links. ``links``: [{paper_id, chunk_id, score}]."""
+    session.execute(delete(EvoCrossLink).where(EvoCrossLink.gap_id == gap_id))
+    if links:
+        session.execute(insert(EvoCrossLink).values([{"id": uuid4(), "gap_id": gap_id, **link} for link in links]))
+
+
+def topic_links(session: Session, topic: EvoTopic, limit: int = 40) -> dict:
+    """How this map connects to the others: papers they share, and milestones one borrows from the other.
+
+    Gaps another map's papers address are not included: see ``athena.evolution.gpu.cross_links``."""
+    overrides = _overrides(session, topic.id)
+    rows = {p.id: (tp, p) for tp, p in _topic_rows(session, topic.id)}
+    weight = TopicConfig.from_dict(topic.config).weights.relevance
+    on_topic = {pid for pid, (tp, _) in rows.items() if on_topic_method(tp.kind, tp.score_detail, weight)}
+    here_milestone = {pid for pid, (tp, _) in rows.items()
+                      if effective_milestone(tp.is_milestone_auto, overrides[pid].action if pid in overrides else None)}
+    topics = {t.id: t for t in session.execute(
+        select(EvoTopic).where(EvoTopic.id != topic.id, EvoTopic.built_at.isnot(None))).scalars()}
+    pins = {(o.topic_id, o.paper_id): o.action for o in session.execute(select(EvoMilestoneOverride).where(
+        EvoMilestoneOverride.topic_id.in_(list(topics)))).scalars()}
+    elsewhere: dict[UUID, list[dict]] = defaultdict(list)  # paper -> its places in other maps
+    milestones_elsewhere: dict[UUID, dict] = {}            # other maps' milestones, any paper
+    for tp in session.execute(select(EvoTopicPaper).where(EvoTopicPaper.topic_id.in_(list(topics)))).scalars():
+        is_ms = effective_milestone(tp.is_milestone_auto, pins.get((tp.topic_id, tp.paper_id)))
+        if tp.paper_id in rows:
+            elsewhere[tp.paper_id].append({"topic": topics[tp.topic_id].slug, "topic_name": topics[tp.topic_id].name,
+                                           "milestone": is_ms})
+        if is_ms:
+            milestones_elsewhere.setdefault(tp.paper_id, {"topic": topics[tp.topic_id].slug,
+                                                          "topic_name": topics[tp.topic_id].name})
+    names = method_names(session, {pid: rows[pid][1].title for pid in elsewhere})
+
+    def mini(pid: UUID, title: str | None = None, year: int | None = None, name: str | None = None) -> dict:
+        if pid in rows:
+            tp, p = rows[pid]
+            return {"id": str(pid), "title": p.title, "year": p.year, "named_method": names.get(pid) or tp.named_method,
+                    "is_milestone": pid in here_milestone}
+        return {"id": str(pid), "title": title, "year": year, "named_method": name, "is_milestone": False}
+
+    def shared_rank(pid: UUID) -> tuple:
+        return (pid in here_milestone or any(e["milestone"] for e in elsewhere[pid]), rows[pid][0].milestone_score or 0)
+
+    shared = sorted(elsewhere, key=shared_rank, reverse=True)
+
+    def counted(citing_side: set[UUID], cited_side: dict[UUID, dict], exclude: set[UUID]) -> list[tuple[UUID, int]]:
+        counts: dict[UUID, int] = defaultdict(int)
+        if not citing_side or not cited_side:
+            return []
+        for citing, cited in session.execute(select(EvoCitation.citing_id, EvoCitation.cited_id).where(
+                EvoCitation.citing_id.in_(list(citing_side)), EvoCitation.cited_id.in_(list(cited_side)))):
+            if cited not in exclude:
+                counts[cited] += 1
+        return sorted(counts.items(), key=lambda kv: -kv[1])[:15]
+
+    borrowed_ids = counted(on_topic, milestones_elsewhere, set(rows))
+    other_papers = {pid for pid in session.execute(select(EvoTopicPaper.paper_id).where(
+        EvoTopicPaper.topic_id.in_(list(topics)))).scalars()} - set(rows)
+    lent_ids = counted(other_papers, {pid: {} for pid in here_milestone}, set())
+    lent_by: dict[UUID, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    if lent_ids:
+        topic_of = defaultdict(set)
+        for pid, tid in session.execute(select(EvoTopicPaper.paper_id, EvoTopicPaper.topic_id).where(
+                EvoTopicPaper.topic_id.in_(list(topics)), EvoTopicPaper.paper_id.in_(list(other_papers)))):
+            topic_of[pid].add(tid)
+        for citing, cited in session.execute(select(EvoCitation.citing_id, EvoCitation.cited_id).where(
+                EvoCitation.citing_id.in_(list(other_papers)), EvoCitation.cited_id.in_([p for p, _ in lent_ids]))):
+            for tid in topic_of[citing]:
+                lent_by[cited][topics[tid].name] += 1
+    info = {p.id: p for p in session.execute(select(EvoPaper).where(
+        EvoPaper.id.in_([pid for pid, _ in borrowed_ids]))).scalars()} if borrowed_ids else {}
+
+    def name_of(p: EvoPaper) -> str | None:
+        return (p.cited_name or {}).get("name") if isinstance(p.cited_name, dict) else None
+
+    return {
+        "topic": topic_summary(topic),
+        "shared": {"total": len(shared),
+                   "papers": [mini(pid) | {"elsewhere": elsewhere[pid]} for pid in shared[:limit]]},
+        "borrowed": [mini(pid, info[pid].title, info[pid].year, name_of(info[pid]))
+                     | {"from": milestones_elsewhere[pid], "citing_papers": n}
+                     for pid, n in borrowed_ids if pid in info],
+        "lent": [mini(pid) | {"citing_papers": n, "by": dict(sorted(lent_by[pid].items(), key=lambda kv: -kv[1]))}
+                 for pid, n in lent_ids],
+    }
+
+
+# ── snapshots and changes (E4) ─────────────────────────────────────────
+
+
+def snapshot_state(session: Session, topic: EvoTopic) -> tuple[dict, dict[str, dict]]:
+    """The topic as it stands: milestones, gap themes with their members, paper IDs; and each paper's
+    title, year and score (for naming the best new papers)."""
+    overrides = _overrides(session, topic.id)
+    rows = _topic_rows(session, topic.id)
+    milestones = [(tp, p) for tp, p in rows
+                  if effective_milestone(tp.is_milestone_auto, overrides[p.id].action if p.id in overrides else None)]
+    names = method_names(session, {p.id: p.title for _, p in milestones})
+    themes = list(session.execute(select(EvoGapTheme).where(EvoGapTheme.topic_id == topic.id)).scalars())
+    members: dict[UUID, list[str]] = defaultdict(list)
+    for theme_id, gap_id in session.execute(select(EvoGapThemeMember.theme_id, EvoGapThemeMember.gap_id).where(
+            EvoGapThemeMember.theme_id.in_([t.id for t in themes]))):
+        members[theme_id].append(str(gap_id))
+    state = {
+        "milestones": sorted(({"paper_id": str(p.id), "title": p.title, "year": p.year,
+                               "named_method": names.get(p.id) or tp.named_method,
+                               "score": round(tp.milestone_score or 0.0, 3)} for tp, p in milestones),
+                             key=lambda m: (m["year"] or 0, m["title"])),
+        "themes": [{"label": t.label, "status": t.status, "size": t.size, "first_year": t.first_year,
+                    "last_year": t.last_year, "members": sorted(members.get(t.id, []))} for t in themes],
+        "paper_ids": sorted(str(p.id) for _, p in rows),
+    }
+    info = {str(p.id): {"title": p.title, "year": p.year, "score": tp.milestone_score or 0.0} for tp, p in rows}
+    return state, info
+
+
+def take_snapshot(session: Session, topic: EvoTopic, reason: str) -> dict:
+    """Store the topic's current state and what changed since the last snapshot."""
+    from athena.evolution.snapshots import OPEN, diff
+    state, info = snapshot_state(session, topic)
+    last = session.execute(select(EvoSnapshot).where(EvoSnapshot.topic_id == topic.id)
+                           .order_by(EvoSnapshot.taken_at.desc()).limit(1)).scalar_one_or_none()
+    before = {"milestones": last.milestones, "themes": last.themes, "paper_ids": last.paper_ids} if last else None
+    stats = {"papers": len(state["paper_ids"]), "milestones": len(state["milestones"]),
+             "themes": len(state["themes"]), "open_themes": sum(t["status"] in OPEN for t in state["themes"])}
+    row = EvoSnapshot(topic_id=topic.id, taken_at=datetime.now(timezone.utc), built_at=topic.built_at,
+                      reason=reason, stats=stats, changes=diff(before, state, info), **state)
+    session.add(row)
+    _announce(session, topic, reason, row.changes, stats, first=before is None)
+    session.commit()
+    return {"id": str(row.id), "stats": stats, "changes": row.changes}
+
+
+def _announce(session: Session, topic: EvoTopic, reason: str, changes: dict | None, stats: dict,
+              first: bool) -> None:
+    """Inbox entries for a snapshot: a map's first build, or a later one that changed something."""
+    from athena.database import inbox
+    from athena.evolution.snapshots import is_empty, summary
+    if reason == "baseline":
+        return  # recorded for an existing map, not news
+    if first:
+        inbox.add_event(session, "map_new", f"New map: {topic.name}",
+                        f"{stats['papers']} papers, {stats['milestones']} milestones", f"/evolution/{topic.slug}",
+                        topic.id, {"stats": stats})
+    elif changes is not None and not is_empty(changes):
+        inbox.add_event(session, "map_changes", f"{topic.name} updated", "; ".join(summary(changes)) or None,
+                        f"/evolution/{topic.slug}?tab=changes", topic.id,
+                        {"reason": reason, "counts": {k: (len(v) if isinstance(v, list) else v)
+                                                      for k, v in changes.items()}})
+
+
+def _named_method_in_scores(session: Session, topic: EvoTopic) -> bool:
+    """Whether the stored build gave any paper a named-method part."""
+    return session.execute(select(EvoTopicPaper.id).where(
+        EvoTopicPaper.topic_id == topic.id,
+        EvoTopicPaper.score_detail["named_method"].as_float() > 0).limit(1)).first() is not None
+
+
+def topic_changes(session: Session, topic: EvoTopic, limit: int = 20) -> dict:
+    """Snapshots newest first, each with what changed since the one before."""
+    rows = session.execute(select(EvoSnapshot.id, EvoSnapshot.taken_at, EvoSnapshot.reason, EvoSnapshot.built_at,
+                                  EvoSnapshot.stats, EvoSnapshot.changes)
+                           .where(EvoSnapshot.topic_id == topic.id)
+                           .order_by(EvoSnapshot.taken_at.desc()).limit(limit)).all()
+    config = TopicConfig.from_dict(topic.config)
+    return {"topic": topic_summary(topic), "refresh_days": config.refresh_days,
+            "named_method": config.weights.named_method > 0,
+            # Built since the setting changed? The scores follow the setting only from the next build.
+            "named_method_in_scores": _named_method_in_scores(session, topic),
+            "snapshots": [{"id": str(r.id), "taken_at": r.taken_at.isoformat(), "reason": r.reason,
+                           "built_at": r.built_at.isoformat() if r.built_at else None, "stats": r.stats or {},
+                           "changes": r.changes} for r in rows]}
+
+
+def latest_changes(session: Session) -> dict[str, dict]:
+    """Each topic's latest snapshot that changed something, for the topic cards."""
+    out = {}
+    # Only the changes: a snapshot's other columns hold every paper ID of the map.
+    rows = session.execute(select(EvoSnapshot.taken_at, EvoSnapshot.changes, EvoTopic.slug)
+                           .join(EvoTopic, EvoSnapshot.topic_id == EvoTopic.id)
+                           .where(EvoSnapshot.changes.isnot(None)).order_by(EvoSnapshot.taken_at.desc())).all()
+    for taken_at, changes, slug in rows:
+        c = changes or {}
+        counts = {"new_milestones": len(c.get("new_milestones", [])), "new_gaps": len(c.get("new_gaps", [])),
+                  "solved_gaps": len(c.get("solved_gaps", [])), "papers_added": c.get("papers_added", 0)}
+        if slug not in out and any(counts.values()):
+            out[slug] = {"taken_at": taken_at.isoformat(), **counts}
+    return out
+
+
+def due_for_refresh(session: Session, now: datetime, limit: int) -> list[str]:
+    """Built topics whose last build is older than their refresh interval, oldest first."""
+    due = []
+    for topic in session.execute(select(EvoTopic).where(EvoTopic.status == "ready", EvoTopic.built_at.isnot(None))
+                                 .order_by(EvoTopic.built_at)).scalars():
+        days = TopicConfig.from_dict(topic.config).refresh_days
+        if days > 0 and topic.built_at <= now - timedelta(days=days):
+            due.append(topic.slug)
+    return due[:limit]
+
+
+# ── names citing papers use (E9) ───────────────────────────────────────
+
+
+def save_cited_name(session: Session, paper_id: UUID, value: dict) -> None:
+    session.execute(update(EvoPaper).where(EvoPaper.id == paper_id).values(cited_name=value))
+    session.commit()
+
+
+def cited_names_fetched_since(session: Session, paper_ids: list[UUID], days: int) -> set[UUID]:
+    """Papers whose cited name was fetched in the last ``days`` days."""
+    cutoff = datetime.now(timezone.utc).timestamp() - days * 86400
+    out = set()
+    for pid, value in session.execute(select(EvoPaper.id, EvoPaper.cited_name).where(
+            EvoPaper.id.in_(paper_ids), EvoPaper.cited_name.isnot(None))):
+        try:
+            if datetime.fromisoformat(value["fetched_at"]).timestamp() >= cutoff:
+                out.add(pid)
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def cited_names(openalex_ids: list[str]) -> dict[str, str]:
+    """OpenAlex ID -> the name citing papers use, for papers where one was found."""
+    with SessionLocal() as session:
+        rows = session.execute(select(EvoPaper.openalex_id, EvoPaper.cited_name).where(
+            EvoPaper.openalex_id.in_(openalex_ids), EvoPaper.cited_name.isnot(None))).all()
+    return {oid: v["name"] for oid, v in rows if isinstance(v, dict) and v.get("name")}
+
+
+# ── exports (E6) ───────────────────────────────────────────────────────
+
+
+def _paper_url(p: EvoPaper) -> str:
+    if p.arxiv_id:
+        return f"https://arxiv.org/abs/{p.arxiv_id}"
+    return f"https://doi.org/{p.doi}" if p.doi else f"https://openalex.org/{p.openalex_id}"
+
+
+def export_papers(session: Session, paper_ids: list[UUID]) -> list[dict]:
+    """Citation data for papers, in the order given, with every stored author."""
+    rows = {p.id: p for p in session.execute(select(EvoPaper).where(EvoPaper.id.in_(paper_ids))).scalars()}
+    return [{"id": str(p.id), "title": p.title, "year": p.year, "authors": [a for a in p.authors or [] if a],
+             "venue": p.venue, "doi": p.doi, "arxiv_id": p.arxiv_id, "url": _paper_url(p)}
+            for p in (rows.get(i) for i in paper_ids) if p is not None]
+
+
+def milestone_ids(session: Session, topic: EvoTopic) -> list[UUID]:
+    """The topic's milestones (pins applied), oldest first."""
+    overrides = _overrides(session, topic.id)
+    rows = [(p.year or 0, p.id) for tp, p in _topic_rows(session, topic.id)
+            if effective_milestone(tp.is_milestone_auto, overrides[p.id].action if p.id in overrides else None)]
+    return [pid for _, pid in sorted(rows)]
+
+
+def gap_export_rows(session: Session, topic: EvoTopic) -> list[dict]:
+    """Every statement in the topic's gap themes, with its theme, for the CSV export."""
+    in_topic = {p.id: p for _, p in _topic_rows(session, topic.id)}
+    order = {"persisting": 0, "new": 1, "addressed": 2, "quiet": 3}
+    themes = sorted(session.execute(select(EvoGapTheme).where(EvoGapTheme.topic_id == topic.id)).scalars(),
+                    key=lambda t: (order.get(t.status, 4), -t.size))
+    members: dict[UUID, list[EvoGapStatement]] = defaultdict(list)
+    for theme_id, gap in session.execute(
+            select(EvoGapThemeMember.theme_id, EvoGapStatement)
+            .join(EvoGapStatement, EvoGapThemeMember.gap_id == EvoGapStatement.id)
+            .where(EvoGapThemeMember.theme_id.in_([t.id for t in themes]))):
+        members[theme_id].append(gap)
+    out = []
+    for t in themes:
+        for g in sorted(members.get(t.id, []), key=lambda g: (in_topic[g.source_paper_id].year or 0
+                                                              if g.source_paper_id in in_topic else 0)):
+            paper, source = in_topic.get(g.paper_id), in_topic.get(g.source_paper_id)
+            out.append({
+                "theme": t.label, "status": t.status, "first_year": t.first_year, "last_year": t.last_year,
+                "theme_size": t.size, "statement": g.sentence, "origin": g.origin, "section": g.section_type,
+                "paper": paper.title if paper else None, "paper_year": paper.year if paper else None,
+                "stated_by": source.title if source and g.origin == "citing" else None,
+                "stated_by_year": source.year if source and g.origin == "citing" else None,
+            })
+    return out
 
 
 def paper_detail(session: Session, topic: EvoTopic, paper_id: UUID) -> dict | None:
@@ -888,14 +1539,15 @@ def mark_abstracts(session: Session, paper_ids: list[UUID]) -> None:
 
 
 def forget_vectors(session: Session) -> None:
-    """Mark every chunk, gap statement and abstract as not embedded, and drop the loose links found with them.
+    """Mark every chunk, gap statement and abstract as not embedded, and drop the loose and cross-map links.
 
     For a switch of embedding model: the next GPU lane embeds everything again and rebuilds the themes.
     """
     session.execute(update(EvoChunk).values(embedded_at=None))
-    session.execute(update(EvoGapStatement).values(embedded_at=None, loose_checked_at=None))
+    session.execute(update(EvoGapStatement).values(embedded_at=None, loose_checked_at=None, cross_checked_at=None))
     session.execute(update(EvoPaper).values(abstract_embedded_at=None))
     session.execute(delete(EvoLooseLink))
+    session.execute(delete(EvoCrossLink))
     session.commit()
 
 

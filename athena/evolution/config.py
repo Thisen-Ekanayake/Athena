@@ -18,10 +18,19 @@ class MilestoneWeights:
     flow: float = 0.15         # share of the topic's citation paths running through the paper
     relevance: float = 0.10    # topic keywords in the title (full) or only the abstract (half)
     specificity: float = 0.10  # share of the paper's citations that come from this topic
-    # Title proxy for "introduced a named method" ("LoRA: ..."). Off: it penalised iconic papers whose
-    # titles do not follow the pattern (Fast R-CNN, "Focal Loss ..." for RetinaNet). Phase 2 detects
-    # named methods from citing sentences instead.
+    # Introduced a named method: citing papers call it by a name ("LoRA [15]"), read from Semantic Scholar's
+    # citing sentences for each topic's top candidates (athena.evolution.method_names). The earlier title
+    # proxy ("LoRA: ...") penalised iconic papers whose titles do not follow the pattern (Fast R-CNN).
+    # Evaluated 2026-10-13 (scripts/evolution_bench/eval_named_method.py, replayed on the four curated topics):
+    # reference milestones picked at w = 0 / 0.05 / 0.10 / 0.15 were object detection 9/9/9/8 of 11, PEFT
+    # 8/8/9/9 of 12, diffusion 7/6/5/4 of 12, RAG 7/6/5/1 of 10. A name is found for 55-75% of each topic's top
+    # 150 candidates, so the feature mostly reshuffles them (RAG lost RETRO, Contriever and Active RAG to R3 and
+    # BERTserini). No weight gains on a topic without losing on another, so it stays off by default; an admin can
+    # turn it on for one map (NAMED_METHOD_ON, from the map's Changes tab), which applies at the next build.
     named_method: float = 0.0
+
+
+NAMED_METHOD_ON = 0.10  # the weight a map gets when an admin turns the named-method feature on (PEFT's best)
 
 
 @dataclass
@@ -70,6 +79,9 @@ class TopicConfig:
     key_routes: int = 3                # top-SPC edges the key-route main path starts from
     # Tier 2 (full text): milestones, main-path papers and this many of each milestone's strongest citers
     tier2_successors: int = 8
+    # Refresh (E4): rebuild, read new full text and run the GPU lane when the last build is this many days old.
+    # 0 turns the scheduled refresh off for the topic.
+    refresh_days: int = 30
 
     @classmethod
     def from_dict(cls, data: dict | None) -> "TopicConfig":

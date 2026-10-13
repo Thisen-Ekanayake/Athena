@@ -106,6 +106,31 @@ def chat_extra(think: bool = False) -> dict:
     return {"chat_template_kwargs": {"enable_thinking": think}} if is_llama_cpp(chat_base_url()) else {}
 
 
+def chat_json(prompt: str, schema: dict, name: str, system: str | None = None, task: str | None = None,
+              max_tokens: int = 300, timeout: float = 120.0) -> tuple[dict | None, dict]:
+    """One schema-constrained JSON answer at temperature 0 with thinking off.
+
+    Returns (answer, usage); the answer is None when the reply does not parse. ``usage`` has the model and its
+    input and output token counts, for logging and per-user allowances.
+    """
+    import json
+
+    model = chat_model(task)
+    messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
+    resp = chat_client(timeout=timeout).chat.completions.create(
+        model=model, messages=messages, temperature=0, max_tokens=max_tokens,
+        response_format={"type": "json_schema", "json_schema": {"name": name, "schema": schema}},
+        extra_body=chat_extra(),
+    )
+    usage = {"model": model, "input_tokens": getattr(resp.usage, "prompt_tokens", 0) or 0,
+             "output_tokens": getattr(resp.usage, "completion_tokens", 0) or 0}
+    try:
+        answer = json.loads(resp.choices[0].message.content or "")
+    except json.JSONDecodeError:
+        return None, usage
+    return (answer if isinstance(answer, dict) else None), usage
+
+
 def cost(input_tokens: int, output_tokens: int) -> float:
     """USD for a call at the configured prices; local models cost nothing."""
     def price(key: str) -> float:

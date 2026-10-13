@@ -67,23 +67,34 @@ def _vote(session: Session, weights: dict[UUID, float],
     return topics[best], ranking
 
 
-def semantic_weights(query: str, timeout: float = 10.0) -> dict[UUID, float] | None:
-    """Paper -> similarity for the papers nearest the query, or None when no embedding endpoint answers.
+def embed_query(text: str, instruct: str, timeout: float = 10.0):
+    """``text`` as a query vector in the evolution collections' space, or None when no embedding endpoint answers.
 
-    The timeout leaves room for the router to swap the embedder in (about 1.5 s) behind a running request.
+    Uses the evolution lane's embedder (EVOLUTION_EMBED_* override the app's own), so queries land in the same
+    space as the stored abstracts, chunks and gap statements. The timeout leaves room for the router to swap
+    the embedder in (about 1.5 s) behind a running request.
     """
+    import numpy as np
+
     from athena.evolution import vectors
     from athena.evolution.classify import auth_headers, embed_model_name, embed_url
     url = embed_url()
     try:
         resp = httpx.post(f"{url}/v1/embeddings", timeout=timeout, headers=auth_headers(url), json={
-            "input": [f"Instruct: {QUERY_INSTRUCT}\nQuery: {query}"],
+            "input": [f"Instruct: {instruct}\nQuery: {text}"],
             "model": embed_model_name()})
         resp.raise_for_status()
     except httpx.HTTPError:
         return None
-    import numpy as np
-    vec = vectors.truncate(np.asarray([resp.json()["data"][0]["embedding"]]))[0]
+    return vectors.truncate(np.asarray([resp.json()["data"][0]["embedding"]]))[0]
+
+
+def semantic_weights(query: str, timeout: float = 10.0) -> dict[UUID, float] | None:
+    """Paper -> similarity for the papers nearest the query, or None when no embedding endpoint answers."""
+    from athena.evolution import vectors
+    vec = embed_query(query, QUERY_INSTRUCT, timeout)
+    if vec is None:
+        return None
     qdrant = vectors.client()
     if not qdrant.collection_exists(vectors.ABSTRACT_COLLECTION):
         return None

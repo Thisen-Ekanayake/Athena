@@ -29,11 +29,12 @@ def topic_membership(corpus, config: TopicConfig) -> Membership:
 
 
 def build_topic(slug: str, client: OpenAlexClient | None = None, s2: SemanticScholarClient | None = None,
-                stage_status: str = "building", status_after: str = "ready") -> dict:
+                stage_status: str = "building", status_after: str = "ready", snapshot: bool = True) -> dict:
     """Build ``slug`` and save it. Progress goes to ``status_detail`` under ``stage_status``.
 
     A search-built topic's first pass ends at ``refining`` (the map is viewable while its abstracts are
-    embedded), and its second pass keeps that status while it runs, so the map stays up.
+    embedded), and its second pass keeps that status while it runs, so the map stays up. ``snapshot`` records
+    what the build changed (``athena.evolution.snapshots``); a refresh takes its snapshot at the end instead.
     """
     with SessionLocal() as session:
         topic = db.get_topic(session, slug)
@@ -52,7 +53,7 @@ def build_topic(slug: str, client: OpenAlexClient | None = None, s2: SemanticSch
         corpus = build_corpus(client or OpenAlexClient(), seeds, config, s2, search_terms, on_stage=stage)
         stage("Scoring milestones")
         membership = topic_membership(corpus, config)
-        scores = score_topic(corpus, config, membership)
+        scores = score_topic(corpus, config, membership, db.cited_names(list(corpus.papers)))
         stage("Saving the map")
         db.save_topic_build(slug, corpus, scores)
     except Exception as exc:
@@ -61,17 +62,27 @@ def build_topic(slug: str, client: OpenAlexClient | None = None, s2: SemanticSch
     summary = corpus.stats | scores.stats | {"seconds": round(time.time() - start, 1)}
     db.set_topic_status(slug, status_after, ", ".join(f"{k}={v}" for k, v in summary.items()), stats=summary)
     logger.info(f"Built topic {slug}: {summary}")
+    if snapshot:
+        take_snapshot(slug, "build")
     return summary
 
 
-def build_search_topic(slug: str) -> dict:
+def take_snapshot(slug: str, reason: str) -> None:
+    try:
+        with SessionLocal() as session:
+            db.take_snapshot(session, db.get_topic(session, slug), reason)
+    except Exception as exc:  # the map is built; only its changelog entry is missing
+        logger.warning(f"Topic {slug}: no snapshot taken: {exc}")
+
+
+def build_search_topic(slug: str, stage_status: str = "building", snapshot: bool = True) -> dict:
     """A search-built topic: the map from keywords first, then again once its abstracts have vectors.
 
     The first pass ends at ``refining``, so the map can be read while the GPU embeds the abstracts. If the
     embedder cannot run (no model, the card busy elsewhere), the map stays as built, with keyword
     membership, and says why.
     """
-    summary = build_topic(slug, status_after="refining")
+    summary = build_topic(slug, stage_status=stage_status, status_after="refining", snapshot=False)
     try:
         from athena.evolution.gpu import embed_abstracts  # numpy and Qdrant: the worker image only
         db.set_topic_status(slug, "refining", "Embedding the papers' abstracts")
@@ -80,15 +91,21 @@ def build_search_topic(slug: str) -> dict:
         logger.warning(f"Topic {slug}: abstracts not embedded, keeping keyword membership: {exc}")
         note = f"Kept keyword membership: the abstracts could not be embedded ({exc})"
         db.set_topic_status(slug, "ready", note[:500], stats=summary | {"refine": f"skipped ({str(exc)[:200]})"})
+        if snapshot:
+            take_snapshot(slug, "build")
         return summary
     try:
-        refined = build_topic(slug, stage_status="refining")
+        refined = build_topic(slug, stage_status="refining", snapshot=False)
     except Exception as exc:
         # The first pass's map is still stored; show it rather than a failure.
         logger.warning(f"Topic {slug}: the refining rebuild failed, keeping the first map: {exc}")
         db.set_topic_status(slug, "ready", f"The refining rebuild failed ({exc})"[:500],
                             stats=summary | {"refine": f"failed ({str(exc)[:200]})"})
+        if snapshot:
+            take_snapshot(slug, "build")
         return summary
     refined |= {"abstracts_embedded": embedded, "refine": "done"}
     db.set_topic_status(slug, "ready", ", ".join(f"{k}={v}" for k, v in refined.items()), stats=refined)
+    if snapshot:
+        take_snapshot(slug, "build")
     return refined

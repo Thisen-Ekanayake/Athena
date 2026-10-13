@@ -38,9 +38,12 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_CHANGE_REQUIRED = "password_change_required"
 
 # Daily allowances for calls that take GPU time (or money with a hosted model). Admins have none.
-LIMITS = {"qa": 100, "lit_review": 10, "map_proposal": 10, "map_build": 3}
+LIMITS = {"qa": 100, "lit_review": 10, "map_proposal": 10, "map_build": 3, "idea_check": 20, "map_qa": 30}
 LIMIT_LABELS = {"qa": "questions", "lit_review": "literature reviews", "map_proposal": "map searches",
-                "map_build": "map builds"}
+                "map_build": "map builds", "idea_check": "idea checks", "map_qa": "questions to maps"}
+# Tokens a user may spend a day on questions to maps (prompt and answer), on top of the question count:
+# a map question sends up to a dozen passages, so its cost varies more than the count shows.
+TOKEN_LIMITS = {"map_qa": 150_000}
 
 _hasher = PasswordHasher()  # argon2id
 
@@ -192,6 +195,37 @@ def use(r, user: User, action: str) -> None:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                             detail=f"You have used today's {limit} {LIMIT_LABELS[action]}. "
                                    "The allowance resets at midnight UTC.")
+
+
+def token_limit(action: str) -> int:
+    try:
+        return int(get_setting(f"LIMIT_{action.upper()}_TOKENS_PER_DAY") or TOKEN_LIMITS[action])
+    except ValueError:
+        return TOKEN_LIMITS[action]
+
+
+def _token_key(user: User, action: str) -> str:
+    return f"limit:{user.id}:{action}_tokens:{_now():%Y-%m-%d}"
+
+
+def check_tokens(r, user: User, action: str) -> None:
+    """Refuse with 429 once ``user`` has spent today's token allowance for ``action``. Admins have none."""
+    if user.role == "admin":
+        return
+    used = int(r.get(_token_key(user, action)) or 0)
+    if used >= token_limit(action):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail=f"You have used today's {token_limit(action):,} tokens for "
+                                   f"{LIMIT_LABELS[action]}. The allowance resets at midnight UTC.")
+
+
+def add_tokens(r, user: User, action: str, tokens: int) -> None:
+    """Count ``tokens`` against ``user``'s allowance for today, after a call has run."""
+    if user.role == "admin" or tokens <= 0:
+        return
+    key = _token_key(user, action)
+    r.incrby(key, tokens)
+    r.expire(key, 2 * 86400)
 
 
 def spend(action: str):

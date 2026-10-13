@@ -22,7 +22,7 @@ _NOT_NAME_STARTS = {"the", "in", "our", "we", "unlike", "like", "following", "bo
 EXTEND_SHARE = 0.6  # a longer form must be used by this share of the papers using the one-word name
 
 
-def _suffixes(phrase: str) -> list[str]:
+def suffixes(phrase: str) -> list[str]:
     words = phrase.split()
     return [" ".join(words[-n:]) for n in range(1, min(3, len(words)) + 1)]
 
@@ -39,7 +39,7 @@ def detect_method_name(mentions: Iterable[tuple[Hashable, str]], title: str, cit
     """
     users: dict[str, set] = defaultdict(set)
     for citer, phrase in mentions:
-        for suffix in _suffixes(phrase or ""):
+        for suffix in suffixes(phrase or ""):
             users[suffix].add(citer)
     title_words = {w.lower() for w in re.findall(r"[\w\-+]+", title)}
 

@@ -24,5 +24,10 @@ celery_app.conf.update(
         'athena.evolution.tasks.refine_proposal': {'queue': 'evolution'},
         'athena.evolution.tasks.process_full_text': {'queue': 'evolution'},
         'athena.evolution.tasks.run_gpu_lane': {'queue': 'evolution'},
+        # Map refreshes (athena.evolution.refresh): every step but the method-name fetch needs the evolution worker.
+        'athena.evolution.tasks.refresh_build': {'queue': 'evolution'},
+        'athena.evolution.tasks.refresh_full_text': {'queue': 'evolution'},
+        'athena.evolution.tasks.refresh_gpu_lane': {'queue': 'evolution'},
+        'athena.evolution.tasks.snapshot_topic': {'queue': 'evolution'},
     }
 )

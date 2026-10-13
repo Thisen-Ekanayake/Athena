@@ -224,16 +224,19 @@ class TestBuildSearchTopic:
     def setup_method(self):
         self.statuses = []
         self.builds = []
+        self.snapshots = []
 
     def patch(self, monkeypatch, embed):
         import athena.evolution.build as build
         import athena.evolution.gpu as gpu
 
-        def fake_build(slug, stage_status="building", status_after="ready"):
+        def fake_build(slug, stage_status="building", status_after="ready", snapshot=True):
+            assert snapshot is False  # the search build takes one snapshot, at its end
             self.builds.append((stage_status, status_after))
             return {"papers": 10, "membership": "semantic" if len(self.builds) > 1 else "keywords"}
 
         monkeypatch.setattr(build, "build_topic", fake_build)
+        monkeypatch.setattr(build, "take_snapshot", lambda slug, reason: self.snapshots.append(reason))
         monkeypatch.setattr(build.db, "set_topic_status",
                             lambda slug, status, detail=None, stats=None: self.statuses.append((status, stats)))
         monkeypatch.setattr(gpu, "embed_abstracts", embed)
@@ -245,6 +248,12 @@ class TestBuildSearchTopic:
         assert self.builds == [("building", "refining"), ("refining", "ready")]
         assert out["membership"] == "semantic" and out["abstracts_embedded"] == 42
         assert self.statuses[-1][0] == "ready" and self.statuses[-1][1]["refine"] == "done"
+        assert self.snapshots == ["build"]
+
+    def test_a_refresh_keeps_the_map_readable_and_leaves_the_snapshot_to_the_chain(self, monkeypatch):
+        build = self.patch(monkeypatch, lambda: 0)
+        build.build_search_topic("object-tracking", stage_status="refining", snapshot=False)
+        assert self.builds[0] == ("refining", "refining") and self.snapshots == []
 
     def test_no_embedder_keeps_the_first_map(self, monkeypatch):
         def no_gpu():

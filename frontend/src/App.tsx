@@ -7,6 +7,7 @@ import { FeedPage } from './pages/FeedPage'
 import { HomePage } from './pages/HomePage'
 import { PaperPage } from './pages/PaperPage'
 import { ChangePasswordPage, LoginPage, RequireAuth, SetupPage } from './pages/AuthPages'
+import { InboxPage } from './pages/InboxPage'
 import { SavedPage } from './pages/SavedPage'
 import { SearchPage } from './pages/SearchPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -16,6 +17,10 @@ import { Spinner } from './ui/Spinner'
 // Lazy so the graph library (cytoscape) only loads on the Evolution page.
 const EvolutionPage = lazy(() =>
   import('./features/evolution/EvolutionPage').then((m) => ({ default: m.EvolutionPage })),
+)
+
+const IdeaCheckPage = lazy(() =>
+  import('./features/evolution/IdeaCheckPage').then((m) => ({ default: m.IdeaCheckPage })),
 )
 
 const evolution = (
@@ -39,8 +44,10 @@ function App() {
           <Route path="clusters" element={<ClustersPage />} />
           <Route path="clusters/:id" element={<ClusterPage />} />
           <Route path="evolution" element={evolution} />
+          <Route path="evolution/ideas" element={<Suspense fallback={<Spinner label="Loading…" />}><IdeaCheckPage /></Suspense>} />
           <Route path="evolution/:slug" element={evolution} />
           <Route path="saved" element={<SavedPage />} />
+          <Route path="inbox" element={<InboxPage />} />
           <Route path="search" element={<SearchPage />} />
           {/* Research search and the literature review now live on the search page. */}
           <Route path="research" element={<Navigate to="/search" replace />} />

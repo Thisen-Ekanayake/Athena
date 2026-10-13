@@ -12,6 +12,7 @@ import { cn } from '../../ui/cn'
 import { CATEGORY_LABELS, timeAgo } from '../items/format'
 import { ScoreBadge } from '../items/ScoreBadge'
 import { AskPaper } from './AskPaper'
+import { PlaceInEvolution } from './PlaceInEvolution'
 import { ScoreBreakdown } from './ScoreBreakdown'
 
 function Section({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
@@ -95,6 +96,8 @@ export function PaperDetail({ itemId, initial, layout }: { itemId: string; initi
           </div>
         )}
       </Section>
+
+      <PlaceInEvolution itemId={item.id} />
 
       <AskPaper itemId={item.id} />
 

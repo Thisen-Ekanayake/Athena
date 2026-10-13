@@ -3,6 +3,7 @@ import cytoscape from 'cytoscape'
 import { forceCollide, forceSimulation, forceX, forceY, type SimulationNodeDatum } from 'd3-force'
 import { useAppStore } from '../../store/appStore'
 import type { EvolutionEdge, EvolutionNode, LooseEdge } from './api'
+import { makeExporter, type GraphExporter } from './graphExport'
 
 interface EvolutionGraphProps {
   nodes: EvolutionNode[]
@@ -11,6 +12,8 @@ interface EvolutionGraphProps {
   selectedId: string | null
   onSelect: (id: string | null) => void
   showCitations: boolean
+  /** Receives an exporter while the map is drawn, and null when it is taken down. */
+  onExporter?: (exporter: GraphExporter | null) => void
 }
 
 // Graph units. Time runs left to right; each year's column is as wide as its paper count needs
@@ -225,16 +228,18 @@ function StarField() {
   )
 }
 
-export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations }: EvolutionGraphProps) {
+export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations, onExporter }: EvolutionGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const cyRef = useRef<cytoscape.Core | null>(null)
   const onSelectRef = useRef(onSelect)
+  const onExporterRef = useRef(onExporter)
   const accent = useAppStore((s) => s.accent)
   const [ticks, setTicks] = useState<{ year: number; x: number }[]>([])
 
   useEffect(() => {
     onSelectRef.current = onSelect
-  }, [onSelect])
+    onExporterRef.current = onExporter
+  }, [onSelect, onExporter])
 
   const years = useMemo(() => nodes.map((n) => n.year).filter((y): y is number => y !== null), [nodes])
   const firstYear = years.length ? Math.min(...years) : 2000
@@ -307,8 +312,10 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
     cy.on('viewport', updateAxis)
     updateAxis()
     cyRef.current = cy
+    onExporterRef.current?.(makeExporter(cy, xOf, firstYear, lastYear))
     return () => {
       cancelAnimationFrame(frame)
+      onExporterRef.current?.(null)
       cy.destroy()
       cyRef.current = null
     }

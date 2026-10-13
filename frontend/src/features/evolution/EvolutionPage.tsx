@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, GitBranch, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { ArrowLeft, GitBranch, Lightbulb, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { apiErrorMessage } from '../../api/error'
+import { timeAgo } from '../../components/items/format'
 import { useIsAdmin } from '../../api/queries/auth'
 import { Button, ButtonLink } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
@@ -15,11 +16,15 @@ import { cn } from '../../ui/cn'
 import { EvolutionGraph } from './EvolutionGraph'
 import { GapsView } from './GapsView'
 import { PaperPanel } from './PaperPanel'
+import { ExportMenu } from './ExportMenu'
+import type { GraphExporter } from './graphExport'
+import { NewInMaps } from './NewInMaps'
 import { ProposalPanel } from './ProposalPanel'
 import { TimelineStrip } from './TimelineStrip'
 import {
   createProposal,
   isBuilding,
+  isBusy,
   searchTopics,
   useDeleteTopic,
   useEvolutionTopics,
@@ -34,13 +39,30 @@ import {
   type TopicStatus,
 } from './api'
 
+// The tabs beyond the map load when first opened, so the map's own chunk stays small.
+const AskMap = lazy(() => import('./AskMap').then((m) => ({ default: m.AskMap })))
+const ChangesView = lazy(() => import('./ChangesView').then((m) => ({ default: m.ChangesView })))
+const LinksView = lazy(() => import('./LinksView').then((m) => ({ default: m.LinksView })))
+const PeopleView = lazy(() => import('./PeopleView').then((m) => ({ default: m.PeopleView })))
+const ReadingPath = lazy(() => import('./ReadingPath').then((m) => ({ default: m.ReadingPath })))
+
 const LIMITS = [
   { value: '80', label: '80' },
   { value: '250', label: '250' },
   { value: '600', label: '600' },
 ]
 
-type Tab = 'map' | 'gaps' | 'no-full-text'
+type Tab = 'map' | 'path' | 'gaps' | 'ask' | 'people' | 'links' | 'changes' | 'no-full-text'
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'map', label: 'Lineage map' },
+  { id: 'path', label: 'Reading path' },
+  { id: 'gaps', label: 'Open problems' },
+  { id: 'ask', label: 'Ask' },
+  { id: 'people', label: 'People' },
+  { id: 'links', label: 'Links' },
+  { id: 'changes', label: 'Changes' },
+]
+const TAB_IDS = new Set<string>([...TABS.map((t) => t.id), 'no-full-text'])
 
 /** How a field developed: its lineage of papers, its milestones and the problems still open. */
 export function EvolutionPage() {
@@ -51,9 +73,16 @@ export function EvolutionPage() {
         <TopicView key={slug} slug={slug} />
       ) : (
         <>
-          <PageHeader title="Evolution" description="How a field developed: which papers it grew from, its milestones, and the problems still open." />
+          <PageHeader
+            title="Evolution"
+            description="How a field developed: which papers it grew from, its milestones, and the problems still open."
+            actions={<ButtonLink to="/evolution/ideas" variant="ai" size="sm"><Lightbulb /> Check an idea</ButtonLink>}
+          />
           <TopicSearch />
-          <TopicList />
+          <div className="grid gap-8">
+            <NewInMaps />
+            <TopicList />
+          </div>
         </>
       )}
     </div>
@@ -223,6 +252,7 @@ function TopicCard({ topic: t }: { topic: EvolutionTopic }) {
         </span>
       </div>
       {t.description && <p className="line-clamp-2 text-[13px] leading-relaxed text-fg-2">{t.description}</p>}
+      {t.last_change && <LastChange change={t.last_change} />}
       <p className="mt-auto font-mono text-[12px] text-fg-3 tabular-nums">
         {isBuilding(t.status) ? t.status_detail ?? 'Waiting to build' : `${t.paper_count ?? 0} papers · ${t.milestone_count ?? 0} milestones`}
       </p>
@@ -230,25 +260,41 @@ function TopicCard({ topic: t }: { topic: EvolutionTopic }) {
   )
 }
 
+function LastChange({ change: c }: { change: NonNullable<EvolutionTopic['last_change']> }) {
+  const parts = [
+    c.new_milestones > 0 && `${c.new_milestones} new ${c.new_milestones === 1 ? 'milestone' : 'milestones'}`,
+    c.solved_gaps > 0 && `${c.solved_gaps} ${c.solved_gaps === 1 ? 'gap' : 'gaps'} solved`,
+    c.new_gaps > 0 && `${c.new_gaps} new ${c.new_gaps === 1 ? 'gap' : 'gaps'}`,
+    c.papers_added > 0 && `${c.papers_added} new papers`,
+  ].filter(Boolean)
+  return <p className="text-[12px] text-accent-ink">Updated {timeAgo(c.taken_at)}: {parts.join(', ')}</p>
+}
+
 function TopicView({ slug }: { slug: string }) {
   const [params, setParams] = useSearchParams()
-  const tabParam = params.get('tab')
-  const tab: Tab = tabParam === 'gaps' || tabParam === 'no-full-text' ? tabParam : 'map'
-  const setTab = (t: Tab) => setParams(t === 'map' ? {} : { tab: t }, { replace: true })
+  const tabParam = params.get('tab') ?? 'map'
+  const tab = (TAB_IDS.has(tabParam) ? tabParam : 'map') as Tab
+  // The tab and the selected paper live in the URL, so other pages can link to a paper in the map.
+  const selectedId = params.get('paper')
+  const navigateTo = (t: Tab, paper: string | null) => {
+    const next: Record<string, string> = {}
+    if (t !== 'map') next.tab = t
+    if (paper) next.paper = paper
+    setParams(next, { replace: true })
+  }
+  const setTab = (t: Tab) => navigateTo(t, selectedId)
+  const setSelectedId = (id: string | null) => navigateTo(tab, id)
   const [limit, setLimit] = useState(250)
   const [showCitations, setShowCitations] = useState(false)
   const [showLoose, setShowLoose] = useState(false)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
   const status = useTopicStatus(slug)
   const current = status.data
   const readable = !!current && !isBuilding(current.status) && current.status !== 'failed'
   const version = current ? `${current.status}:${current.built_at ?? ''}` : ''
   const graph = useTopicGraph(slug, limit, version, readable)
   const timeline = useTopicTimeline(slug, version, readable)
-  const selectInMap = (id: string) => {
-    setSelectedId(id)
-    setTab('map')
-  }
+  const selectInMap = (id: string) => navigateTo('map', id)
+  const exporter = useRef<GraphExporter | null>(null)
 
   const back = <ButtonLink to="/evolution" variant="ghost" size="sm" className="mb-3 -ml-2.5"><ArrowLeft /> Evolution</ButtonLink>
 
@@ -306,6 +352,7 @@ function TopicView({ slug }: { slug: string }) {
               <span className="font-mono text-[12px] text-fg-3 tabular-nums">
                 {total_papers} papers · {milestones} milestones · built {topic.built_at ? new Date(topic.built_at).toLocaleDateString() : '—'}
               </span>
+              <ExportMenu slug={slug} exporter={() => exporter.current} />
               {current.origin === 'search' && <SearchTopicActions topic={current} />}
             </span>
           }
@@ -323,18 +370,14 @@ function TopicView({ slug }: { slug: string }) {
       </section>
 
       <div className="flex flex-wrap items-center gap-1 border-b border-line" role="tablist" aria-label="Views">
-        {([
-          ['map', 'Lineage map'],
-          ['gaps', 'Open problems'],
-          ['no-full-text', `Without full text (${timeline.data.without_full_text.length})`],
-        ] as const).map(([id, label]) => (
+        {TABS.map(({ id, label }) => (
           <button
             key={id}
             type="button"
             role="tab"
-            aria-selected={tab === id}
+            aria-selected={tab === id || (id === 'map' && tab === 'no-full-text')}
             onClick={() => setTab(id)}
-            className={cn('-mb-px border-b-2 px-3 py-2 text-[13px] transition-colors', tab === id ? 'border-accent text-fg' : 'border-transparent text-fg-3 hover:text-fg-2')}
+            className={cn('-mb-px border-b-2 px-3 py-2 text-[13px] transition-colors', tab === id || (id === 'map' && tab === 'no-full-text') ? 'border-accent text-fg' : 'border-transparent text-fg-3 hover:text-fg-2')}
           >
             {label}
           </button>
@@ -358,6 +401,11 @@ function TopicView({ slug }: { slug: string }) {
                 Loose links ({loose_edges.length})
               </label>
               <Legend />
+              {timeline.data.without_full_text.length > 0 && (
+                <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setTab('no-full-text')} title="Notable papers whose full text is not openly available, so their gaps and citing sentences are missing">
+                  Without full text ({timeline.data.without_full_text.length})
+                </Button>
+              )}
             </div>
             <EvolutionGraph
               nodes={nodes}
@@ -366,20 +414,37 @@ function TopicView({ slug }: { slug: string }) {
               selectedId={selectedId}
               onSelect={setSelectedId}
               showCitations={showCitations}
+              onExporter={(e) => { exporter.current = e }}
             />
           </div>
           {selectedId ? (
             <PaperPanel slug={slug} paperId={selectedId} onSelect={setSelectedId} onClose={() => setSelectedId(null)} />
           ) : (
-            <aside className="rounded-xl border border-line bg-surface p-4 text-[13px] text-fg-2">
-              Select a star in the map, or a milestone above. A thread then traces what the paper built on and what built on it.
+            <aside className="grid content-start gap-5">
+              <p className="rounded-xl border border-line bg-surface p-4 text-[13px] text-fg-2">
+                Select a star in the map, or a milestone above. A thread then traces what the paper built on and what built on it.
+              </p>
+              <NewInMaps topic={slug} limit={5} />
             </aside>
           )}
         </div>
+      ) : tab === 'path' ? (
+        <Suspense fallback={<Spinner />}><ReadingPath slug={slug} onSelect={selectInMap} /></Suspense>
       ) : tab === 'gaps' ? (
         <GapsView slug={slug} onSelect={selectInMap} />
+      ) : tab === 'ask' ? (
+        <Suspense fallback={<Spinner />}><AskMap slug={slug} topicName={topic.name} /></Suspense>
+      ) : tab === 'people' ? (
+        <Suspense fallback={<Spinner />}><PeopleView slug={slug} onSelect={selectInMap} /></Suspense>
+      ) : tab === 'links' ? (
+        <Suspense fallback={<Spinner />}><LinksView slug={slug} onSelect={selectInMap} /></Suspense>
+      ) : tab === 'changes' ? (
+        <Suspense fallback={<Spinner />}><ChangesView slug={slug} busy={isBusy(current.status)} onSelect={selectInMap} /></Suspense>
       ) : (
-        <NoFullTextList papers={timeline.data.without_full_text} onSelect={selectInMap} />
+        <div className="grid gap-3">
+          <Button variant="ghost" size="sm" className="-ml-2.5 justify-self-start" onClick={() => setTab('map')}><ArrowLeft /> Back to the map</Button>
+          <NoFullTextList papers={timeline.data.without_full_text} onSelect={selectInMap} />
+        </div>
       )}
     </div>
   )

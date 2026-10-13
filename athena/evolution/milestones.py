@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from athena.evolution import graph as g
 from athena.evolution.config import TopicConfig
+from athena.evolution.eras import era_bounds, era_of
 from athena.evolution.corpus import Corpus, classify_kind, relevance
 from athena.evolution.names import NAME_TOKEN
 
@@ -66,28 +67,6 @@ class TopicScores:
     stats: dict
 
 
-def era_bounds(paper_years: list[int], eras: int, max_era_years: int) -> list[tuple[int, int]]:
-    """Split years into eras holding equal numbers of papers, then cut any era longer than ``max_era_years``.
-
-    A paper's era follows from the rank of its year, so one year never spans two eras.
-    """
-    ordered = sorted(paper_years)
-    n = len(ordered)
-    starts = sorted({ordered[min(n - 1, i * n // eras)] for i in range(eras)})
-    bounds = []
-    for i, start in enumerate(starts):
-        end = starts[i + 1] - 1 if i + 1 < len(starts) else ordered[-1]
-        while end - start + 1 > max_era_years:
-            bounds.append((start, start + max_era_years - 1))
-            start += max_era_years
-        bounds.append((start, end))
-    return bounds
-
-
-def era_of(year: int, bounds: list[tuple[int, int]]) -> tuple[int, int]:
-    return next(b for b in bounds if b[0] <= year <= b[1])
-
-
 def select_milestones(scores: dict[str, PaperScore], years: dict[str, int | None],
                       config: TopicConfig) -> set[str]:
     eligible = {pid: s for pid, s in scores.items()
@@ -109,8 +88,13 @@ def select_milestones(scores: dict[str, PaperScore], years: dict[str, int | None
     return picked
 
 
-def score_topic(corpus: Corpus, config: TopicConfig, membership: "Membership | None" = None) -> TopicScores:
-    """Scores and milestones. ``membership`` says which papers are on-topic; keywords decide without it."""
+def score_topic(corpus: Corpus, config: TopicConfig, membership: "Membership | None" = None,
+                cited_names: dict[str, str] | None = None) -> TopicScores:
+    """Scores and milestones. ``membership`` says which papers are on-topic; keywords decide without it.
+
+    ``cited_names`` (OpenAlex ID -> the name citing papers use, from ``athena.evolution.method_names``) feeds
+    the named-method feature; without it the feature is off for every paper.
+    """
     years = {pid: p.year for pid, p in corpus.papers.items()}
     cg = g.build_graph(corpus.papers, corpus.edges, years)
     in_deg, out_deg = g.degrees(cg)
@@ -144,7 +128,7 @@ def score_topic(corpus: Corpus, config: TopicConfig, membership: "Membership | N
             "flow": w.flow * features["flow"][pid],
             "relevance": w.relevance * rel[pid],
             "specificity": w.specificity * features["specificity"][pid],
-            "named_method": w.named_method * (1.0 if name else 0.0),
+            "named_method": w.named_method * (1.0 if pid in (cited_names or {}) else 0.0),
         }
         scores[pid] = PaperScore(
             kind=classify_kind(paper.title, paper.work.work_type),
