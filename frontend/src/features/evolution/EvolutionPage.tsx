@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, GitBranch, Lightbulb, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { apiErrorMessage } from '../../api/error'
@@ -16,14 +16,9 @@ import { cn } from '../../ui/cn'
 import { EvolutionGraph } from './EvolutionGraph'
 import { GapsView } from './GapsView'
 import { PaperPanel } from './PaperPanel'
-import { AskMap } from './AskMap'
-import { ChangesView } from './ChangesView'
 import { ExportMenu } from './ExportMenu'
 import type { GraphExporter } from './graphExport'
-import { LinksView } from './LinksView'
 import { NewInMaps } from './NewInMaps'
-import { PeopleView } from './PeopleView'
-import { ReadingPath } from './ReadingPath'
 import { ProposalPanel } from './ProposalPanel'
 import { TimelineStrip } from './TimelineStrip'
 import {
@@ -43,6 +38,13 @@ import {
   type TopicSearchResult,
   type TopicStatus,
 } from './api'
+
+// The tabs beyond the map load when first opened, so the map's own chunk stays small.
+const AskMap = lazy(() => import('./AskMap').then((m) => ({ default: m.AskMap })))
+const ChangesView = lazy(() => import('./ChangesView').then((m) => ({ default: m.ChangesView })))
+const LinksView = lazy(() => import('./LinksView').then((m) => ({ default: m.LinksView })))
+const PeopleView = lazy(() => import('./PeopleView').then((m) => ({ default: m.PeopleView })))
+const ReadingPath = lazy(() => import('./ReadingPath').then((m) => ({ default: m.ReadingPath })))
 
 const LIMITS = [
   { value: '80', label: '80' },
@@ -427,17 +429,17 @@ function TopicView({ slug }: { slug: string }) {
           )}
         </div>
       ) : tab === 'path' ? (
-        <ReadingPath slug={slug} onSelect={selectInMap} />
+        <Suspense fallback={<Spinner />}><ReadingPath slug={slug} onSelect={selectInMap} /></Suspense>
       ) : tab === 'gaps' ? (
         <GapsView slug={slug} onSelect={selectInMap} />
       ) : tab === 'ask' ? (
-        <AskMap slug={slug} topicName={topic.name} />
+        <Suspense fallback={<Spinner />}><AskMap slug={slug} topicName={topic.name} /></Suspense>
       ) : tab === 'people' ? (
-        <PeopleView slug={slug} onSelect={selectInMap} />
+        <Suspense fallback={<Spinner />}><PeopleView slug={slug} onSelect={selectInMap} /></Suspense>
       ) : tab === 'links' ? (
-        <LinksView slug={slug} onSelect={selectInMap} />
+        <Suspense fallback={<Spinner />}><LinksView slug={slug} onSelect={selectInMap} /></Suspense>
       ) : tab === 'changes' ? (
-        <ChangesView slug={slug} busy={isBusy(current.status)} onSelect={selectInMap} />
+        <Suspense fallback={<Spinner />}><ChangesView slug={slug} busy={isBusy(current.status)} onSelect={selectInMap} /></Suspense>
       ) : (
         <div className="grid gap-3">
           <Button variant="ghost" size="sm" className="-ml-2.5 justify-self-start" onClick={() => setTab('map')}><ArrowLeft /> Back to the map</Button>

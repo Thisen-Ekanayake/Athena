@@ -81,7 +81,7 @@ export function ExportMenu({ slug, exporter }: ExportMenuProps) {
     run(format, async () => {
       const ex = exporter()
       if (!ex) throw new Error('Open the lineage map first')
-      saveBlob(format === 'png' ? await ex.png() : ex.svg(), `${slug}-map.${format}`)
+      saveBlob(await (format === 'png' ? ex.png() : ex.svg()), `${slug}-map.${format}`)
     })
 
   const mapShown = open && exporter() !== null

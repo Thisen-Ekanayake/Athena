@@ -1,12 +1,19 @@
 import cytoscape from 'cytoscape'
-import cytoscapeSvg from 'cytoscape-svg'
-
-cytoscape.use(cytoscapeSvg)
 
 /** Saves the map as an image; the graph component hands one out while the map is on screen. */
 export interface GraphExporter {
   png: () => Promise<Blob>
-  svg: () => Blob
+  svg: () => Promise<Blob>
+}
+
+let svgLoaded: Promise<void> | null = null
+
+/** The SVG extension, loaded on the first SVG export so the map page does not carry it. */
+function loadSvg() {
+  svgLoaded ??= import('cytoscape-svg').then((m) => {
+    cytoscape.use(m.default)
+  })
+  return svgLoaded
 }
 
 const AXIS = 28 // px of year axis under the graph, at scale 1
@@ -52,7 +59,8 @@ export function makeExporter(cy: cytoscape.Core, xOf: Map<number, number>, first
       for (const t of ticks(cy, xOf, firstYear, lastYear, scale, canvas.width)) ctx.fillText(String(t.year), t.x, graph.height + 18 * scale)
       return new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('The image could not be made'))), 'image/png'))
     },
-    svg: () => {
+    svg: async () => {
+      await loadSvg()
       const c = colours()
       const doc = new DOMParser().parseFromString(cy.svg({ full: true, scale: 1, bg: c.bg }), 'image/svg+xml')
       const root = doc.documentElement
