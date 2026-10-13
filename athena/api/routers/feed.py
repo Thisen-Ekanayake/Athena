@@ -51,6 +51,8 @@ def _build_feed_item(item: ContentItem, related_count: int = 0) -> dict:
             "label": cluster.label,
         } if cluster else None,
         "related_count": related_count,
+        # Milestones of the evolution maps this paper cites (athena.evolution.feedlink)
+        "milestones_cited": len(((item.extra_data or {}).get("evolution") or {}).get("cites") or []),
     }
 
 

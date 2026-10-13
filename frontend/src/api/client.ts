@@ -70,6 +70,8 @@ export interface FeedItem {
   cluster?: { id: string; label: string | null } | null
   takeaways?: string[] | null
   related_count: number
+  /** Milestones of the evolution maps it cites */
+  milestones_cited?: number
 }
 
 export interface FeedResponse {

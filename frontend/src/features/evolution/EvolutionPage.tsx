@@ -17,6 +17,7 @@ import { GapsView } from './GapsView'
 import { PaperPanel } from './PaperPanel'
 import { ExportMenu } from './ExportMenu'
 import type { GraphExporter } from './graphExport'
+import { NewInMaps } from './NewInMaps'
 import { PeopleView } from './PeopleView'
 import { ReadingPath } from './ReadingPath'
 import { ProposalPanel } from './ProposalPanel'
@@ -64,7 +65,10 @@ export function EvolutionPage() {
         <>
           <PageHeader title="Evolution" description="How a field developed: which papers it grew from, its milestones, and the problems still open." />
           <TopicSearch />
-          <TopicList />
+          <div className="grid gap-8">
+            <NewInMaps />
+            <TopicList />
+          </div>
         </>
       )}
     </div>
@@ -391,8 +395,11 @@ function TopicView({ slug }: { slug: string }) {
           {selectedId ? (
             <PaperPanel slug={slug} paperId={selectedId} onSelect={setSelectedId} onClose={() => setSelectedId(null)} />
           ) : (
-            <aside className="rounded-xl border border-line bg-surface p-4 text-[13px] text-fg-2">
-              Select a star in the map, or a milestone above. A thread then traces what the paper built on and what built on it.
+            <aside className="grid content-start gap-5">
+              <p className="rounded-xl border border-line bg-surface p-4 text-[13px] text-fg-2">
+                Select a star in the map, or a milestone above. A thread then traces what the paper built on and what built on it.
+              </p>
+              <NewInMaps topic={slug} limit={5} />
             </aside>
           )}
         </div>
