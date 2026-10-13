@@ -107,12 +107,16 @@ async def try_pdf_fetch(url: str) -> Optional[FetchResult]:
     return None
 
 
+STAGED_MIN_WORDS = 200  # a staged file this short is usually a title and a teaser, so the page is fetched instead
+
+
 async def fetch_article_content(item: ContentItem) -> FetchResult:
-    # Tier 1: Staging file
-    staging = Path(f'/tmp/athena/staging/{item.id}.txt')
+    # Tier 1: Staging file (the item's own, wherever ATHENA_STAGING_DIR put it), unless it is too thin
+    staging = Path(item.full_text_path) if item.full_text_path else Path(f'/tmp/athena/staging/{item.id}.txt')
     if staging.exists() and file_age_days(staging) < 7:
         text = staging.read_text(encoding='utf-8', errors='ignore')
-        return FetchResult(text=text, method='staged', word_count=len(text.split()))
+        if len(text.split()) > STAGED_MIN_WORDS:
+            return FetchResult(text=text, method='staged', word_count=len(text.split()))
 
     url = item.url
     # For Arxiv URLs we can guess PDF link

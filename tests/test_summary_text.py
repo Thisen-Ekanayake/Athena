@@ -38,3 +38,23 @@ def test_nothing_to_summarise_when_only_metadata_is_found():
 def test_long_articles_are_cut_to_fit_the_local_model():
     text = st._text_to_summarise(ITEM, "word " * (st.MAX_SUMMARY_WORDS + 500))
     assert len(text.split()) == st.MAX_SUMMARY_WORDS
+
+
+def test_the_fetcher_reads_the_items_own_staged_file_only_when_it_has_content(tmp_path):
+    import asyncio
+    from athena.core import qa_fetcher
+
+    staged = tmp_path / "item.txt"
+    item = SimpleNamespace(id="i2", url="https://example.com/post", title="T", abstract=None,
+                           full_text_path=str(staged))
+    page = qa_fetcher.FetchResult(text="page " * 300, method="http", word_count=300)
+
+    async def direct(url):
+        return page
+
+    staged.write_text("Introducing Falcon ASR")
+    with patch.object(qa_fetcher, "try_direct_fetch", side_effect=direct):
+        assert asyncio.run(qa_fetcher.fetch_article_content(item)).method == "http"
+    staged.write_text("word " * 300)
+    with patch.object(qa_fetcher, "try_direct_fetch", side_effect=AssertionError("should not fetch")):
+        assert asyncio.run(qa_fetcher.fetch_article_content(item)).method == "staged"
