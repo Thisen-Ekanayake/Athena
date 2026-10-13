@@ -21,7 +21,11 @@ class MilestoneWeights:
     # Introduced a named method: citing papers call it by a name ("LoRA [15]"), read from Semantic Scholar's
     # citing sentences for each topic's top candidates (athena.evolution.method_names). The earlier title
     # proxy ("LoRA: ...") penalised iconic papers whose titles do not follow the pattern (Fast R-CNN).
-    # See scripts/evolution_bench/eval_named_method.py for the evaluation behind this weight.
+    # Evaluated 2026-10-13 (scripts/evolution_bench/eval_named_method.py, replayed on the four curated topics):
+    # reference milestones picked at w = 0 / 0.05 / 0.10 / 0.15 were object detection 9/9/9/8 of 11, PEFT
+    # 8/8/9/9 of 12, diffusion 7/6/5/4 of 12, RAG 7/6/5/1 of 10. A name is found for 55-75% of each topic's top
+    # 150 candidates, so the feature mostly reshuffles them (RAG lost RETRO, Contriever and Active RAG to R3 and
+    # BERTserini). No weight gains on a topic without losing on another, so it stays off.
     named_method: float = 0.0
 
 
