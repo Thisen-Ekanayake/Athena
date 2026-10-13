@@ -18,6 +18,9 @@ GET  /api/v1/evolution/topics/{slug}/papers/{paper_id}       — one paper with 
                                                                and strict gap -> resolution links with evidence
 GET  /api/v1/evolution/topics/{slug}/gaps                    — gap themes with yearly counts, persisting first
 POST /api/v1/evolution/topics/{slug}/milestones/{paper_id}   — pin, unpin, or reset a milestone
+GET  /api/v1/evolution/topics/{slug}/reading-path?n=10       — a survey, then milestones in order, each with a
+                                                               model-written line on why it matters
+PUT|DELETE /api/v1/evolution/papers/{paper_id}/read          — tick or untick a paper as read (per user)
 """
 import re
 import time
@@ -26,7 +29,7 @@ from uuid import UUID
 
 import httpx
 import redis as redis_lib
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
@@ -37,6 +40,7 @@ from athena.api.config import settings
 from athena.api.deps import get_db, get_redis
 from athena.core.models import User
 from athena.database import evolution as db
+from athena.evolution import notes
 from athena.evolution import propose as proposals
 from athena.evolution.classify import chat_available
 from athena.evolution.openalex import FIELD_IDS, OpenAlexBudgetError
@@ -117,6 +121,13 @@ def _topic_or_404(session: Session, slug: str):
     topic = db.get_topic(session, slug)
     if topic is None:
         raise HTTPException(status_code=404, detail=f"Topic '{slug}' is not in the system")
+    return topic
+
+
+def _built_topic_or_409(session: Session, slug: str):
+    topic = _topic_or_404(session, slug)
+    if topic.built_at is None:
+        raise HTTPException(status_code=409, detail="This map has not been built yet")
     return topic
 
 
@@ -312,3 +323,42 @@ def set_milestone(
         raise HTTPException(status_code=404, detail="Paper is not part of this topic")
     cache_invalidate(r, f"evo:{slug}:*")
     return db.paper_detail(session, topic, paper_id)
+
+
+# ── reading path (E1) ──────────────────────────────────────────────────
+
+
+@router.get("/topics/{slug}/reading-path")
+def reading_path(
+    slug: str,
+    background: BackgroundTasks,
+    n: int = Query(10, ge=3, le=30),
+    session: Session = Depends(get_db),
+    r: redis_lib.Redis = Depends(get_redis),
+    user: User = Depends(auth.active_user),
+):
+    """``n`` papers to learn the field from. Missing notes are written after the response; poll until
+    ``notes_pending`` is false."""
+    topic = _built_topic_or_409(session, slug)
+    path = db.reading_path(session, topic, user.id, n)
+    entries = ([path["survey"]] if path["survey"] else []) + path["steps"]
+    pending, error = False, None
+    if any(e["why"] is None for e in entries):  # "" is a note the model could not write; not retried
+        error = notes.last_failure(r, slug)
+        if error is None:
+            if notes.claim(r, slug):
+                background.add_task(notes.write_notes, slug, [UUID(e["id"]) for e in entries], r)
+            pending = True
+    return path | {"notes_pending": pending, "notes_error": error}
+
+
+@router.put("/papers/{paper_id}/read", status_code=204)
+def mark_read(paper_id: UUID, session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
+    if not db.set_read(session, user.id, paper_id, True):
+        raise HTTPException(status_code=404, detail="Unknown paper")
+
+
+@router.delete("/papers/{paper_id}/read", status_code=204)
+def mark_unread(paper_id: UUID, session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
+    if not db.set_read(session, user.id, paper_id, False):
+        raise HTTPException(status_code=404, detail="Unknown paper")
