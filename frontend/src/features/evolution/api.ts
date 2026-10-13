@@ -586,3 +586,45 @@ export const useDeleteIdeaCheck = () => {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['evolution', 'idea-checks'] }),
   })
 }
+
+// ── questions to a map (E3) ────────────────────────────────────────────
+
+export type SectionFilter = 'method' | 'results' | 'limitations'
+
+export interface MapSource {
+  n: number
+  paper_id: string
+  title: string
+  year: number | null
+  named_method: string | null
+  section_type: string
+  heading: string
+  abstract_only: boolean
+  score: number
+  excerpt: string
+}
+
+export interface MapQuestion {
+  id: string
+  question: string
+  answer: string
+  sources: MapSource[]
+  sections: SectionFilter[]
+  created_at: string
+}
+
+export const useMapQuestions = (slug: string) =>
+  useQuery({
+    queryKey: ['evolution', 'questions', slug],
+    queryFn: async () => (await apiClient.get<MapQuestion[]>(`/evolution/topics/${slug}/questions`)).data,
+  })
+
+export const useClearMapQuestions = (slug: string) => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async () => {
+      await apiClient.delete(`/evolution/topics/${slug}/questions`)
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['evolution', 'questions', slug] }),
+  })
+}

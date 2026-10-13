@@ -15,6 +15,7 @@ import { cn } from '../../ui/cn'
 import { EvolutionGraph } from './EvolutionGraph'
 import { GapsView } from './GapsView'
 import { PaperPanel } from './PaperPanel'
+import { AskMap } from './AskMap'
 import { ExportMenu } from './ExportMenu'
 import type { GraphExporter } from './graphExport'
 import { NewInMaps } from './NewInMaps'
@@ -45,11 +46,12 @@ const LIMITS = [
   { value: '600', label: '600' },
 ]
 
-type Tab = 'map' | 'path' | 'gaps' | 'people' | 'no-full-text'
+type Tab = 'map' | 'path' | 'gaps' | 'ask' | 'people' | 'no-full-text'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'map', label: 'Lineage map' },
   { id: 'path', label: 'Reading path' },
   { id: 'gaps', label: 'Open problems' },
+  { id: 'ask', label: 'Ask' },
   { id: 'people', label: 'People' },
 ]
 const TAB_IDS = new Set<string>([...TABS.map((t) => t.id), 'no-full-text'])
@@ -411,6 +413,8 @@ function TopicView({ slug }: { slug: string }) {
         <ReadingPath slug={slug} onSelect={selectInMap} />
       ) : tab === 'gaps' ? (
         <GapsView slug={slug} onSelect={selectInMap} />
+      ) : tab === 'ask' ? (
+        <AskMap slug={slug} topicName={topic.name} />
       ) : tab === 'people' ? (
         <PeopleView slug={slug} onSelect={selectInMap} />
       ) : (
