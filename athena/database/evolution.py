@@ -152,6 +152,7 @@ def list_topics(session: Session) -> list[dict]:
 
 def topic_summary(topic: EvoTopic) -> dict:
     return {
+        "id": str(topic.id) if getattr(topic, "id", None) else None,
         "slug": topic.slug,
         "name": topic.name,
         "aliases": topic.aliases or [],
