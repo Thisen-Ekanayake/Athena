@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties, type Form
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, GitBranch, Lightbulb, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { apiErrorMessage } from '../../api/error'
+import { timeAgo } from '../../components/items/format'
 import { useIsAdmin } from '../../api/queries/auth'
 import { Button, ButtonLink } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
@@ -16,6 +17,7 @@ import { EvolutionGraph } from './EvolutionGraph'
 import { GapsView } from './GapsView'
 import { PaperPanel } from './PaperPanel'
 import { AskMap } from './AskMap'
+import { ChangesView } from './ChangesView'
 import { ExportMenu } from './ExportMenu'
 import type { GraphExporter } from './graphExport'
 import { LinksView } from './LinksView'
@@ -27,6 +29,7 @@ import { TimelineStrip } from './TimelineStrip'
 import {
   createProposal,
   isBuilding,
+  isBusy,
   searchTopics,
   useDeleteTopic,
   useEvolutionTopics,
@@ -47,7 +50,7 @@ const LIMITS = [
   { value: '600', label: '600' },
 ]
 
-type Tab = 'map' | 'path' | 'gaps' | 'ask' | 'people' | 'links' | 'no-full-text'
+type Tab = 'map' | 'path' | 'gaps' | 'ask' | 'people' | 'links' | 'changes' | 'no-full-text'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'map', label: 'Lineage map' },
   { id: 'path', label: 'Reading path' },
@@ -55,6 +58,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'ask', label: 'Ask' },
   { id: 'people', label: 'People' },
   { id: 'links', label: 'Links' },
+  { id: 'changes', label: 'Changes' },
 ]
 const TAB_IDS = new Set<string>([...TABS.map((t) => t.id), 'no-full-text'])
 
@@ -246,11 +250,22 @@ function TopicCard({ topic: t }: { topic: EvolutionTopic }) {
         </span>
       </div>
       {t.description && <p className="line-clamp-2 text-[13px] leading-relaxed text-fg-2">{t.description}</p>}
+      {t.last_change && <LastChange change={t.last_change} />}
       <p className="mt-auto font-mono text-[12px] text-fg-3 tabular-nums">
         {isBuilding(t.status) ? t.status_detail ?? 'Waiting to build' : `${t.paper_count ?? 0} papers · ${t.milestone_count ?? 0} milestones`}
       </p>
     </Link>
   )
+}
+
+function LastChange({ change: c }: { change: NonNullable<EvolutionTopic['last_change']> }) {
+  const parts = [
+    c.new_milestones > 0 && `${c.new_milestones} new ${c.new_milestones === 1 ? 'milestone' : 'milestones'}`,
+    c.solved_gaps > 0 && `${c.solved_gaps} ${c.solved_gaps === 1 ? 'gap' : 'gaps'} solved`,
+    c.new_gaps > 0 && `${c.new_gaps} new ${c.new_gaps === 1 ? 'gap' : 'gaps'}`,
+    c.papers_added > 0 && `${c.papers_added} new papers`,
+  ].filter(Boolean)
+  return <p className="text-[12px] text-accent-ink">Updated {timeAgo(c.taken_at)}: {parts.join(', ')}</p>
 }
 
 function TopicView({ slug }: { slug: string }) {
@@ -421,6 +436,8 @@ function TopicView({ slug }: { slug: string }) {
         <PeopleView slug={slug} onSelect={selectInMap} />
       ) : tab === 'links' ? (
         <LinksView slug={slug} onSelect={selectInMap} />
+      ) : tab === 'changes' ? (
+        <ChangesView slug={slug} busy={isBusy(current.status)} onSelect={selectInMap} />
       ) : (
         <div className="grid gap-3">
           <Button variant="ghost" size="sm" className="-ml-2.5 justify-self-start" onClick={() => setTab('map')}><ArrowLeft /> Back to the map</Button>

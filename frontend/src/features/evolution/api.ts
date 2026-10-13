@@ -18,6 +18,8 @@ export interface EvolutionTopic {
   build_stats: Record<string, string | number> & { s2?: string; refine?: string; papers?: number }
   paper_count?: number
   milestone_count?: number
+  /** The latest snapshot that changed something (E4) */
+  last_change?: { taken_at: string; new_milestones: number; new_gaps: number; solved_gaps: number; papers_added: number } | null
 }
 
 /** Building, or not built yet: the map cannot be read. */
@@ -662,3 +664,78 @@ export const useTopicLinks = (slug: string) =>
     queryFn: async () => (await apiClient.get<TopicLinks>(`/evolution/topics/${slug}/links`)).data,
     staleTime: 5 * 60 * 1000,
   })
+
+// ── refresh and changes (E4) ───────────────────────────────────────────
+
+export interface ChangedTheme {
+  label: string
+  status: GapTheme['status']
+  size: number
+  first_year: number | null
+  last_year: number | null
+  was?: GapTheme['status']
+}
+
+export interface ChangedMilestone {
+  paper_id: string
+  title: string
+  year: number | null
+  named_method: string | null
+  score: number
+}
+
+export interface MapChanges {
+  new_milestones: ChangedMilestone[]
+  dropped_milestones: ChangedMilestone[]
+  papers_added: number
+  papers_removed: number
+  top_new_papers: { paper_id: string; title: string; year: number | null }[]
+  new_gaps: ChangedTheme[]
+  solved_gaps: ChangedTheme[]
+  reopened_gaps: ChangedTheme[]
+  faded_gaps: ChangedTheme[]
+}
+
+export interface MapSnapshot {
+  id: string
+  taken_at: string
+  reason: 'baseline' | 'build' | 'refresh' | 'full_text'
+  built_at: string | null
+  stats: { papers: number; milestones: number; themes: number; open_themes: number }
+  changes: MapChanges | null
+}
+
+export interface TopicChanges {
+  topic: EvolutionTopic
+  refresh_days: number
+  snapshots: MapSnapshot[]
+}
+
+export const useTopicChanges = (slug: string) =>
+  useQuery({
+    queryKey: ['evolution', 'changes', slug],
+    queryFn: async () => (await apiClient.get<TopicChanges>(`/evolution/topics/${slug}/changes`)).data,
+  })
+
+const useTopicAction = (slug: string, path: string) => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async () => (await apiClient.post<{ queued: boolean; task_id: string }>(`/evolution/topics/${slug}/${path}`)).data,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['evolution', 'status', slug] })
+      queryClient.invalidateQueries({ queryKey: ['evolution', 'topics'] })
+    },
+  })
+}
+
+export const useRefreshTopic = (slug: string) => useTopicAction(slug, 'refresh')
+export const useReadFullText = (slug: string) => useTopicAction(slug, 'full-text')
+
+export const useRefreshInterval = (slug: string) => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (refresh_days: number) =>
+      (await apiClient.patch<{ refresh_days: number }>(`/evolution/topics/${slug}/settings`, { refresh_days })).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['evolution', 'changes', slug] }),
+  })
+}
