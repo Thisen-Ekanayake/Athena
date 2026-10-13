@@ -23,6 +23,8 @@ GET  /api/v1/evolution/topics/{slug}/reading-path?n=10       — a survey, then 
 PUT|DELETE /api/v1/evolution/papers/{paper_id}/read          — tick or untick a paper as read (per user)
 GET  /api/v1/evolution/topics/{slug}/export?what=&format=    — milestones or the reading path as BibTeX, RIS or
                                                                Markdown; gap themes as CSV
+GET  /api/v1/evolution/topics/{slug}/people                  — key authors and labs per era, and who introduced
+                                                               each milestone
 """
 import re
 import time
@@ -299,6 +301,18 @@ def topic_gaps(slug: str, session: Session = Depends(get_db), r: redis_lib.Redis
     if cached:
         return cached
     payload = db.topic_gaps(session, topic)
+    cache_set(r, key, payload, settings.CACHE_CLUSTERS_TTL)
+    return payload
+
+
+@router.get("/topics/{slug}/people")
+def topic_people(slug: str, session: Session = Depends(get_db), r: redis_lib.Redis = Depends(get_redis)):
+    topic = _built_topic_or_409(session, slug)
+    key = _cache_key(session, topic, "people")
+    cached = cache_get(r, key)
+    if cached:
+        return cached
+    payload = db.topic_people(session, topic)
     cache_set(r, key, payload, settings.CACHE_CLUSTERS_TTL)
     return payload
 
