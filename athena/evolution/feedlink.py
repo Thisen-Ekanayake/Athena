@@ -73,16 +73,29 @@ def milestone_citations(cited: set[UUID], membership: dict[UUID, list[dict]]) ->
 
 
 def announce(session, citing: list) -> None:
-    """One inbox entry for the feed papers found citing milestones in this run."""
+    """One inbox entry per map for the feed papers found citing its milestones in this run; its followers see it."""
     from athena.database import inbox
     names = lambda cites: list(dict.fromkeys(c.get("named_method") or c["title"] for c in cites))  # noqa: E731
-    titles = [item.title for item, _ in citing[:3]]
-    n = len(citing)
-    inbox.add_event(
-        session, "feed_citations", f"{n} new {'paper cites' if n == 1 else 'papers cite'} milestones in your maps",
-        "; ".join(titles) + ("; ..." if n > 3 else ""), "/evolution", None,
-        {"items": [{"id": str(item.id), "title": item.title, "cites": names(cites)[:5],
-                    "maps": sorted({c["topic_name"] for c in cites})} for item, cites in citing[:20]]})
+    per_map, map_names = defaultdict(list), {}
+    for item, cites in citing:
+        for slug in dict.fromkeys(c["topic"] for c in cites):
+            per_map[slug].append((item, [c for c in cites if c["topic"] == slug]))
+            map_names[slug] = next(c["topic_name"] for c in cites if c["topic"] == slug)
+    ids = _topic_ids(session, list(per_map))
+    for slug, entries in per_map.items():
+        n = len(entries)
+        inbox.add_event(
+            session, "feed_citations",
+            f"{n} new {'paper cites' if n == 1 else 'papers cite'} milestones of {map_names[slug]}",
+            "; ".join(item.title for item, _ in entries[:3]) + ("; ..." if n > 3 else ""), f"/evolution/{slug}",
+            ids.get(slug),
+            {"items": [{"id": str(item.id), "title": item.title, "cites": names(cites)[:5]}
+                       for item, cites in entries[:20]]})
+
+
+def _topic_ids(session, slugs: list[str]) -> dict:
+    from athena.core.models import EvoTopic
+    return dict(session.execute(select(EvoTopic.slug, EvoTopic.id).where(EvoTopic.slug.in_(slugs))).all())
 
 
 def check_feed_citations(s2=None, openalex=None, now: datetime | None = None) -> dict:
