@@ -19,6 +19,10 @@ const EvolutionPage = lazy(() =>
   import('./features/evolution/EvolutionPage').then((m) => ({ default: m.EvolutionPage })),
 )
 
+const SharedMapPage = lazy(() =>
+  import('./features/evolution/SharedMapPage').then((m) => ({ default: m.SharedMapPage })),
+)
+
 const IdeaCheckPage = lazy(() =>
   import('./features/evolution/IdeaCheckPage').then((m) => ({ default: m.IdeaCheckPage })),
 )
@@ -36,6 +40,8 @@ function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/setup" element={<SetupPage />} />
         <Route path="/change-password" element={<ChangePasswordPage />} />
+        {/* A map behind a share link: no account needed */}
+        <Route path="/share/:token" element={<Suspense fallback={<Spinner label="Loading…" />}><SharedMapPage /></Suspense>} />
         <Route path="/" element={<RequireAuth><AppShell /></RequireAuth>}>
           <Route index element={<HomePage />} />
           <Route path="feed" element={<FeedPage />} />

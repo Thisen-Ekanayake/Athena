@@ -3,7 +3,7 @@ import { ExternalLink, Pin, PinOff, RotateCcw, X } from 'lucide-react'
 import { useIsAdmin } from '../../api/queries/auth'
 import { Button } from '../../ui/Button'
 import { Spinner } from '../../ui/Spinner'
-import { usePaperDetail, useSetMilestone, type EvolutionNode, type LooseMatch, type PaperGap, type StrictLink } from './api'
+import { useMapScope, usePaperDetail, useSetMilestone, type EvolutionNode, type LooseMatch, type PaperGap, type StrictLink } from './api'
 
 interface PaperPanelProps {
   slug: string
@@ -32,7 +32,8 @@ const YEAR_SOURCE: Record<string, string> = {
 export function PaperPanel({ slug, paperId, onSelect, onClose }: PaperPanelProps) {
   const { data: paper, isLoading, error } = usePaperDetail(slug, paperId)
   const setMilestone = useSetMilestone(slug)
-  const isAdmin = useIsAdmin()  // pinning changes the map for everyone
+  const { readOnly } = useMapScope()
+  const isAdmin = useIsAdmin() && !readOnly  // pinning changes the map for everyone; a shared link can't
   const [note, setNote] = useState('')
   const [showAbstract, setShowAbstract] = useState(false)
 

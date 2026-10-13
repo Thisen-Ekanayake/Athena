@@ -5,7 +5,7 @@ import { Notice } from '../../ui/Notice'
 import { Segmented } from '../../ui/Segmented'
 import { Spinner } from '../../ui/Spinner'
 import { cn } from '../../ui/cn'
-import { useMarkRead, useReadingPath, type ReadingStep } from './api'
+import { useMapScope, useMarkRead, useReadingPath, type ReadingStep } from './api'
 
 const SIZES = [
   { value: '5', label: '5' },
@@ -24,6 +24,7 @@ export function ReadingPath({ slug, onSelect }: ReadingPathProps) {
   const [n, setN] = useState(10)
   const { data, isLoading, error } = useReadingPath(slug, n)
   const markRead = useMarkRead(slug, n)
+  const { readOnly } = useMapScope()  // a shared link has no reader to tick papers off
 
   if (isLoading && !data) return <Spinner label="Choosing the papers…" />
   if (error || !data) return <Notice tone="error" title="The reading path could not be loaded">Check that the API is running.</Notice>
@@ -33,7 +34,7 @@ export function ReadingPath({ slug, onSelect }: ReadingPathProps) {
   if (entries.length === 0) {
     return <Notice title="No reading path yet">This map has no milestones or surveys to read. Pin milestones from the map to build one.</Notice>
   }
-  const toggle = (step: ReadingStep) => markRead.mutate({ paperId: step.id, read: !step.read })
+  const toggle = readOnly ? undefined : (step: ReadingStep) => markRead.mutate({ paperId: step.id, read: !step.read })
 
   return (
     <div className="grid max-w-4xl gap-5">
@@ -50,12 +51,14 @@ export function ReadingPath({ slug, onSelect }: ReadingPathProps) {
         </span>
       </div>
 
-      <div className="flex items-center gap-3" aria-live="polite">
-        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2" role="progressbar" aria-valuemin={0} aria-valuemax={entries.length} aria-valuenow={read} aria-label="Papers read">
-          <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${(100 * read) / entries.length}%` }} />
+      {!readOnly && (
+        <div className="flex items-center gap-3" aria-live="polite">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-2" role="progressbar" aria-valuemin={0} aria-valuemax={entries.length} aria-valuenow={read} aria-label="Papers read">
+            <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${(100 * read) / entries.length}%` }} />
+          </div>
+          <span className="font-mono text-[12px] text-fg-3 tabular-nums">{read} of {entries.length} read</span>
         </div>
-        <span className="font-mono text-[12px] text-fg-3 tabular-nums">{read} of {entries.length} read</span>
-      </div>
+      )}
 
       {data.notes_error && (
         <Notice tone="warn" title="The notes could not be written">
@@ -101,13 +104,14 @@ interface StepProps {
   label?: string
   pending: boolean
   onSelect: (id: string) => void
-  onToggle: (step: ReadingStep) => void
+  /** None on a shared link: the number stays, without the read tick */
+  onToggle?: (step: ReadingStep) => void
 }
 
 function Step({ step, label, pending, onSelect, onToggle }: StepProps) {
   return (
     <li className="flex gap-3 px-4 py-3.5">
-      <button
+      {onToggle ? <button
         type="button"
         onClick={() => onToggle(step)}
         aria-pressed={step.read}
@@ -119,7 +123,9 @@ function Step({ step, label, pending, onSelect, onToggle }: StepProps) {
         )}
       >
         {step.read ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : step.position}
-      </button>
+      </button> : (
+        <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border border-line-strong font-mono text-[11px] text-fg-3 tabular-nums">{step.position}</span>
+      )}
       <div className="grid min-w-0 flex-1 gap-1.5">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           {label && <Chip tone="accent"><BookOpen aria-hidden="true" />{label}</Chip>}

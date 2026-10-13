@@ -8,6 +8,7 @@ import { Chip } from '../../ui/Chip'
 import { Notice } from '../../ui/Notice'
 import { Spinner } from '../../ui/Spinner'
 import {
+  useMapScope,
   useReadFullText,
   useTopicSettings,
   useRefreshTopic,
@@ -35,11 +36,12 @@ interface ChangesViewProps {
 export function ChangesView({ slug, busy, onSelect }: ChangesViewProps) {
   const { data, isLoading, error } = useTopicChanges(slug)
   const isAdmin = useIsAdmin()
+  const { readOnly } = useMapScope()  // a shared link shows what changed, not how the map is kept up
   if (isLoading) return <Spinner label="Loading the changes…" />
   if (error || !data) return <Notice tone="error" title="The changes could not be loaded">Check that the API is running.</Notice>
   return (
     <div className="grid max-w-4xl gap-5">
-      {isAdmin ? <UpkeepPanel slug={slug} refreshDays={data.refresh_days} namedMethod={data.named_method} namedMethodInScores={data.named_method_in_scores} busy={busy} /> : (
+      {readOnly ? null : isAdmin ? <UpkeepPanel slug={slug} refreshDays={data.refresh_days} namedMethod={data.named_method} namedMethodInScores={data.named_method_in_scores} busy={busy} /> : (
         <p className="text-[13px] text-fg-2">
           {data.refresh_days > 0 ? `This map is refreshed every ${data.refresh_days} days: new papers, new full text and new gaps.` : 'This map is not refreshed on a schedule.'}
         </p>

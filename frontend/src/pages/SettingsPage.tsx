@@ -9,6 +9,7 @@ import { useClusters, useFetchHealth, useScoringHealth } from '../api/queries/ph
 import { useAddSource, useSources, useToggleSource, useUpdateSource, type PreviewResponse } from '../api/queries/sources'
 import { timeAgo } from '../components/items/format'
 import { SyncLog } from '../components/layout/SyncLog'
+import { SharingSettings } from '../features/evolution/SharingSettings'
 import { NotificationsSettings } from '../features/inbox/NotificationsSettings'
 import { UsageSettings } from '../features/usage/UsageSettings'
 import { PasswordForm } from './AuthPages'
@@ -29,6 +30,7 @@ const TABS = [
   { id: 'sources', label: 'Sources', admin: true },
   { id: 'keys', label: 'Models and keys', admin: true },
   { id: 'users', label: 'Users', admin: true },
+  { id: 'sharing', label: 'Sharing', admin: true },
   { id: 'account', label: 'Account', admin: false },
   { id: 'notifications', label: 'Notifications', admin: false },
   { id: 'usage', label: 'Usage', admin: false },
@@ -89,6 +91,7 @@ export function SettingsPage() {
           {active === 'sources' && <SourcesSection />}
           {active === 'keys' && <KeysSection />}
           {active === 'users' && <UsersSection />}
+          {active === 'sharing' && <SharingSettings />}
           {active === 'account' && <AccountSection />}
           {active === 'notifications' && <NotificationsSettings />}
           {active === 'usage' && <UsageSettings />}

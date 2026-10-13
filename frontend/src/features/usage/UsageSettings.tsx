@@ -192,9 +192,13 @@ function AppUsage() {
       </div>
       <Card>
         <CardHeader title="Tokens per day" action={<span className="text-[12px] text-fg-3">UTC</span>} />
-        <div className="px-4 pt-6 pb-4">
-          <DailyBars month={data.month} daily={data.daily} label={`Tokens per day in ${monthName(data.month)}`} />
-        </div>
+        {data.daily.some((d) => d.tokens > 0) ? (
+          <div className="px-4 pt-6 pb-4">
+            <DailyBars month={data.month} daily={data.daily} label={`Tokens per day in ${monthName(data.month)}`} />
+          </div>
+        ) : (
+          <p className="px-4 pb-4 text-[13px] text-fg-3">No model calls yet this month.</p>
+        )}
       </Card>
       <Card>
         <CardHeader title="By person" />
