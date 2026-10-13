@@ -628,3 +628,37 @@ export const useClearMapQuestions = (slug: string) => {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['evolution', 'questions', slug] }),
   })
 }
+
+// ── links between maps (E7) ────────────────────────────────────────────
+
+export interface LinkPaper {
+  id: string
+  title: string | null
+  year: number | null
+  named_method: string | null
+  is_milestone: boolean
+}
+
+export interface TopicLinks {
+  topic: EvolutionTopic
+  shared: { total: number; papers: (LinkPaper & { elsewhere: { topic: string; topic_name: string; milestone: boolean }[] })[] }
+  borrowed: (LinkPaper & { from: { topic: string; topic_name: string }; citing_papers: number })[]
+  lent: (LinkPaper & { citing_papers: number; by: Record<string, number> })[]
+  cross_gaps: {
+    theme: { id: string; label: string; status: GapTheme['status'] }
+    gap: string
+    score: number
+    paper: LinkPaper
+    maps: { topic: string; topic_name: string }[]
+    passage: string
+    section_type: string
+  }[]
+  cross_min_score: number
+}
+
+export const useTopicLinks = (slug: string) =>
+  useQuery({
+    queryKey: ['evolution', 'links', slug],
+    queryFn: async () => (await apiClient.get<TopicLinks>(`/evolution/topics/${slug}/links`)).data,
+    staleTime: 5 * 60 * 1000,
+  })
