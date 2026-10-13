@@ -62,7 +62,9 @@ from athena.api.cache import cache_get, cache_invalidate, cache_set
 from athena.api.config import settings
 from athena.api.deps import get_db, get_redis
 from athena.core.models import User
+from athena.core.config_store import set_setting
 from athena.database import evolution as db
+from athena.database import shares
 from athena.database import watches as watch_db
 from athena.core import llm, usage
 from athena.evolution import ask, export, ideas, notes
@@ -454,9 +456,19 @@ def export_topic(
     session: Session = Depends(get_db),
     user: User = Depends(auth.active_user),
 ):
+    _check_export(what, format)
+    return export_file(session, _built_topic_or_409(session, slug), what, format, n, user.id)
+
+
+def _check_export(what: str, format: str) -> None:
     if format not in EXPORT_FORMATS[what]:
         raise HTTPException(status_code=422, detail=f"{what} exports as {', '.join(sorted(EXPORT_FORMATS[what]))}")
-    topic = _built_topic_or_409(session, slug)
+
+
+def export_file(session: Session, topic, what: str, format: str, n: int, user_id: UUID | None = None) -> Response:
+    """A map's milestones, reading path or gap themes as a download; shared links export without a reader."""
+    _check_export(what, format)
+    slug = topic.slug
     built = topic.built_at.date().isoformat() if hasattr(topic.built_at, "date") else None
     if what == "gaps":
         body = export.gaps_csv(db.gap_export_rows(session, topic))
@@ -465,7 +477,7 @@ def export_topic(
         body = export.markdown_milestones(topic.name, papers, built) if format == "md" else (
             export.bibtex(papers) if format == "bib" else export.ris(papers))
     else:
-        path = db.reading_path(session, topic, user.id, n)
+        path = db.reading_path(session, topic, user_id, n)
         entries = ([path["survey"]] if path["survey"] else []) + path["steps"]
         papers = db.export_papers(session, [UUID(e["id"]) for e in entries])
         extra = {e["id"]: {"why": e["why"], "named_method": e["named_method"]} for e in entries}
@@ -666,3 +678,59 @@ def topic_settings(slug: str, body: TopicSettingsRequest, session: Session = Dep
     session.commit()
     current = TopicConfig.from_dict(config)
     return {"slug": slug, "refresh_days": current.refresh_days, "named_method": current.weights.named_method > 0}
+
+
+# ── share links (R2) ───────────────────────────────────────────────────
+
+
+class ShareRequest(BaseModel):
+    expires_days: Literal[7, 30, 90] | None = None
+
+
+class SharingRequest(BaseModel):
+    enabled: bool
+
+
+@router.get("/sharing")
+def sharing_status():
+    """Whether maps can be shared at all, so the page knows to offer it."""
+    return {"enabled": shares.sharing_enabled()}
+
+
+@router.put("/sharing", dependencies=[Depends(auth.require_admin)])
+def set_sharing(body: SharingRequest):
+    """Switch every share link on or off at once; links switched off come back when sharing does."""
+    set_setting(shares.SHARING_KEY, "true" if body.enabled else "false")
+    return {"enabled": body.enabled}
+
+
+@router.get("/shares")
+def all_shares(session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
+    """The active links to every map: the user's own, or everyone's for an admin."""
+    return {"enabled": shares.sharing_enabled(), "shares": shares.list_for(session, user)}
+
+
+@router.get("/topics/{slug}/shares")
+def topic_shares(slug: str, session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
+    topic = _topic_or_404(session, slug)
+    return {"enabled": shares.sharing_enabled(), "shares": shares.list_for(session, user, topic)}
+
+
+@router.post("/topics/{slug}/shares", status_code=201)
+def share_topic(slug: str, body: ShareRequest, session: Session = Depends(get_db),
+                user: User = Depends(auth.active_user)):
+    """A read-only link to the map for people without an account; the page builds the URL from the token."""
+    if not shares.sharing_enabled():
+        raise HTTPException(status_code=403, detail="An admin has switched sharing off")
+    topic = _built_topic_or_409(session, slug)
+    share = shares.create(session, topic, user, body.expires_days)
+    return shares.as_dict(share, user.display_name)
+
+
+@router.delete("/shares/{share_id}", status_code=204)
+def revoke_share(share_id: UUID, session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
+    revoked = shares.revoke(session, share_id, user)
+    if revoked is None:
+        raise HTTPException(status_code=404, detail="No such link")
+    if revoked is False:
+        raise HTTPException(status_code=403, detail="Only the person who made a link, or an admin, can revoke it")

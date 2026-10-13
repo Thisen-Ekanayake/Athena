@@ -19,6 +19,10 @@ class Settings:
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:6333")
 
+    # Where the web app is served from; sessions and shared map links need it to be allowed (comma-separated)
+    CORS_ORIGINS: list[str] = [o.strip().rstrip("/") for o in os.getenv(
+        "CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",") if o.strip()]
+
     # Swagger / ReDoc access control
     DOCS_ENABLED: bool = os.getenv("DOCS_ENABLED", "true").lower() == "true"
     DOCS_USERNAME: str = os.getenv("DOCS_USERNAME", "athena")
