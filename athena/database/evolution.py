@@ -906,8 +906,10 @@ def take_snapshot(session: Session, topic: EvoTopic, reason: str) -> dict:
 
 def topic_changes(session: Session, topic: EvoTopic, limit: int = 20) -> dict:
     """Snapshots newest first, each with what changed since the one before."""
-    rows = session.execute(select(EvoSnapshot).where(EvoSnapshot.topic_id == topic.id)
-                           .order_by(EvoSnapshot.taken_at.desc()).limit(limit)).scalars()
+    rows = session.execute(select(EvoSnapshot.id, EvoSnapshot.taken_at, EvoSnapshot.reason, EvoSnapshot.built_at,
+                                  EvoSnapshot.stats, EvoSnapshot.changes)
+                           .where(EvoSnapshot.topic_id == topic.id)
+                           .order_by(EvoSnapshot.taken_at.desc()).limit(limit)).all()
     config = TopicConfig.from_dict(topic.config)
     return {"topic": topic_summary(topic), "refresh_days": config.refresh_days,
             "snapshots": [{"id": str(r.id), "taken_at": r.taken_at.isoformat(), "reason": r.reason,
@@ -918,14 +920,16 @@ def topic_changes(session: Session, topic: EvoTopic, limit: int = 20) -> dict:
 def latest_changes(session: Session) -> dict[str, dict]:
     """Each topic's latest snapshot that changed something, for the topic cards."""
     out = {}
-    rows = session.execute(select(EvoSnapshot, EvoTopic.slug).join(EvoTopic, EvoSnapshot.topic_id == EvoTopic.id)
+    # Only the changes: a snapshot's other columns hold every paper ID of the map.
+    rows = session.execute(select(EvoSnapshot.taken_at, EvoSnapshot.changes, EvoTopic.slug)
+                           .join(EvoTopic, EvoSnapshot.topic_id == EvoTopic.id)
                            .where(EvoSnapshot.changes.isnot(None)).order_by(EvoSnapshot.taken_at.desc())).all()
-    for snap, slug in rows:
-        c = snap.changes or {}
+    for taken_at, changes, slug in rows:
+        c = changes or {}
         counts = {"new_milestones": len(c.get("new_milestones", [])), "new_gaps": len(c.get("new_gaps", [])),
                   "solved_gaps": len(c.get("solved_gaps", [])), "papers_added": c.get("papers_added", 0)}
         if slug not in out and any(counts.values()):
-            out[slug] = {"taken_at": snap.taken_at.isoformat(), **counts}
+            out[slug] = {"taken_at": taken_at.isoformat(), **counts}
     return out
 
 
