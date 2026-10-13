@@ -64,7 +64,7 @@ from athena.api.deps import get_db, get_redis
 from athena.core.models import User
 from athena.database import evolution as db
 from athena.database import watches as watch_db
-from athena.core import llm
+from athena.core import llm, usage
 from athena.evolution import ask, export, ideas, notes
 from athena.evolution import propose as proposals
 from athena.evolution.classify import chat_available
@@ -507,7 +507,7 @@ def create_idea_check(body: IdeaCheckRequest, session: Session = Depends(get_db)
     """The idea against every built map. Takes a few seconds, longer with the verdict; saved to the account."""
     idea = body.idea.strip()
     try:
-        result = ideas.check_idea(session, idea, verdict=body.verdict)
+        result = ideas.check_idea(session, idea, verdict=body.verdict, user_id=user.id)
     except ideas.IdeaCheckUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     return db.save_idea_check(session, user.id, idea, result)
@@ -553,7 +553,7 @@ async def ask_map(slug: str, body: AskRequest, session: Session = Depends(get_db
     except ask.AskUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     chat = ask.messages(topic.name, body.question, sources, [t.model_dump() for t in body.history])
-    input_tokens = sum(len(m["content"]) for m in chat) // 4  # an estimate; the served model counts its own
+    input_tokens = sum(len(m["content"]) for m in chat) // 4  # an estimate, if the server sends no counts
     model = llm.chat_model("qa")
     public = [s.public() for s in sources]
     topic_id, question, sections = topic.id, body.question, list(body.sections)
@@ -561,11 +561,14 @@ async def ask_map(slug: str, body: AskRequest, session: Session = Depends(get_db
     async def generate():
         yield _sse({"sources": public, "abstract_only": sum(s.abstract_only for s in sources)})
         parts: list[str] = []
+        counted = None
         try:
             stream = await llm.async_chat_client().chat.completions.create(
                 model=model, messages=chat, max_tokens=ANSWER_TOKENS, temperature=0.2, stream=True,
-                extra_body=llm.chat_extra())
+                stream_options={"include_usage": True}, extra_body=llm.chat_extra())
             async for chunk in stream:
+                if getattr(chunk, "usage", None):
+                    counted = chunk.usage  # the last chunk: the served model's own counts
                 delta = chunk.choices[0].delta.content if chunk.choices else None
                 if delta:
                     parts.append(delta)
@@ -574,11 +577,14 @@ async def ask_map(slug: str, body: AskRequest, session: Session = Depends(get_db
             logger.warning(f"Ask {slug}: the answer failed: {exc}")
             yield _sse({"error": f"The model did not answer: {str(exc)[:200]}"})
         answer = "".join(parts)
-        output_tokens = len(answer) // 4
-        auth.add_tokens(r, user, "map_qa", input_tokens + output_tokens)
+        prompt_tokens, output_tokens = usage.tokens_of(counted)
+        prompt_tokens, output_tokens = prompt_tokens or input_tokens, output_tokens or len(answer) // 4
+        auth.add_tokens(r, user, "map_qa", prompt_tokens + output_tokens)
+        if answer or counted:
+            await run_in_threadpool(usage.add, "map_qa", model, prompt_tokens, output_tokens, "chat", user.id)
         if answer:
             question_id = await run_in_threadpool(db.save_map_question, user.id, topic_id, question, answer, public,
-                                                  sections, input_tokens, output_tokens, model)
+                                                  sections, prompt_tokens, output_tokens, model)
             yield _sse({"done": True, "question_id": str(question_id)})
         yield "data: [DONE]\n\n"
 

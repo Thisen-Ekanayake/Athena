@@ -185,7 +185,7 @@ def test_idea_check_is_saved_to_the_account(client):
             patch(f"{ROUTER_DB}.save_idea_check", return_value={"id": "1", "result": result}) as save:
         resp = c.post("/api/v1/evolution/idea-checks", json=IDEA)
     assert resp.status_code == 201
-    assert check.call_args.kwargs == {"verdict": True}
+    assert check.call_args.kwargs == {"verdict": True, "user_id": USER.id}
     assert save.call_args.args[1:] == (USER.id, IDEA["idea"], result)
 
 

@@ -26,7 +26,7 @@ SEARCH_INSTRUCT = "Given a search query, retrieve AI research papers and article
 
 def embed_query(query: str) -> list[float]:
     """Embed a query with the same model used by the ingest pipeline."""
-    return llm.embed([query], instruct=SEARCH_INSTRUCT)[0].tolist()
+    return llm.embed([query], instruct=SEARCH_INSTRUCT, feature="search")[0].tolist()
 
 
 def _qdrant_search(vector: list[float], limit: int) -> list[tuple[str, float]]:

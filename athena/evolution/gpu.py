@@ -26,7 +26,7 @@ from loguru import logger
 
 from sqlalchemy import select
 
-from athena.core import llm
+from athena.core import llm, usage
 from athena.core.config_store import get_setting
 from athena.core.models import EvoTopic
 from athena.database import evolution as db
@@ -103,6 +103,7 @@ def _embed(http: httpx.Client, url: str, texts: list[str]) -> np.ndarray:
         body["dimensions"] = int(dimensions)
     resp = http.post(f"{url}/v1/embeddings", json=body)
     resp.raise_for_status()
+    usage.add("map_embed", body["model"], usage.tokens_of(resp.json().get("usage"))[0], kind="embed")
     data = sorted(resp.json()["data"], key=lambda d: d["index"])
     raw = np.asarray([d["embedding"] for d in data])
     if raw.shape[1] < vectors.DIM:

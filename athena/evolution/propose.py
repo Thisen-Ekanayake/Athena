@@ -460,7 +460,7 @@ def run_refinement(proposal_id: str, r=None) -> str:
     try:
         url, server = chat_server()
         with server:
-            clf = Classifier(base_url=url)
+            clf = Classifier(base_url=url, feature="map_proposal")
             state = {"status": "done", "model": clf.model, **refine(proposal, clf)}
     except Exception as exc:
         state = {"status": "failed", "error": str(exc)[:300]}

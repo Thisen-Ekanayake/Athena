@@ -29,3 +29,13 @@ def logged_in_admin(request):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_auth: use real sessions instead of the logged-in admin")
+
+
+@pytest.fixture(autouse=True)
+def usage_rows(monkeypatch):
+    """Model calls in tests are fakes: their usage rows are collected here instead of reaching a database."""
+    from athena.core import usage
+    written: list[dict] = []
+    monkeypatch.setattr(usage, "_write", written.extend)
+    yield written
+    usage.flush()

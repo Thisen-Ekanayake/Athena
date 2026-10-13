@@ -71,7 +71,7 @@ DEFAULT_AUTHORITY = {
 def _embed(texts: list[str]):
     """The shared embedding model (athena.core.llm), loaded lazily."""
     from athena.core import llm
-    return llm.embed(texts)
+    return llm.embed(texts, feature="scoring")
 
 
 def _get_weights(category: str, session) -> Dict[str, Any]:

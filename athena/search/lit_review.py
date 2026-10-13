@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from loguru import logger
 
-from athena.core import llm
+from athena.core import llm, usage
 
 MAX_TOKENS = 2000
 MAX_PAPERS_ON_OVERFLOW = 12
@@ -36,8 +36,8 @@ def _build_user_prompt(topic: str, papers: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def generate_lit_review(topic: str, papers: list[dict]) -> str:
-    """Generate a structured literature review from the provided papers."""
+def generate_lit_review(topic: str, papers: list[dict], user_id=None) -> str:
+    """Generate a structured literature review from the provided papers, counted against ``user_id``."""
     if not papers:
         return ""
 
@@ -51,8 +51,9 @@ def generate_lit_review(topic: str, papers: list[dict]) -> str:
 
     user_prompt = _build_user_prompt(topic, trimmed)
 
+    model = llm.chat_model("lit_review")
     response = llm.chat_client().chat.completions.create(
-        model=llm.chat_model("lit_review"),
+        model=model,
         max_tokens=MAX_TOKENS,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -60,4 +61,5 @@ def generate_lit_review(topic: str, papers: list[dict]) -> str:
         ],
         extra_body=llm.chat_extra(),
     )
+    usage.add("lit_review", model, *usage.tokens_of(response.usage), user_id=user_id)
     return response.choices[0].message.content or ""

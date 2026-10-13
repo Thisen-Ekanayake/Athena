@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass
 import httpx
 
-from athena.core import llm
+from athena.core import llm, usage
 from athena.core.config_store import get_setting
 
 LABELS = ["addresses_limitation", "criticises", "extends_or_uses", "compares", "background"]
@@ -160,11 +160,12 @@ def auth_headers(url: str | None = None) -> dict:
 
 class Classifier:
     def __init__(self, base_url: str | None = None, model: str | None = None, http: httpx.Client | None = None,
-                 local: bool | None = None):
+                 local: bool | None = None, feature: str = "map_build"):
         self.base_url = (base_url or chat_url()).rstrip("/")
         self.model = model or chat_model_name()
         self.local = is_local() if local is None else local
         self.http = http or httpx.Client(timeout=900.0, headers=auth_headers(self.base_url))
+        self.feature = feature  # what its calls count as in the usage log
 
     def ask(self, prompt: str, schema: dict, name: str, think: bool = False,
             max_tokens: int | None = None) -> dict | None:
@@ -180,7 +181,9 @@ class Classifier:
             payload["chat_template_kwargs"] = {"enable_thinking": think}
         resp = self.http.post(f"{self.base_url}/v1/chat/completions", json=payload)
         resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"].get("content") or ""
+        body = resp.json()
+        usage.add(self.feature, self.model, *usage.tokens_of(body.get("usage")))
+        content = body["choices"][0]["message"].get("content") or ""
         try:
             return json.loads(content)
         except json.JSONDecodeError:

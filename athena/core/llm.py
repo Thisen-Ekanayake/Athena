@@ -11,8 +11,11 @@ model means re-embedding: see ``check_embed_space``.
 
 Settings (env or the settings table): LLM_BASE_URL, LLM_API_KEY, LLM_CHAT_MODEL, LLM_<TASK>_MODEL
 (SUMMARY, QA, LIT_REVIEW), LLM_SERVER (llama.cpp | other; guessed from the URL when unset),
-LLM_PRICE_IN_PER_M, LLM_PRICE_OUT_PER_M (USD per million tokens, 0 for local models),
+LLM_PRICE_IN_PER_M, LLM_PRICE_OUT_PER_M, EMBED_PRICE_PER_M (USD per million tokens, 0 for local models),
 EMBED_BASE_URL, EMBED_API_KEY, EMBED_MODEL, EMBED_DIMENSIONS.
+
+``chat_json`` and ``embed`` count each call in the usage log (``athena.core.usage``) under the ``feature`` they
+are given; callers of the raw clients count their own.
 """
 from __future__ import annotations
 
@@ -107,13 +110,17 @@ def chat_extra(think: bool = False) -> dict:
 
 
 def chat_json(prompt: str, schema: dict, name: str, system: str | None = None, task: str | None = None,
-              max_tokens: int = 300, timeout: float = 120.0) -> tuple[dict | None, dict]:
+              max_tokens: int = 300, timeout: float = 120.0, feature: str | None = None,
+              user_id=None) -> tuple[dict | None, dict]:
     """One schema-constrained JSON answer at temperature 0 with thinking off.
 
     Returns (answer, usage); the answer is None when the reply does not parse. ``usage`` has the model and its
-    input and output token counts, for logging and per-user allowances.
+    input and output token counts, for logging and per-user allowances. With a ``feature`` the call is counted in
+    the usage log, against ``user_id`` when someone asked for it.
     """
     import json
+
+    from athena.core import usage as usage_log
 
     model = chat_model(task)
     messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
@@ -124,6 +131,8 @@ def chat_json(prompt: str, schema: dict, name: str, system: str | None = None, t
     )
     usage = {"model": model, "input_tokens": getattr(resp.usage, "prompt_tokens", 0) or 0,
              "output_tokens": getattr(resp.usage, "completion_tokens", 0) or 0}
+    if feature:
+        usage_log.add(feature, model, usage["input_tokens"], usage["output_tokens"], user_id=user_id)
     try:
         answer = json.loads(resp.choices[0].message.content or "")
     except json.JSONDecodeError:
@@ -131,13 +140,15 @@ def chat_json(prompt: str, schema: dict, name: str, system: str | None = None, t
     return (answer if isinstance(answer, dict) else None), usage
 
 
-def cost(input_tokens: int, output_tokens: int) -> float:
-    """USD for a call at the configured prices; local models cost nothing."""
+def cost(input_tokens: int, output_tokens: int, kind: str = "chat") -> float:
+    """USD for a call at the configured prices; local models cost nothing. Embeddings have one price."""
     def price(key: str) -> float:
         try:
             return float(get_setting(key) or 0)
         except ValueError:
             return 0.0
+    if kind == "embed":
+        return input_tokens * price("EMBED_PRICE_PER_M") / 1_000_000
     return (input_tokens * price("LLM_PRICE_IN_PER_M") + output_tokens * price("LLM_PRICE_OUT_PER_M")) / 1_000_000
 
 
@@ -168,10 +179,12 @@ def embed_input_tokens() -> int:
     return EMBED_MAX_TOKENS if is_llama_cpp(embed_base_url()) else HOSTED_MAX_TOKENS
 
 
-def embed(texts: list[str], instruct: str | None = None, timeout: float = 120.0) -> np.ndarray:
+def embed(texts: list[str], instruct: str | None = None, timeout: float = 120.0, feature: str | None = None,
+          user_id=None) -> np.ndarray:
     """Unit vectors of EMBED_DIM dimensions, one per text.
 
-    ``instruct`` marks the texts as queries in Qwen3-Embedding's format; documents go in as they are.
+    ``instruct`` marks the texts as queries in Qwen3-Embedding's format; documents go in as they are. With a
+    ``feature`` the call is counted in the usage log.
     """
     if instruct:
         texts = [f"Instruct: {instruct}\nQuery: {t}" for t in texts]
@@ -188,6 +201,9 @@ def embed(texts: list[str], instruct: str | None = None, timeout: float = 120.0)
         kwargs["dimensions"] = int(get_setting("EMBED_DIMENSIONS"))
     client = OpenAI(base_url=url, api_key=embed_api_key(), timeout=timeout, max_retries=2)
     resp = client.embeddings.create(input=texts, model=model, **kwargs)
+    if feature:
+        from athena.core import usage
+        usage.add(feature, model, usage.tokens_of(resp.usage)[0], kind="embed", user_id=user_id)
     raw = np.asarray([d.embedding for d in sorted(resp.data, key=lambda d: d.index)], dtype=np.float32)
     if raw.shape[1] < EMBED_DIM:
         raise ValueError(f"{model} returns {raw.shape[1]} dimensions; Athena stores {EMBED_DIM}. "

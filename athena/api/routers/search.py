@@ -191,7 +191,7 @@ def research_search(payload: SearchRequest, user: User = Depends(auth.active_use
     if payload.generate_review and merged:
         auth.use(r, user, "lit_review")
         try:
-            lit_review_text = generate_lit_review(query, merged)
+            lit_review_text = generate_lit_review(query, merged, user_id=user.id)
         except Exception as exc:
             logger.error(f"research_search: lit review failed — {exc}")
             raise HTTPException(
