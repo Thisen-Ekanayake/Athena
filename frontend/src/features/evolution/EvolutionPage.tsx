@@ -15,6 +15,8 @@ import { cn } from '../../ui/cn'
 import { EvolutionGraph } from './EvolutionGraph'
 import { GapsView } from './GapsView'
 import { PaperPanel } from './PaperPanel'
+import { ExportMenu } from './ExportMenu'
+import type { GraphExporter } from './graphExport'
 import { ReadingPath } from './ReadingPath'
 import { ProposalPanel } from './ProposalPanel'
 import { TimelineStrip } from './TimelineStrip'
@@ -261,6 +263,7 @@ function TopicView({ slug }: { slug: string }) {
   const graph = useTopicGraph(slug, limit, version, readable)
   const timeline = useTopicTimeline(slug, version, readable)
   const selectInMap = (id: string) => navigateTo('map', id)
+  const exporter = useRef<GraphExporter | null>(null)
 
   const back = <ButtonLink to="/evolution" variant="ghost" size="sm" className="mb-3 -ml-2.5"><ArrowLeft /> Evolution</ButtonLink>
 
@@ -318,6 +321,7 @@ function TopicView({ slug }: { slug: string }) {
               <span className="font-mono text-[12px] text-fg-3 tabular-nums">
                 {total_papers} papers · {milestones} milestones · built {topic.built_at ? new Date(topic.built_at).toLocaleDateString() : '—'}
               </span>
+              <ExportMenu slug={slug} exporter={() => exporter.current} />
               {current.origin === 'search' && <SearchTopicActions topic={current} />}
             </span>
           }
@@ -379,6 +383,7 @@ function TopicView({ slug }: { slug: string }) {
               selectedId={selectedId}
               onSelect={setSelectedId}
               showCitations={showCitations}
+              onExporter={(e) => { exporter.current = e }}
             />
           </div>
           {selectedId ? (
