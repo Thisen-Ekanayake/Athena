@@ -28,6 +28,9 @@ GET  /api/v1/evolution/topics/{slug}/people                  — key authors and
 GET  /api/v1/evolution/items/{item_id}                       — a feed item's place in the maps, and the
                                                                milestones it cites
 GET  /api/v1/evolution/new-papers?days=30&topic=             — recent feed papers that cite map milestones
+POST /api/v1/evolution/idea-checks                           — check an idea against every map: closest papers,
+                                                               gap themes it touches, a short verdict
+GET|DELETE /api/v1/evolution/idea-checks[/{id}]              — the user's saved checks
 """
 import re
 import time
@@ -47,7 +50,7 @@ from athena.api.config import settings
 from athena.api.deps import get_db, get_redis
 from athena.core.models import User
 from athena.database import evolution as db
-from athena.evolution import export, notes
+from athena.evolution import export, ideas, notes
 from athena.evolution import propose as proposals
 from athena.evolution.classify import chat_available
 from athena.evolution.openalex import FIELD_IDS, OpenAlexBudgetError
@@ -62,6 +65,11 @@ _OPENALEX_ID = re.compile(r"^W\d{1,12}$")
 class MilestoneOverrideRequest(BaseModel):
     action: Literal["pin", "unpin", "reset"]
     note: str | None = Field(None, max_length=500)
+
+
+class IdeaCheckRequest(BaseModel):
+    idea: str = Field(..., min_length=20, max_length=4000)
+    verdict: bool = True
 
 
 class ProposalRequest(BaseModel):
@@ -441,3 +449,37 @@ def new_papers(days: int = Query(30, ge=1, le=120), topic: str | None = Query(No
                session: Session = Depends(get_db)):
     """Feed papers from the last ``days`` days that cite milestones, those citing the most first."""
     return db.new_feed_papers(session, days, topic)
+
+
+# ── idea checks (E2) ───────────────────────────────────────────────────
+
+
+@router.post("/idea-checks", status_code=201)
+def create_idea_check(body: IdeaCheckRequest, session: Session = Depends(get_db),
+                      user: User = Depends(auth.spend("idea_check"))):
+    """The idea against every built map. Takes a few seconds, longer with the verdict; saved to the account."""
+    idea = body.idea.strip()
+    try:
+        result = ideas.check_idea(session, idea, verdict=body.verdict)
+    except ideas.IdeaCheckUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return db.save_idea_check(session, user.id, idea, result)
+
+
+@router.get("/idea-checks")
+def list_idea_checks(session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
+    return db.list_idea_checks(session, user.id)
+
+
+@router.get("/idea-checks/{check_id}")
+def get_idea_check(check_id: UUID, session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
+    check = db.get_idea_check(session, user.id, check_id)
+    if check is None:
+        raise HTTPException(status_code=404, detail="Check not found")
+    return check
+
+
+@router.delete("/idea-checks/{check_id}", status_code=204)
+def delete_idea_check(check_id: UUID, session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
+    if not db.delete_idea_check(session, user.id, check_id):
+        raise HTTPException(status_code=404, detail="Check not found")

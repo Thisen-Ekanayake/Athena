@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session, aliased
 
 from athena.core.models import (
     EvoChunk, EvoCitation, EvoCitationContext, EvoGapStatement, EvoGapTheme, EvoGapThemeMember, EvoLooseLink,
-    EvoMainPathEdge, EvoMilestoneOverride, EvoPaper, EvoPaperNote, EvoReadingProgress, EvoSection, EvoTopic,
-    EvoTopicPaper,
+    EvoIdeaCheck, EvoMainPathEdge, EvoMilestoneOverride, EvoPaper, EvoPaperNote, EvoReadingProgress, EvoSection,
+    EvoTopic, EvoTopicPaper,
 )
 from athena.database.db import SessionLocal
 from athena.evolution.config import TopicConfig
@@ -666,6 +666,44 @@ def new_feed_papers(session: Session, days: int = 30, topic: str | None = None) 
     out.sort(key=lambda x: x["published_at"], reverse=True)
     out.sort(key=lambda x: len(x["cites"]), reverse=True)  # stable: newest first among equals
     return out
+
+
+# ── idea checks (E2) ───────────────────────────────────────────────────
+
+
+def _idea_check(c: EvoIdeaCheck, full: bool = True) -> dict:
+    result = c.result or {}
+    themes = result.get("themes") or []
+    out = {"id": str(c.id), "idea": c.idea if full else c.idea[:240], "created_at": c.created_at.isoformat(),
+           "papers": len(result.get("papers") or []), "themes": len(themes),
+           "open_themes": sum(bool(t.get("open")) for t in themes)}
+    return out | {"result": result} if full else out
+
+
+def save_idea_check(session: Session, user_id: UUID, idea: str, result: dict) -> dict:
+    check = EvoIdeaCheck(user_id=user_id, idea=idea, result=result, created_at=datetime.now(timezone.utc))
+    session.add(check)
+    session.commit()
+    return _idea_check(check)
+
+
+def list_idea_checks(session: Session, user_id: UUID, limit: int = 50) -> list[dict]:
+    rows = session.execute(select(EvoIdeaCheck).where(EvoIdeaCheck.user_id == user_id)
+                           .order_by(EvoIdeaCheck.created_at.desc()).limit(limit)).scalars()
+    return [_idea_check(c, full=False) for c in rows]
+
+
+def get_idea_check(session: Session, user_id: UUID, check_id: UUID) -> dict | None:
+    """A user's own check; another user's is as good as missing."""
+    check = session.get(EvoIdeaCheck, check_id)
+    return _idea_check(check) if check is not None and check.user_id == user_id else None
+
+
+def delete_idea_check(session: Session, user_id: UUID, check_id: UUID) -> bool:
+    deleted = session.execute(delete(EvoIdeaCheck).where(EvoIdeaCheck.id == check_id,
+                                                         EvoIdeaCheck.user_id == user_id)).rowcount
+    session.commit()
+    return bool(deleted)
 
 
 # ── names citing papers use (E9) ───────────────────────────────────────
