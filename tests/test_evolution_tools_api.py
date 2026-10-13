@@ -15,7 +15,7 @@ from tests.conftest import ADMIN
 from tests.fakes import FakeRedis
 
 ROUTER_DB = "athena.api.routers.evolution.db"
-TOPIC = SimpleNamespace(id=uuid4(), slug="object-detection", name="Object detection", built_at="2026-10-12",
+TOPIC = SimpleNamespace(id=uuid4(), slug="object-detection", name="Object detection", built_at=datetime(2026, 10, 12),
                         status="ready", origin="curated", status_detail=None, config={})
 USER = SimpleNamespace(**{**{c: getattr(ADMIN, c) for c in ("id", "email", "display_name", "is_active")},
                           "role": "user", "must_change_password": False})
@@ -120,10 +120,9 @@ def test_read_ticks_are_per_user(client):
 
 def test_export_milestones_as_bibtex(client):
     c, _ = client
-    topic = SimpleNamespace(**{**vars(TOPIC), "built_at": datetime(2026, 10, 12)})
     paper = {"id": "1", "title": "Fast R-CNN", "year": 2015, "authors": ["Ross Girshick"], "venue": None,
              "doi": None, "arxiv_id": "1504.08083", "url": "https://arxiv.org/abs/1504.08083"}
-    with patch(f"{ROUTER_DB}.get_topic", return_value=topic), patch(f"{ROUTER_DB}.milestone_ids", return_value=[1]), \
+    with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), patch(f"{ROUTER_DB}.milestone_ids", return_value=[1]), \
             patch(f"{ROUTER_DB}.export_papers", return_value=[paper]):
         resp = c.get("/api/v1/evolution/topics/object-detection/export", params={"what": "milestones", "format": "bib"})
     assert resp.status_code == 200
@@ -135,3 +134,17 @@ def test_export_rejects_formats_that_do_not_fit(client):
     c, _ = client
     resp = c.get("/api/v1/evolution/topics/object-detection/export", params={"what": "gaps", "format": "bib"})
     assert resp.status_code == 422
+
+
+# ── E8 people ──────────────────────────────────────────────────────────
+
+
+def test_people_are_served_and_cached(client):
+    c, _ = client
+    payload = {"topic": {}, "eras": [], "overall": {"authors": [], "labs": []}, "milestones": [], "papers": 0,
+               "papers_with_ids": 0}
+    with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), patch(f"{ROUTER_DB}.labels_version", return_value="0"), \
+            patch(f"{ROUTER_DB}.topic_people", return_value=payload) as build:
+        assert c.get("/api/v1/evolution/topics/object-detection/people").json() == payload
+        assert c.get("/api/v1/evolution/topics/object-detection/people").json() == payload
+    assert build.call_count == 1
