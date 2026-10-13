@@ -284,8 +284,7 @@ def _node(tp: EvoTopicPaper, p: EvoPaper, override: EvoMilestoneOverride | None,
         "milestone_override": action,
         "override_note": override.note if override else None,
         "full_text_status": p.full_text_status,
-        "url": f"https://arxiv.org/abs/{p.arxiv_id}" if p.arxiv_id else (
-            f"https://doi.org/{p.doi}" if p.doi else f"https://openalex.org/{p.openalex_id}"),
+        "url": _paper_url(p),
     }
 
 
@@ -548,6 +547,58 @@ def note_context(session: Session, topic: EvoTopic, paper_ids: list[UUID]) -> li
             "name": names.get(pid) or tp.named_method,
             "builds_on": [label(o) for o in paper_ids[:i] if o in cites.get(pid, set()) and o in rows][-3:],
         })
+    return out
+
+
+# ── exports (E6) ───────────────────────────────────────────────────────
+
+
+def _paper_url(p: EvoPaper) -> str:
+    if p.arxiv_id:
+        return f"https://arxiv.org/abs/{p.arxiv_id}"
+    return f"https://doi.org/{p.doi}" if p.doi else f"https://openalex.org/{p.openalex_id}"
+
+
+def export_papers(session: Session, paper_ids: list[UUID]) -> list[dict]:
+    """Citation data for papers, in the order given, with every stored author."""
+    rows = {p.id: p for p in session.execute(select(EvoPaper).where(EvoPaper.id.in_(paper_ids))).scalars()}
+    return [{"id": str(p.id), "title": p.title, "year": p.year, "authors": [a for a in p.authors or [] if a],
+             "venue": p.venue, "doi": p.doi, "arxiv_id": p.arxiv_id, "url": _paper_url(p)}
+            for p in (rows.get(i) for i in paper_ids) if p is not None]
+
+
+def milestone_ids(session: Session, topic: EvoTopic) -> list[UUID]:
+    """The topic's milestones (pins applied), oldest first."""
+    overrides = _overrides(session, topic.id)
+    rows = [(p.year or 0, p.id) for tp, p in _topic_rows(session, topic.id)
+            if effective_milestone(tp.is_milestone_auto, overrides[p.id].action if p.id in overrides else None)]
+    return [pid for _, pid in sorted(rows)]
+
+
+def gap_export_rows(session: Session, topic: EvoTopic) -> list[dict]:
+    """Every statement in the topic's gap themes, with its theme, for the CSV export."""
+    in_topic = {p.id: p for _, p in _topic_rows(session, topic.id)}
+    order = {"persisting": 0, "new": 1, "addressed": 2, "quiet": 3}
+    themes = sorted(session.execute(select(EvoGapTheme).where(EvoGapTheme.topic_id == topic.id)).scalars(),
+                    key=lambda t: (order.get(t.status, 4), -t.size))
+    members: dict[UUID, list[EvoGapStatement]] = defaultdict(list)
+    for theme_id, gap in session.execute(
+            select(EvoGapThemeMember.theme_id, EvoGapStatement)
+            .join(EvoGapStatement, EvoGapThemeMember.gap_id == EvoGapStatement.id)
+            .where(EvoGapThemeMember.theme_id.in_([t.id for t in themes]))):
+        members[theme_id].append(gap)
+    out = []
+    for t in themes:
+        for g in sorted(members.get(t.id, []), key=lambda g: (in_topic[g.source_paper_id].year or 0
+                                                              if g.source_paper_id in in_topic else 0)):
+            paper, source = in_topic.get(g.paper_id), in_topic.get(g.source_paper_id)
+            out.append({
+                "theme": t.label, "status": t.status, "first_year": t.first_year, "last_year": t.last_year,
+                "theme_size": t.size, "statement": g.sentence, "origin": g.origin, "section": g.section_type,
+                "paper": paper.title if paper else None, "paper_year": paper.year if paper else None,
+                "stated_by": source.title if source and g.origin == "citing" else None,
+                "stated_by_year": source.year if source and g.origin == "citing" else None,
+            })
     return out
 
 

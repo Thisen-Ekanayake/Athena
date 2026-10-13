@@ -21,6 +21,8 @@ POST /api/v1/evolution/topics/{slug}/milestones/{paper_id}   — pin, unpin, or 
 GET  /api/v1/evolution/topics/{slug}/reading-path?n=10       — a survey, then milestones in order, each with a
                                                                model-written line on why it matters
 PUT|DELETE /api/v1/evolution/papers/{paper_id}/read          — tick or untick a paper as read (per user)
+GET  /api/v1/evolution/topics/{slug}/export?what=&format=    — milestones or the reading path as BibTeX, RIS or
+                                                               Markdown; gap themes as CSV
 """
 import re
 import time
@@ -29,7 +31,7 @@ from uuid import UUID
 
 import httpx
 import redis as redis_lib
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
@@ -40,7 +42,7 @@ from athena.api.config import settings
 from athena.api.deps import get_db, get_redis
 from athena.core.models import User
 from athena.database import evolution as db
-from athena.evolution import notes
+from athena.evolution import export, notes
 from athena.evolution import propose as proposals
 from athena.evolution.classify import chat_available
 from athena.evolution.openalex import FIELD_IDS, OpenAlexBudgetError
@@ -362,3 +364,45 @@ def mark_read(paper_id: UUID, session: Session = Depends(get_db), user: User = D
 def mark_unread(paper_id: UUID, session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
     if not db.set_read(session, user.id, paper_id, False):
         raise HTTPException(status_code=404, detail="Unknown paper")
+
+
+# ── exports (E6) ───────────────────────────────────────────────────────
+
+EXPORT_FORMATS = {"milestones": {"bib", "ris", "md"}, "reading-path": {"bib", "ris", "md"}, "gaps": {"csv"}}
+MEDIA_TYPES = {"bib": "application/x-bibtex", "ris": "application/x-research-info-systems",
+               "md": "text/markdown", "csv": "text/csv"}
+
+
+@router.get("/topics/{slug}/export")
+def export_topic(
+    slug: str,
+    what: Literal["milestones", "reading-path", "gaps"],
+    format: Literal["bib", "ris", "md", "csv"],
+    n: int = Query(10, ge=3, le=30),
+    session: Session = Depends(get_db),
+    user: User = Depends(auth.active_user),
+):
+    if format not in EXPORT_FORMATS[what]:
+        raise HTTPException(status_code=422, detail=f"{what} exports as {', '.join(sorted(EXPORT_FORMATS[what]))}")
+    topic = _built_topic_or_409(session, slug)
+    built = topic.built_at.date().isoformat() if hasattr(topic.built_at, "date") else None
+    if what == "gaps":
+        body = export.gaps_csv(db.gap_export_rows(session, topic))
+    elif what == "milestones":
+        papers = db.export_papers(session, db.milestone_ids(session, topic))
+        body = export.markdown_milestones(topic.name, papers, built) if format == "md" else (
+            export.bibtex(papers) if format == "bib" else export.ris(papers))
+    else:
+        path = db.reading_path(session, topic, user.id, n)
+        entries = ([path["survey"]] if path["survey"] else []) + path["steps"]
+        papers = db.export_papers(session, [UUID(e["id"]) for e in entries])
+        extra = {e["id"]: {"why": e["why"], "named_method": e["named_method"]} for e in entries}
+        papers = [p | extra.get(p["id"], {}) for p in papers]
+        if format == "md":
+            survey = papers[0] if path["survey"] else None
+            body = export.markdown_path(topic.name, survey, papers[1:] if survey else papers, built)
+        else:
+            body = export.bibtex(papers) if format == "bib" else export.ris(papers)
+    filename = f"{slug}-{what}.{format}"
+    return Response(body, media_type=f"{MEDIA_TYPES[format]}; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
