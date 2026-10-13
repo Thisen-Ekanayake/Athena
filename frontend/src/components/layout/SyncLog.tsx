@@ -27,7 +27,7 @@ export function SyncLog({ className }: { className?: string }) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const source = new EventSource(`${API_BASE}/sync/events`)
+    const source = new EventSource(`${API_BASE}/sync/events`, { withCredentials: true })
     source.onopen = () => setConnected(true)
     source.onmessage = (event) => {
       let data: { message?: string }

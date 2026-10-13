@@ -11,6 +11,10 @@ services:
       DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
+      # The model server runs on the host, where the GPU is (config/llama-router.ini); LLM_BASE_URL wins.
+      LLM_DEFAULT_BASE_URL: http://host.docker.internal:8080/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - db
       - redis
@@ -31,6 +35,9 @@ services:
       # Keep container staging on the mounted volume regardless of .env's value.
       ATHENA_STAGING_DIR: /tmp/athena/staging
       GROBID_URL: http://grobid:8070
+      LLM_DEFAULT_BASE_URL: http://host.docker.internal:8080/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - redis
       - db
@@ -38,6 +45,53 @@ services:
     volumes:
       - ..:/app
       - athena_staging:/tmp/athena/staging
+
+  # Summaries and cluster labels, one at a time (the model server answers one request at a time).
+  summary:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    command: celery -A athena.pipeline.tasks worker --loglevel=info --pool=solo -c 1 -n summary@%h -Q summary_urgent,summary_standard,summary_lazy,summary_cluster,summary_trend
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      ATHENA_STAGING_DIR: /tmp/athena/staging
+      LLM_DEFAULT_BASE_URL: http://host.docker.internal:8080/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - redis
+      - db
+    volumes:
+      - ..:/app
+      - athena_staging:/tmp/athena/staging
+
+  # Research-evolution topic builds, full text and the GPU lane: one at a time, on the host's model server.
+  # PDFs, TEI files and the OpenAlex and Semantic Scholar caches live in /root/.athena.
+  evolution:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    command: celery -A athena.pipeline.tasks worker --loglevel=info --pool=solo -c 1 -n evolution@%h -Q evolution
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      GROBID_URL: http://grobid:8070
+      LLM_DEFAULT_BASE_URL: http://host.docker.internal:8080/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - redis
+      - db
+      - qdrant
+      - grobid
+    volumes:
+      - ..:/app
+      - athena_evolution:/root/.athena
 
   frontend:
     build:
@@ -112,5 +166,7 @@ volumes:
     name: docker_redis_data
   athena_staging:
     name: docker_athena_staging
+  athena_evolution:
+    name: docker_athena_evolution
   neo4j_data:
     name: docker_neo4j_data

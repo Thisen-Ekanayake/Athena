@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from athena.api.deps import get_db, get_redis
 from athena.api.main import app
+from tests.conftest import ADMIN
 
 ROUTER_DB = "athena.api.routers.evolution.db"
 TOPIC = SimpleNamespace(slug="object-detection", name="Object detection", built_at=None, status="ready",
@@ -226,7 +227,7 @@ def test_create_topic_stores_a_search_topic_and_queues_its_build(client):
     assert seeds == [{"openalex_id": "W1", "alt_ids": ["W2"]}]
     assert config == {"keywords": ["object tracking", '"mot"'], "fields": ["Computer Science"],
                       "openalex_search_max": 1000, "s2_keyless": False}
-    assert upsert.call_args.kwargs == {"origin": "search", "query": "object tracking"}
+    assert upsert.call_args.kwargs == {"origin": "search", "query": "object tracking", "created_by": ADMIN.id}
     assert "object tracking" in aliases
     assert enqueue.call_args.args == ("athena.evolution.tasks.build_search_topic", ["object-tracking-2"])
     assert propose.load(redis, "a" * 32)["refine"]["status"] == "cancelled"

@@ -31,9 +31,11 @@ from loguru import logger
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
+from athena.api import auth
 from athena.api.cache import cache_get, cache_invalidate, cache_set
 from athena.api.config import settings
 from athena.api.deps import get_db, get_redis
+from athena.core.models import User
 from athena.database import evolution as db
 from athena.evolution import propose as proposals
 from athena.evolution.classify import chat_available
@@ -151,7 +153,8 @@ def search_topics(q: str = Query(..., min_length=1, max_length=200), session: Se
 
 
 @router.post("/proposals")
-def create_proposal(body: ProposalRequest, r: redis_lib.Redis = Depends(get_redis)):
+def create_proposal(body: ProposalRequest, r: redis_lib.Redis = Depends(get_redis),
+                    _user: User = Depends(auth.spend("map_proposal"))):
     """Anchors, keywords and fields for a query, from three OpenAlex searches; the 9B refines it if it can."""
     try:
         proposal = proposals.propose(body.query)
@@ -183,8 +186,8 @@ def get_proposal(proposal_id: str, r: redis_lib.Redis = Depends(get_redis)):
 
 @router.post("/topics", status_code=201)
 def create_topic(body: TopicCreateRequest, session: Session = Depends(get_db),
-                 r: redis_lib.Redis = Depends(get_redis)):
-    """Store a checked proposal as a search-built topic and queue its build."""
+                 r: redis_lib.Redis = Depends(get_redis), user: User = Depends(auth.active_user)):
+    """Store a checked proposal as a search-built topic and queue its build. Every user sees the map."""
     if db.active_search_builds(session) >= MAX_ACTIVE_SEARCH_BUILDS:
         raise HTTPException(status_code=429, detail="A few maps are already being built; try again when one is done")
     query = proposals.clean_query(body.query)
@@ -195,12 +198,13 @@ def create_topic(body: TopicCreateRequest, session: Session = Depends(get_db),
     keywords = _clean([k.lower() for k in body.keywords], 25, 60)
     if not keywords:
         raise HTTPException(status_code=422, detail="Give at least one keyword")
+    auth.use(r, user, "map_build")
     aliases = _clean([*proposals.variants(query), *body.aliases], 20, 80)
     seeds = [{"openalex_id": a.openalex_id, "alt_ids": [i for i in a.alt_ids if i != a.openalex_id]}
              for a in body.anchors]
     config = {"keywords": keywords, "fields": body.fields, "openalex_search_max": 1000, "s2_keyless": False}
     db.upsert_topic(slug, " ".join(body.name.split()), aliases, body.description.strip() or None, seeds, config,
-                    origin="search", query=query)
+                    origin="search", query=query, created_by=user.id)
     db.set_topic_status(slug, "pending", "Waiting for the evolution worker")
     if body.proposal_id:
         proposal = proposals.load(r, body.proposal_id)
@@ -221,7 +225,7 @@ def topic_status(slug: str, session: Session = Depends(get_db)):
     return db.topic_summary(_topic_or_404(session, slug))
 
 
-@router.post("/topics/{slug}/rebuild")
+@router.post("/topics/{slug}/rebuild", dependencies=[Depends(auth.require_admin)])
 def rebuild_topic(slug: str, session: Session = Depends(get_db), r: redis_lib.Redis = Depends(get_redis)):
     topic = _search_topic_or_409(session, slug)
     if topic.status in ("pending", "building", "refining"):
@@ -238,7 +242,7 @@ def rebuild_topic(slug: str, session: Session = Depends(get_db), r: redis_lib.Re
     return db.topic_summary(topic) | waiting
 
 
-@router.delete("/topics/{slug}", status_code=204)
+@router.delete("/topics/{slug}", status_code=204, dependencies=[Depends(auth.require_admin)])
 def delete_topic(slug: str, session: Session = Depends(get_db), r: redis_lib.Redis = Depends(get_redis)):
     topic = _search_topic_or_409(session, slug)
     db.delete_topic(session, topic)
@@ -295,7 +299,7 @@ def paper_detail(slug: str, paper_id: UUID, session: Session = Depends(get_db)):
     return detail
 
 
-@router.post("/topics/{slug}/milestones/{paper_id}")
+@router.post("/topics/{slug}/milestones/{paper_id}", dependencies=[Depends(auth.require_admin)])
 def set_milestone(
     slug: str,
     paper_id: UUID,

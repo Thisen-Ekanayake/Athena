@@ -17,6 +17,7 @@ from loguru import logger
 import athena.pipeline.embedding_worker
 import athena.pipeline.clustering
 import athena.pipeline.scoring
+import athena.pipeline.summarisation_tasks  # noqa: F401  (registers the summary tasks with every worker)
 import athena.evolution.tasks  # noqa: F401  (registers the evolution queue's tasks)
 from athena.core.logging import setup_redis_logging
 
@@ -69,7 +70,7 @@ def setup_periodic_tasks(sender, **kwargs):
                              name='refresh recency scores every 6 hours')
     # Take metric snapshot daily (86400 seconds)
     sender.add_periodic_task(86400.0, athena.pipeline.scoring.take_metric_snapshot.s(), name='daily metric snapshot')
-    # Tier 2 hourly summary
+    # Hourly summaries: every item without one, highest score first
     sender.add_periodic_task(3600.0, enqueue_tier2_summaries.s(), name='hourly tier 2 summaries')
     # Daily trending briefs per category
     sender.add_periodic_task(86400.0, generate_all_trending_briefs.s(), name='daily trending briefs')
@@ -87,9 +88,20 @@ def generate_all_trending_briefs():
         )
 
 
+SUMMARY_BATCH = 500                 # the hourly run tops the queue up to this many jobs, highest score first
+SUMMARY_QUEUED_TTL = 6 * 3600       # an item queued this recently is not queued again
+
+
 @celery_app.task
 def enqueue_tier2_summaries():
-    """Phase 3: Periodic background job to enqueue Tier 2 items for summarisation."""
+    """Hourly: queue a summary for every item that has none, highest score first.
+
+    Items scoring under 0.40 used to wait to be summarised when opened, but nothing in the app asked, so they
+    never got one; now they follow the better items. Items skipped for having too little text are left out.
+    One worker summarises a few hundred items an hour, so the run only tops the queue up to SUMMARY_BATCH,
+    and a short-lived Redis marker keeps an item from being queued twice.
+    """
+    from sqlalchemy import or_
     from athena.database.db import SessionLocal
     from athena.core.models import ContentItem, SummaryStatus
     import athena.pipeline.summarisation_tasks
@@ -97,24 +109,32 @@ def enqueue_tier2_summaries():
     # Only enqueue if we have budget
     from athena.pipeline.summarisation import check_budget_before_call
     if not check_budget_before_call("item_summary"):
-        logger.warning('Budget exhausted, skipping Tier 2 hourly batch')
+        logger.warning('Budget exhausted, skipping the hourly summary batch')
         return
 
+    r = get_redis()
+    room = SUMMARY_BATCH - r.llen("summary_standard")
+    if room <= 0:
+        logger.info("The summary queue is still full; nothing queued this hour.")
+        return
+    queued = 0
     with SessionLocal() as session:
-        # Get items with score 0.40 <= score < 0.75 and summary_status != COMPLETE
-        # We only batch up to 500 at a time
         items = session.query(ContentItem).filter(
-            ContentItem.score >= 0.40,
-            ContentItem.score < 0.75,
-            ContentItem.summary_status != SummaryStatus.COMPLETE
-        ).limit(500).all()
+            ContentItem.summary_status != SummaryStatus.COMPLETE,
+            or_(ContentItem.extra_data.is_(None), ~ContentItem.extra_data.has_key("summary_skipped")),
+        ).order_by(ContentItem.score.desc().nulls_last()).limit(room * 2).all()
 
         for item in items:
+            if queued >= room:
+                break
+            if not r.set(f"summary:queued:{item.id}", 1, nx=True, ex=SUMMARY_QUEUED_TTL):
+                continue  # an earlier job for it is still waiting
             item.summary_status = SummaryStatus.PENDING
             athena.pipeline.summarisation_tasks.summarise_item_worker.apply_async(
                 args=[str(item.id)], queue='summary_standard')
+            queued += 1
         session.commit()
-    logger.info(f"Queued {len(items)} Tier 2 items for standard summarisation.")
+    logger.info(f"Queued {queued} items for summarisation.")
 
 
 def _publish_sync_event(payload: dict):

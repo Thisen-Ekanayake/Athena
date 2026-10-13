@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# run_docker.sh — start the Athena stack (Postgres, Redis, Qdrant, API, worker, frontend)
-#          via Docker Compose, wait until it is healthy, and seed sources if needed.
+# run_docker.sh — start the Athena stack (Postgres, Redis, Qdrant, GROBID, API, workers, frontend)
+#          via Docker Compose, wait until it is healthy, and bring the database up to date.
 #
 # Usage:
 #   ./run_docker.sh            Start using the pre-built GHCR images (docker-compose.release.yml)
@@ -85,17 +85,13 @@ wait_for_http "API"      "${API_URL}/health" 90 || {
 }
 wait_for_http "frontend" "${FRONTEND_URL}/" 60 || true
 
-# --- seed sources on a fresh database ---------------------------------------
-# The API creates the schema on startup, but the initial sources are seeded by
-# scripts/setup_project.py. If the sources table is empty, run it in the web container.
-sources_json="$(curl -s "${API_URL}/api/v1/sources" 2>/dev/null || echo '[]')"
-if printf '%s' "$sources_json" | grep -q '"id"'; then
-  echo ">> Sources already present — skipping seed."
-else
-  echo ">> No sources found — seeding via setup_project.py (in web container)..."
-  docker compose -f "$COMPOSE_FILE" exec -T web python3 scripts/setup_project.py \
-    || echo "   (seed step failed — run 'docker compose -f ${COMPOSE_FILE} exec web python3 scripts/setup_project.py' manually)"
-fi
+# --- bring the database up to date -------------------------------------------
+# The API creates new tables on startup; scripts/setup_project.py also migrates
+# existing databases, loads the summary prompt templates and seeds the initial
+# sources. Every step is safe to repeat, so it runs on each start.
+echo ">> Updating the database (migrations, prompt templates, sources)..."
+docker compose -f "$COMPOSE_FILE" exec -T web python3 scripts/setup_project.py >/dev/null \
+  || echo "   (setup failed — run 'docker compose -f ${COMPOSE_FILE} exec web python3 scripts/setup_project.py' manually)"
 
 # --- summary ----------------------------------------------------------------
 echo
@@ -113,5 +109,5 @@ docker compose -f "$COMPOSE_FILE" ps
 if [ "$FOLLOW_LOGS" = "1" ]; then
   echo
   echo ">> Following worker logs (Ctrl-C to stop following; containers keep running)"
-  docker compose -f "$COMPOSE_FILE" logs -f worker
+  docker compose -f "$COMPOSE_FILE" logs -f worker summary evolution
 fi

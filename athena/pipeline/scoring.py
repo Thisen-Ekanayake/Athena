@@ -68,17 +68,10 @@ DEFAULT_AUTHORITY = {
 }
 
 
-def _get_openai_client():
-    """Lazy-load OpenAI client."""
-    try:
-        from openai import OpenAI
-        from athena.core.config_store import get_setting
-        api_key = get_setting("OPENAI_API_KEY")
-        if api_key:
-            return OpenAI(api_key=api_key)
-    except ImportError:
-        pass
-    return None
+def _embed(texts: list[str]):
+    """The shared embedding model (athena.core.llm), loaded lazily."""
+    from athena.core import llm
+    return llm.embed(texts)
 
 
 def _get_weights(category: str, session) -> Dict[str, Any]:
@@ -161,9 +154,8 @@ def score_item(item_id: str, session=None) -> Optional[float]:
         source_url = source.url if source else ""
         engagement = compute_engagement_score(metadata, source_url)
 
-        # 3. Sentiment (uses OpenAI — may return 0.5 if unavailable)
-        openai_client = _get_openai_client()
-        sentiment = compute_sentiment_score(metadata, openai_client)
+        # 3. Sentiment (uses the embedding model — may return 0.5 if unavailable)
+        sentiment = compute_sentiment_score(metadata, _embed)
 
         # 4. Recency
         half_life = weights.get("half_life_days", 30)

@@ -27,10 +27,9 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from pathlib import Path
-
 import httpx
 
+from athena.core import llm
 from athena.core.config_store import get_setting
 
 LABELS = ["addresses_limitation", "criticises", "extends_or_uses", "compares", "background"]
@@ -118,43 +117,54 @@ class Verdict:
         return self.label in LIMITATION_LABELS and self.attributed is True
 
 
-def managed_servers() -> bool:
-    """True when the lane runs its own llama-server (the default); False for any OpenAI-compatible endpoint.
+def is_local() -> bool:
+    """Whether the lane's chat endpoint is llama.cpp, so Qwen's thinking switch and /tokenize can be used.
 
-    With EVOLUTION_MANAGED_SERVERS=false, EVOLUTION_CHAT_URL and EVOLUTION_EMBED_URL point at another
-    service (without the trailing /v1), EVOLUTION_API_KEY is sent as a bearer token, and nothing
-    llama.cpp-specific is sent to it.
+    EVOLUTION_MANAGED_SERVERS=false (from before the shared router) still marks an outside service.
     """
-    return get_setting("EVOLUTION_MANAGED_SERVERS", "true").strip().lower() not in ("false", "0", "no")
+    if get_setting("EVOLUTION_MANAGED_SERVERS").strip().lower() in ("false", "0", "no"):
+        return False
+    return llm.is_llama_cpp(chat_url())
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CHAT_MODEL_DEFAULT = "models/Qwen3.5-9B-Q4_K_M.gguf"
+def chat_url() -> str:
+    """The lane's chat endpoint without /v1: EVOLUTION_CHAT_URL to bring another model, else the app's own."""
+    return (get_setting("EVOLUTION_CHAT_URL") or llm.server_root(llm.chat_base_url())).rstrip("/")
 
 
-def model_path(setting: str, default: str) -> Path:
-    """A GGUF path from the settings, relative to the repository unless absolute."""
-    path = Path(get_setting(setting, default))
-    return path if path.is_absolute() else REPO_ROOT / path
+def embed_url() -> str:
+    return (get_setting("EVOLUTION_EMBED_URL") or llm.server_root(llm.embed_base_url())).rstrip("/")
+
+
+def chat_model_name() -> str:
+    return get_setting("EVOLUTION_CHAT_MODEL_NAME") or llm.chat_model()
+
+
+def embed_model_name() -> str:
+    return get_setting("EVOLUTION_EMBED_MODEL_NAME") or llm.embed_model()
 
 
 def chat_available() -> bool:
-    """Whether the 9B (or an external chat endpoint) can be asked at all; says nothing about the GPU being free."""
-    return not managed_servers() or model_path("EVOLUTION_CHAT_MODEL", CHAT_MODEL_DEFAULT).exists()
+    """Whether a chat model is configured at all; says nothing about the GPU being free."""
+    return bool(chat_model_name())
 
 
-def auth_headers() -> dict:
+def auth_headers(url: str | None = None) -> dict:
+    """EVOLUTION_API_KEY, else the app's key for that endpoint; nothing for a keyless local server."""
+    url = url or chat_url()
     key = get_setting("EVOLUTION_API_KEY")
-    return {"Authorization": f"Bearer {key}"} if key else {}
+    if not key:
+        key = llm.embed_api_key() if url == embed_url() and url != chat_url() else llm.chat_api_key()
+    return {"Authorization": f"Bearer {key}"} if key and key != "local" else {}
 
 
 class Classifier:
     def __init__(self, base_url: str | None = None, model: str | None = None, http: httpx.Client | None = None,
                  local: bool | None = None):
-        self.base_url = (base_url or get_setting("EVOLUTION_CHAT_URL", "http://127.0.0.1:8080")).rstrip("/")
-        self.model = model or get_setting("EVOLUTION_CHAT_MODEL_NAME", "qwen3.5-9b")
-        self.local = managed_servers() if local is None else local
-        self.http = http or httpx.Client(timeout=900.0, headers=auth_headers())
+        self.base_url = (base_url or chat_url()).rstrip("/")
+        self.model = model or chat_model_name()
+        self.local = is_local() if local is None else local
+        self.http = http or httpx.Client(timeout=900.0, headers=auth_headers(self.base_url))
 
     def ask(self, prompt: str, schema: dict, name: str, think: bool = False,
             max_tokens: int | None = None) -> dict | None:

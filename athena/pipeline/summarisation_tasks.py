@@ -7,6 +7,7 @@ from celery import shared_task
 from loguru import logger
 from sqlalchemy import select
 
+from athena.core import llm
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem, SummaryStatus, JobType
 from athena.pipeline.summarisation import (
@@ -17,13 +18,58 @@ from athena.pipeline.summarisation import (
 )
 
 
-def _get_openai_client():
-    from openai import OpenAI
-    from athena.core.config_store import get_setting
-    api_key = get_setting("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY is not set.")
-    return OpenAI(api_key=api_key)
+# Answers are constrained to these shapes, which keeps a small local model from wrapping them in prose.
+ITEM_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["summary", "takeaways"],
+               "properties": {"summary": {"type": "string"},
+                              "takeaways": {"type": "array", "items": {"type": "string"},
+                                            "minItems": 3, "maxItems": 5}}}
+CLUSTER_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["label", "description"],
+                  "properties": {"label": {"type": "string"}, "description": {"type": "string"}}}
+BRIEF_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["brief", "theme"],
+                "properties": {"brief": {"type": "string"}, "theme": {"type": "string"}}}
+
+
+MIN_SUMMARY_WORDS = 80    # below this a summary (3-5 takeaways, a concrete number) would have to be invented
+MAX_SUMMARY_WORDS = 9000  # about 12k tokens, inside the local 9B's 20k context with the prompt and the answer
+
+
+def _text_to_summarise(item: ContentItem, staged: str) -> Optional[str]:
+    """The staged text, or the article fetched the way Q&A fetches it when the staged text is too thin.
+
+    Staged text is often only a title and a one-line teaser. Returns None when even the fetched article
+    has too few words to summarise without inventing details.
+    """
+    import asyncio
+    from athena.core.qa_fetcher import fetch_article_content
+
+    text = staged
+    if len(text.split()) < MIN_SUMMARY_WORDS:
+        try:
+            fetched = asyncio.run(fetch_article_content(item))
+            if not fetched.partial and fetched.word_count > len(text.split()):
+                text = fetched.text
+        except Exception as e:
+            logger.warning(f"Could not fetch the article for {item.id}: {e}")
+    words = text.split()
+    if len(words) < MIN_SUMMARY_WORDS:
+        return None
+    return text if len(words) <= MAX_SUMMARY_WORDS else " ".join(words[:MAX_SUMMARY_WORDS])
+
+
+def _complete(system_prompt: str, user_msg: str, name: str, schema: dict):
+    """One summary-model call with a JSON-schema answer; returns the response and the model used."""
+    model = llm.chat_model("summary")
+    res = llm.chat_client().chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_msg}
+        ],
+        temperature=0.3,
+        response_format={"type": "json_schema", "json_schema": {"name": name, "schema": schema}},
+        extra_body=llm.chat_extra(),
+    )
+    return res, model
 
 
 def build_item_summary_prompt(item: ContentItem, text_content: str, prompt_tpl: str) -> str:
@@ -84,31 +130,29 @@ def summarise_item_worker(self, item_id: str, tier: int = 2):
         if not _does_item_need_resummary(item, active_prompt.version):
             logger.info(f"Item {item_id} already summarised with active version.")
             return
-
-        # Load staged file
-        if not item.full_text_path or not os.path.exists(item.full_text_path):
-            logger.error(f"Text file missing for {item_id}: {item.full_text_path}")
-            # Could trigger re-stage, but for now mark failed
-            item.summary_status = SummaryStatus.FAILED
-            session.commit()
+        if (item.extra_data or {}).get("summary_skipped"):
+            # Fetching again would find the same thin text; drop the flag from extra_data to try again.
+            logger.info(f"Item {item_id} was skipped for too little text.")
             return
 
-        with open(item.full_text_path, 'r', encoding='utf-8') as f:
-            text_content = f.read()
+        # Load the staged text; a missing or thin file falls back to fetching the article.
+        staged = ""
+        if item.full_text_path and os.path.exists(item.full_text_path):
+            with open(item.full_text_path, 'r', encoding='utf-8') as f:
+                staged = f.read()
+        text_content = _text_to_summarise(item, staged)
+        if text_content is None:
+            logger.warning(f"Too little text to summarise {item_id} without inventing details; skipped.")
+            item.summary_status = SummaryStatus.FAILED
+            item.extra_data = {**(item.extra_data or {}), "summary_skipped": "too little text"}
+            session.commit()
+            return
 
         user_msg = build_item_summary_prompt(item, text_content, active_prompt.user_prompt_tpl)
 
         try:
-            client = _get_openai_client()
             start_time = time.time()
-            res = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": active_prompt.system_prompt},
-                    {"role": "user", "content": user_msg}
-                ],
-                temperature=0.3
-            )
+            res, model = _complete(active_prompt.system_prompt, user_msg, "item_summary", ITEM_SCHEMA)
             raw_response = res.choices[0].message.content
             latency = int((time.time() - start_time) * 1000)
 
@@ -131,7 +175,7 @@ def summarise_item_worker(self, item_id: str, tier: int = 2):
                 success=success,
                 error_message=err_msg,
                 item_id=item.id,
-                model="gpt-4o-mini"
+                model=model
             )
 
             if success:
@@ -151,7 +195,7 @@ def summarise_item_worker(self, item_id: str, tier: int = 2):
 
         except Exception as e:
             session.rollback()
-            logger.error(f"OpenAI or inner error for {item_id}: {e}")
+            logger.error(f"Model or inner error for {item_id}: {e}")
             with SessionLocal() as err_session:
                 err_item = err_session.execute(
                     select(ContentItem).where(
@@ -223,16 +267,8 @@ def label_cluster_worker(self, cluster_id: str):
         )
 
         try:
-            client = _get_openai_client()
             start_time = time.time()
-            res = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": active_prompt.system_prompt},
-                    {"role": "user", "content": user_msg}
-                ],
-                temperature=0.3
-            )
+            res, model = _complete(active_prompt.system_prompt, user_msg, "cluster_summary", CLUSTER_SCHEMA)
             raw_response = res.choices[0].message.content
             latency = int((time.time() - start_time) * 1000)
 
@@ -259,7 +295,7 @@ def label_cluster_worker(self, cluster_id: str):
                 success=success,
                 error_message=err_msg,
                 cluster_id=cluster.id,
-                model="gpt-4o-mini"
+                model=model
             )
 
             if success:
@@ -273,7 +309,7 @@ def label_cluster_worker(self, cluster_id: str):
                 raise self.retry(exc=Exception(f"Cluster Label Error: {err_msg}"))
 
         except Exception as e:
-            logger.error(f"OpenAI error for cluster {cluster_id}: {e}")
+            logger.error(f"Model error for cluster {cluster_id}: {e}")
             raise self.retry(exc=e)
 
 
@@ -320,16 +356,8 @@ def generate_trending_brief_worker(self, category: str):
         )
 
         try:
-            client = _get_openai_client()
             start_time = time.time()
-            res = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": active_prompt.system_prompt},
-                    {"role": "user", "content": user_msg}
-                ],
-                temperature=0.3
-            )
+            res, model = _complete(active_prompt.system_prompt, user_msg, "trending_brief", BRIEF_SCHEMA)
             raw_response = res.choices[0].message.content
             latency = int((time.time() - start_time) * 1000)
 
@@ -353,7 +381,7 @@ def generate_trending_brief_worker(self, category: str):
                 latency_ms=latency,
                 success=success,
                 error_message=err_msg,
-                model="gpt-4o-mini"
+                model=model
             )
 
             if success:
@@ -373,5 +401,5 @@ def generate_trending_brief_worker(self, category: str):
                 raise self.retry(exc=Exception(f"Trending Brief Error: {err_msg}"))
 
         except Exception as e:
-            logger.error(f"OpenAI error for trending brief in {category}: {e}")
+            logger.error(f"Model error for trending brief in {category}: {e}")
             raise self.retry(exc=e)

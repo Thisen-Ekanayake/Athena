@@ -24,7 +24,7 @@ pytest
 pytest-asyncio
 flake8
 tiktoken
-python-jose[cryptography]
+argon2-cffi
 beautifulsoup4
 pdfplumber
 umap-learn

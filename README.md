@@ -21,22 +21,23 @@ Scrapers → PostgreSQL → Celery workers (embed · score · cluster · summari
 ```
 
 - **Scrapers** normalise raw content into PostgreSQL.
-- **Celery workers** embed (OpenAI → Qdrant), score (6 weighted signals), cluster (UMAP + K-Means), and summarise (OpenAI).
+- **Celery workers** embed (Qwen3-Embedding-8B → Qdrant), score (6 weighted signals), cluster (UMAP + HDBSCAN), and summarise (Qwen3.5-9B).
+- **Models** run locally behind one OpenAI-compatible llama-server router (`config/llama-router.ini`); switching to OpenAI or another provider is a settings change.
 - **FastAPI** serves the ranked feed, semantic search, clusters, Q&A, sources, and saved lists.
 - **Frontend** — React 19 + TypeScript + Vite (Zustand, TanStack Query).
 
 ## Quick start
 
-**Prerequisites:** Docker, and a `.env` file — copy `.env.example` and set at minimum `OPENAI_API_KEY`.
+**Prerequisites:** Docker, a `.env` file (copy `.env.example`), and for the AI features [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` with the two GGUF models in `models/` (see `config/llama-router.ini`). The router needs about 7 GB of GPU memory; it holds one model at a time and swaps them on demand.
 
 Athena ships two launchers:
 
 ### `./run_docker.sh` — full stack in Docker
 
-Runs everything (Postgres, Redis, Qdrant, API, worker, frontend) via Docker Compose. Best for a production-like run.
+Runs everything (Postgres, Redis, Qdrant, GROBID, API, the crawl, summary and research-evolution workers, frontend) via Docker Compose. Best for a production-like run. The model server is not containerised: it needs the GPU, so start it on the host (see Configuration).
 
 ```bash
-cp .env.example .env          # then set OPENAI_API_KEY
+cp .env.example .env
 ./run_docker.sh               # start with pre-built GHCR images
 ./run_docker.sh --build       # build images locally instead
 ./run_docker.sh --logs        # follow worker logs after starting
@@ -58,6 +59,8 @@ Needs `python3`, `uvicorn`, `celery`, `npm` on `PATH`; logs land in `${TMPDIR:-/
 
 Once up — Frontend http://localhost:5173 · API http://localhost:8000 (`/docs`).
 
+The first visit asks you to create the admin account. There is no public sign-up: the admin adds people in Settings → Users and passes on a temporary password, which they replace at their first login. Users can read everything, keep their own saved lists, ask questions and build research maps within a daily allowance (`LIMIT_*_PER_DAY`); admins also manage sources, models, users and maps.
+
 | Service | Port |
 |---|---|
 | Frontend (Vite) | 5173 |
@@ -68,14 +71,22 @@ Once up — Frontend http://localhost:5173 · API http://localhost:8000 (`/docs`
 
 ## Configuration
 
-All configuration is via environment variables (`athena/api/config.py`, Pydantic settings). Copy `.env.example` → `.env`. Minimum required: `OPENAI_API_KEY`. `DATABASE_URL`, `REDIS_URL`, and `QDRANT_URL` default to the Compose service addresses.
+All configuration is via environment variables (`athena/api/config.py`, Pydantic settings). Copy `.env.example` → `.env`. `DATABASE_URL`, `REDIS_URL`, and `QDRANT_URL` default to the Compose service addresses. Model endpoints (`LLM_*`, `EMBED_*`, see `athena/core/llm.py`) default to the local router and can also be changed in Settings → Models and keys.
+
+The model server is started by `./run_native.sh`, or by hand from the repo root:
+
+```bash
+llama-server --models-preset config/llama-router.ini --models-max 1 --port 8080
+```
+
+With Docker, the containers reach it on the host at `host.docker.internal:8080`. The `summary` and `evolution` services take one job at a time, because the model server answers one request at a time.
 
 ## Development
 
 ```bash
 # Backend tests (SQLite — no live services required)
 DATABASE_URL="sqlite:///test.db" REDIS_URL="redis://localhost:6379/0" \
-  QDRANT_URL="http://localhost:6333" OPENAI_API_KEY="test-key" \
+  QDRANT_URL="http://localhost:6333" \
   pytest tests/test_scoring.py tests/test_preprocessing.py tests/test_connectors.py -v
 
 # Lint (max line length 120)

@@ -6,6 +6,7 @@ import { ClustersPage } from './pages/ClustersPage'
 import { FeedPage } from './pages/FeedPage'
 import { HomePage } from './pages/HomePage'
 import { PaperPage } from './pages/PaperPage'
+import { ChangePasswordPage, LoginPage, RequireAuth, SetupPage } from './pages/AuthPages'
 import { SavedPage } from './pages/SavedPage'
 import { SearchPage } from './pages/SearchPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -27,7 +28,10 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<AppShell />}>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/setup" element={<SetupPage />} />
+        <Route path="/change-password" element={<ChangePasswordPage />} />
+        <Route path="/" element={<RequireAuth><AppShell /></RequireAuth>}>
           <Route index element={<HomePage />} />
           <Route path="feed" element={<FeedPage />} />
           <Route path="sources/:sourceId" element={<FeedPage />} />

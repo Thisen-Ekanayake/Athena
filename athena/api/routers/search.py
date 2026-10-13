@@ -10,30 +10,18 @@ from sqlalchemy import select, or_
 from sqlalchemy.orm import Session
 from loguru import logger
 
-from athena.api.deps import get_db
+from athena.api import auth
+from athena.api.deps import get_db, get_redis
 from athena.api.config import settings
 from athena.api.routers.feed import _build_feed_item
-from athena.core.models import ContentItem, Source
+from athena.core.models import ContentItem, Source, User
 from athena.search.arxiv_live import search_arxiv
 from athena.search.lit_review import generate_lit_review
-from athena.search.local import search_local
+from athena.search.local import embed_query, search_local
 from athena.search.merger import merge_results
 from athena.search.semantic_scholar import search_semantic_scholar
 
 router = APIRouter(prefix="/api/v1", tags=["Search"])
-
-
-def _embed_query(query_text: str) -> list[float]:
-    """Embed a search query using OpenAI text-embedding-3-small."""
-    import openai
-    from athena.core.config_store import get_setting
-
-    client = openai.OpenAI(api_key=get_setting("OPENAI_API_KEY"))
-    response = client.embeddings.create(
-        input=query_text,
-        model="text-embedding-3-small",
-    )
-    return response.data[0].embedding
 
 
 def _qdrant_search(
@@ -86,18 +74,14 @@ def search(
     qdrant_results = []
     semantic_error = False
 
-    if not settings.OPENAI_API_KEY:
-        logger.warning("Search: OpenAI API key missing, falling back to keyword search")
+    try:
+        # 1. Embed query server-side
+        vector = embed_query(q)
+        # 2. Qdrant ANN search
+        qdrant_results = _qdrant_search(vector, limit, category)
+    except Exception as e:
+        logger.error(f"Semantic search failed (falling back): {e}")
         semantic_error = True
-    else:
-        try:
-            # 1. Embed query server-side
-            vector = _embed_query(q)
-            # 2. Qdrant ANN search
-            qdrant_results = _qdrant_search(vector, limit, category)
-        except Exception as e:
-            logger.error(f"Semantic search failed (falling back): {e}")
-            semantic_error = True
 
     # ── Keyword Fallback ────────────────────────────────
     # Fall back if semantic search failed OR returned zero results
@@ -191,7 +175,8 @@ class SearchResponse(BaseModel):
 
 
 @router.post("/search", response_model=SearchResponse)
-def research_search(payload: SearchRequest) -> SearchResponse:
+def research_search(payload: SearchRequest, user: User = Depends(auth.active_user),
+                    r=Depends(get_redis)) -> SearchResponse:
     """Research search: combine local Qdrant hits + Semantic Scholar + LLM lit review."""
     query = payload.query.strip()
     limit = payload.limit
@@ -204,6 +189,7 @@ def research_search(payload: SearchRequest) -> SearchResponse:
 
     lit_review_text: str | None = None
     if payload.generate_review and merged:
+        auth.use(r, user, "lit_review")
         try:
             lit_review_text = generate_lit_review(query, merged)
         except Exception as exc:

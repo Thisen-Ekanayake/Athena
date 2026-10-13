@@ -42,3 +42,41 @@ export const useDeleteApiKey = () => {
     },
   })
 }
+
+/** Model endpoints and names (not secrets). Empty values fall back to the environment, then the default. */
+export interface ModelSettings {
+  values: Record<string, string>
+  defaults: Record<string, string>
+  effective: { chat_base_url: string; chat_model: string; embed_base_url: string; embed_model: string; llama_cpp: boolean }
+  embed_spaces: { feed: string | null; evolution: string | null }
+}
+
+export interface ModelTestResult {
+  ok: boolean
+  latency_ms: number
+  model?: string
+  reply?: string
+  dimensions?: number
+  error?: string
+}
+
+export const useModelSettings = () =>
+  useQuery({
+    queryKey: ['model-settings'],
+    queryFn: async () => (await apiClient.get<ModelSettings>('/settings/models')).data,
+  })
+
+export const useUpdateModelSettings = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (values: Record<string, string>) =>
+      (await apiClient.put<ModelSettings>('/settings/models', { values })).data,
+    onSuccess: (data) => queryClient.setQueryData(['model-settings'], data),
+  })
+}
+
+export const useTestModels = () =>
+  useMutation({
+    mutationFn: async () =>
+      (await apiClient.post<{ chat: ModelTestResult; embed: ModelTestResult }>('/settings/models/test')).data,
+  })

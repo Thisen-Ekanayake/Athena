@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem, ContentScore, FetchLog
 from athena.pipeline.scoring import score_all_items
-from athena.api.deps import get_current_user_required
+from athena.api.auth import require_admin
 
 app = FastAPI(title="Athena Scoring API", version="1.0.0")
 
@@ -172,7 +172,7 @@ def get_trending_items(limit: int = 20, db: Session = Depends(get_db)):
 
 
 @app.post("/admin/rescore-all")
-def trigger_rescore(user: dict = Depends(get_current_user_required)):
+def trigger_rescore(user=Depends(require_admin)):
     """Admin endpoint: trigger a full re-score of all items (e.g. after config change)."""
     score_all_items.delay()
     return {"status": "Re-score triggered", "message": "All items will be re-scored in the background."}

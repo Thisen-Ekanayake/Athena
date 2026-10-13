@@ -15,7 +15,6 @@ Covers:
 """
 import math
 from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock
 import pytest
 import numpy as np
 
@@ -141,43 +140,36 @@ class TestSentimentScore:
     def test_no_comments_returns_neutral(self):
         assert compute_sentiment_score({}) == 0.5
 
-    def test_no_openai_client_returns_neutral(self):
+    def test_no_embedder_returns_neutral(self):
         metadata = {"comments": [{"body": "Great paper!"}]}
-        assert compute_sentiment_score(metadata, openai_client=None) == 0.5
+        assert compute_sentiment_score(metadata, embed=None) == 0.5
 
     def test_empty_comments_list(self):
         assert compute_sentiment_score({"comments": []}) == 0.5
 
-    def test_with_mock_openai_client(self):
-        """Test sentiment with mock embeddings."""
-        mock_client = MagicMock()
+    def test_with_mock_embedder(self):
+        """Comments closer to the positive poles score above neutral, closer to the negative ones below."""
+        pos_embedding = np.array([1.0, 0.0, 0.0] * 341 + [0.0])  # 1024-dim
+        neg_embedding = np.array([0.0, 1.0, 0.0] * 341 + [0.0])
 
-        # Mock reference embeddings
-        pos_embedding = np.array([1.0, 0.0, 0.0] * 512)  # 1536-dim
-        neg_embedding = np.array([0.0, 1.0, 0.0] * 512)
-        comment_embedding = np.array([0.8, 0.2, 0.0] * 512)  # closer to positive
+        def embedder(comment_embedding):
+            def embed(texts):
+                if texts == signals_mod.POSITIVE_POLES:
+                    return np.array([pos_embedding] * len(texts))
+                if texts == signals_mod.NEGATIVE_POLES:
+                    return np.array([neg_embedding] * len(texts))
+                return np.array([comment_embedding] * len(texts))
+            return embed
 
-        pos_response = MagicMock()
-        pos_response.data = [MagicMock(embedding=pos_embedding.tolist()) for _ in range(10)]
-
-        neg_response = MagicMock()
-        neg_response.data = [MagicMock(embedding=neg_embedding.tolist()) for _ in range(10)]
-
-        comment_response = MagicMock()
-        comment_response.data = [MagicMock(embedding=comment_embedding.tolist())]
-
-        mock_client.embeddings.create = MagicMock(side_effect=[
-            pos_response, neg_response, comment_response
-        ])
-
-        # Reset cache
         import athena.pipeline.signals as signals_mod
-        signals_mod._cached_positive_embeddings = None
-        signals_mod._cached_negative_embeddings = None
-
         metadata = {"comments": [{"body": "Excellent breakthrough!"}]}
-        score = compute_sentiment_score(metadata, mock_client)
-        assert 0.0 <= score <= 1.0
+        for comment, above in ((np.array([0.8, 0.2, 0.0] * 341 + [0.0]), True),
+                               (np.array([0.2, 0.8, 0.0] * 341 + [0.0]), False)):
+            signals_mod._cached_positive_embeddings = None  # reset the cache
+            signals_mod._cached_negative_embeddings = None
+            score = compute_sentiment_score(metadata, embedder(comment))
+            assert 0.0 <= score <= 1.0
+            assert (score > 0.5) is above
 
 
 # ─────────────────────────────────────────────────────────

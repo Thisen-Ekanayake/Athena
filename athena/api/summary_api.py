@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem, SummaryStatus, SummaryUsageLog
-from athena.api.deps import get_current_user_required
+from athena.api.auth import require_admin
 
 app = FastAPI(title="Athena Summarisation API", version="1.0.0")
 
@@ -58,7 +58,7 @@ def get_item_summary(item_id: str, db: Session = Depends(get_db)):
 
 
 @app.get("/admin/summaries/cost")
-def get_summarisation_cost(db: Session = Depends(get_db), user: dict = Depends(get_current_user_required)):
+def get_summarisation_cost(db: Session = Depends(get_db), user=Depends(require_admin)):
     """Daily and 7-day rolling spend in USD, and token breakdowns."""
     from datetime import timedelta
     now = datetime.now(timezone.utc)
@@ -114,7 +114,7 @@ def get_summarisation_cost(db: Session = Depends(get_db), user: dict = Depends(g
 
 
 @app.get("/admin/summaries/sample")
-def get_summary_sample(db: Session = Depends(get_db), user: dict = Depends(get_current_user_required)):
+def get_summary_sample(db: Session = Depends(get_db), user=Depends(require_admin)):
     """Returns 10 random summaries for manual spot-check."""
     items = db.execute(
         select(ContentItem)
@@ -136,7 +136,7 @@ def get_summary_sample(db: Session = Depends(get_db), user: dict = Depends(get_c
 
 
 @app.post("/admin/items/{item_id}/regenerate-summary")
-def regenerate_summary(item_id: str, db: Session = Depends(get_db), user: dict = Depends(get_current_user_required)):
+def regenerate_summary(item_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     """Manually trigger regeneration for a specific item."""
     try:
         item_uuid = UUID(item_id)

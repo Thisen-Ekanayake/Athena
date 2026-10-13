@@ -14,7 +14,7 @@ tenacity
 fastapi
 uvicorn
 tiktoken
-python-jose[cryptography]
+argon2-cffi
 beautifulsoup4
 lxml_html_clean
 pdfplumber

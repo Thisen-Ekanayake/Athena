@@ -2,24 +2,22 @@
 The GPU lane: one model on the 8 GB card at a time.
 
 Qwen3-Embedding-8B (4.7 GB) and Qwen3.5-9B (5.7 GB) do not fit together, so
-a lane run starts the 9B and labels every pending citing sentence and gap
-candidate, stops it, then starts the embedder for every chunk and gap
-statement without a vector and searches loose links, and finally rebuilds
-the gap themes on the CPU. It runs on the single-concurrency Celery
-``evolution`` queue so two lanes never compete for the card. A llama-server
-already listening on a port is reused instead of started, provided it serves
-the expected model.
+a lane run asks the 9B to label every pending citing sentence and gap
+candidate, then the embedder for every chunk and gap statement without a
+vector and searches loose links, and finally rebuilds the gap themes on the
+CPU. Both models are served by llama-server in router mode
+(``config/llama-router.ini``, ``--models-max 1``), which swaps them on demand;
+asking for them in phases keeps the swaps to the phase boundaries. It runs on
+the single-concurrency Celery ``evolution`` queue so two lanes never compete
+for the card.
 
-Settings (env or the settings table): LLAMA_SERVER_BIN, EVOLUTION_EMBED_MODEL,
-EVOLUTION_CHAT_MODEL (GGUF paths), EVOLUTION_EMBED_URL, EVOLUTION_CHAT_URL.
+Endpoints and model names come from athena.core.llm; EVOLUTION_CHAT_URL,
+EVOLUTION_EMBED_URL and EVOLUTION_*_MODEL_NAME override them for the lane.
 """
 from __future__ import annotations
 
-import subprocess
 import time
 from contextlib import contextmanager
-from pathlib import Path
-from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
@@ -28,16 +26,17 @@ from loguru import logger
 
 from sqlalchemy import select
 
+from athena.core import llm
 from athena.core.config_store import get_setting
 from athena.core.models import EvoTopic
 from athena.database import evolution as db
 from athena.database.db import SessionLocal
 from athena.evolution import vectors
-from athena.evolution.classify import CHAT_MODEL_DEFAULT, Classifier, auth_headers, managed_servers, model_path
+from athena.evolution.classify import Classifier, auth_headers, chat_url, embed_model_name, embed_url, is_local
 from athena.evolution.gaps import build_themes
 
 # Phase 0: throughput is the same with one slot as with eight, and every input must fit one ubatch.
-MAX_CHUNK_TOKENS = 900
+MAX_CHUNK_TOKENS = llm.EMBED_MAX_TOKENS
 EXTERNAL_MAX_WORDS = 600  # without a tokenizer endpoint, a word cap well inside common 8k contexts
 EMBED_BATCH = 8
 FETCH = 256
@@ -48,109 +47,57 @@ LOOSE_INSTRUCT = "Given a limitation stated in a research paper, retrieve passag
 LOOSE_SECTIONS = ["abstract", "intro", "method"]
 LOOSE_PER_GAP = 3
 LOOSE_FLOOR = 0.3
-LOG_DIR = Path.home() / ".athena" / "evolution" / "logs"
 
 
-class ServerStartError(RuntimeError):
-    """llama-server exited before becoming healthy (usually out of VRAM)."""
-
-
-def _healthy(url: str) -> bool:
-    try:
-        return httpx.get(f"{url}/health", timeout=2).status_code == 200
-    except httpx.HTTPError:
-        return False
-
-
-def _served_model(url: str) -> str:
-    try:
-        data = httpx.get(f"{url}/v1/models", timeout=5).json().get("data") or [{}]
-        return str(data[0].get("id", ""))
-    except (httpx.HTTPError, ValueError):
-        return ""
+class EndpointUnavailable(RuntimeError):
+    """The model server does not answer (llama-server not started, or the URL is wrong)."""
 
 
 @contextmanager
-def llama_server(url: str, model: Path, args: list[str], log_name: str):
-    """Run llama-server for the duration of the block, or reuse one already serving ``model``.
-
-    With external endpoints (EVOLUTION_MANAGED_SERVERS=false) nothing is started.
-    """
-    if not managed_servers():
-        logger.info(f"Using the external endpoint at {url}")
-        yield
-        return
-    if _healthy(url):
-        served = _served_model(url)
-        if served and model.stem.lower() not in served.lower() and model.name.lower() not in served.lower():
-            raise ServerStartError(f"{url} is serving {served!r}, not {model.name}; stop it or change the URL")
-        logger.info(f"Reusing llama-server at {url}")
-        yield
-        return
-    if not model.exists():
-        raise ServerStartError(f"Model file not found: {model}")
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    log_path = LOG_DIR / log_name
-    port = str(urlparse(url).port or 8080)
-    binary = get_setting("LLAMA_SERVER_BIN", "llama-server")
-    with open(log_path, "w") as log:
-        proc = subprocess.Popen([binary, "--port", port, "-m", str(model), *args], stdout=log,
-                                stderr=subprocess.STDOUT)
-    try:
-        logger.info(f"Starting llama-server for {model.name} on :{port} (log: {log_path})")
-        while not _healthy(url):
-            if proc.poll() is not None:
-                raise ServerStartError(f"llama-server exited early, see {log_path}")
-            time.sleep(1)
-        yield
-    finally:
-        proc.terminate()
+def endpoint(url: str):
+    """Check a llama.cpp endpoint answers before a lane phase; hosted endpoints are taken on trust."""
+    if is_local():
         try:
-            proc.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+            healthy = httpx.get(f"{url}/health", timeout=5).status_code == 200
+        except httpx.HTTPError:
+            healthy = False
+        if not healthy:
+            raise EndpointUnavailable(f"No model server at {url}. Start it with: llama-server --models-preset "
+                                      "config/llama-router.ini --models-max 1 --port 8080")
+    yield
 
 
 def embed_server():
-    url = get_setting("EVOLUTION_EMBED_URL", "http://127.0.0.1:8081").rstrip("/")
-    model = model_path("EVOLUTION_EMBED_MODEL", "models/Qwen3-Embedding-8B-Q4_K_M.gguf")
-    args = ["--embedding", "--pooling", "last", "-ngl", "99", "-c", "2048", "-np", "1", "-b", "2048", "-ub", "1024"]
-    return url, llama_server(url, model, args, "embed-server.log")
+    url = embed_url()
+    return url, endpoint(url)
 
 
 def chat_server():
-    url = get_setting("EVOLUTION_CHAT_URL", "http://127.0.0.1:8080").rstrip("/")
-    model = model_path("EVOLUTION_CHAT_MODEL", CHAT_MODEL_DEFAULT)
-    # Thinking is off per request; the budget only guards against a template that ignores that.
-    args = ["-ngl", "99", "-c", "8192", "-np", "1", "--jinja", "--reasoning-budget", "512"]
-    return url, llama_server(url, model, args, "chat-server.log")
+    url = chat_url()
+    return url, endpoint(url)
 
 
 # ── embedding ──────────────────────────────────────────────────────────
 
 
 def _fit(http: httpx.Client, url: str, text: str) -> tuple[str, bool]:
-    """Trim ``text`` until it fits MAX_CHUNK_TOKENS. Formula-heavy text runs near four tokens a word.
+    """Trim ``text`` until it fits MAX_CHUNK_TOKENS, counted by the server's tokenizer.
 
     External endpoints have no /tokenize, so there the text is cut at a word count instead.
     """
-    if not managed_servers():
+    if not is_local():
         words = text.split()
         return " ".join(words[:EXTERNAL_MAX_WORDS]), len(words) > EXTERNAL_MAX_WORDS
-    trimmed = False
-    while True:
-        tokens = len(http.post(f"{url}/tokenize", json={"content": text}).json()["tokens"])
-        if tokens <= MAX_CHUNK_TOKENS:
-            return text, trimmed
-        words = text.split()
-        text = " ".join(words[:max(20, int(len(words) * 0.9 * MAX_CHUNK_TOKENS / tokens))])
-        trimmed = True
+    model = embed_model_name()  # the router needs it to pick the tokenizer
+    return llm.fit(text, MAX_CHUNK_TOKENS,
+                   lambda t: len(http.post(f"{url}/tokenize", json={"content": t, "model": model}).json()["tokens"]))
 
 
 def _embed(http: httpx.Client, url: str, texts: list[str]) -> np.ndarray:
-    body: dict = {"input": texts, "model": get_setting("EVOLUTION_EMBED_MODEL_NAME", "qwen3-embedding-8b")}
-    if get_setting("EVOLUTION_EMBED_DIMENSIONS"):  # OpenAI's text-embedding-3 models shorten vectors themselves
-        body["dimensions"] = int(get_setting("EVOLUTION_EMBED_DIMENSIONS"))
+    body: dict = {"input": texts, "model": embed_model_name()}
+    dimensions = get_setting("EVOLUTION_EMBED_DIMENSIONS") or get_setting("EMBED_DIMENSIONS")
+    if dimensions:  # OpenAI's text-embedding-3 models shorten vectors themselves
+        body["dimensions"] = int(dimensions)
     resp = http.post(f"{url}/v1/embeddings", json=body)
     resp.raise_for_status()
     data = sorted(resp.json()["data"], key=lambda d: d["index"])
@@ -251,7 +198,8 @@ def _loose_links(http: httpx.Client, url: str, session) -> int:
 def embed_abstracts() -> int:
     """Tier 1 only: abstracts without a vector (a new search-built topic's), with no chunks, gaps or links."""
     url, server = embed_server()
-    with server, httpx.Client(timeout=600.0, headers=auth_headers()) as http, SessionLocal() as session:
+    llm.check_embed_space("evolution", embed_model_name())
+    with server, httpx.Client(timeout=600.0, headers=auth_headers(url)) as http, SessionLocal() as session:
         return _embed_abstracts(http, url, session)
 
 
@@ -259,7 +207,8 @@ def embed_pending(limit: int | None = None) -> dict:
     """Embed chunks and gap statements that have no vector yet, search loose links, then embed abstracts."""
     vectors.ensure_collection()
     url, server = embed_server()
-    with server, httpx.Client(timeout=600.0, headers=auth_headers()) as http, SessionLocal() as session:
+    llm.check_embed_space("evolution", embed_model_name())
+    with server, httpx.Client(timeout=600.0, headers=auth_headers(url)) as http, SessionLocal() as session:
         summary = _embed_chunks(http, url, session, limit)
         if limit is None:
             summary["gaps_embedded"] = _embed_gaps(http, url, session)

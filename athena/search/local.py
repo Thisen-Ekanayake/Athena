@@ -9,25 +9,24 @@ from __future__ import annotations
 from uuid import UUID
 
 from loguru import logger
-from openai import OpenAI
 from qdrant_client import QdrantClient
 from sqlalchemy import select
 
-from athena.core.config_store import get_setting
+from athena.core import llm
 from athena.core.models import ContentItem
 from athena.database.db import SessionLocal
 from athena.pipeline.embedding_worker import (
     COLLECTION_NAME,
-    EMBEDDING_MODEL,
     QDRANT_URL,
 )
 
+# Qwen3-Embedding embeds queries with an instruction and documents without one.
+SEARCH_INSTRUCT = "Given a search query, retrieve AI research papers and articles relevant to it"
 
-def _embed_query(query: str) -> list[float]:
+
+def embed_query(query: str) -> list[float]:
     """Embed a query with the same model used by the ingest pipeline."""
-    client = OpenAI(api_key=get_setting("OPENAI_API_KEY"))
-    response = client.embeddings.create(input=query, model=EMBEDDING_MODEL)
-    return response.data[0].embedding
+    return llm.embed([query], instruct=SEARCH_INSTRUCT)[0].tolist()
 
 
 def _qdrant_search(vector: list[float], limit: int) -> list[tuple[str, float]]:
@@ -58,14 +57,14 @@ def search_local(query: str, limit: int = 20) -> list[dict]:
     """Run a semantic search against ingested content.
 
     Returns up to ``limit`` papers ordered by cosine similarity. On any
-    failure (missing API key, Qdrant down, etc.) returns an empty list
+    failure (model server or Qdrant down, etc.) returns an empty list
     so the caller can still serve live results.
     """
     if not query or not query.strip():
         return []
 
     try:
-        vector = _embed_query(query)
+        vector = embed_query(query)
     except Exception as exc:
         logger.warning(f"search_local: embedding failed — {exc}")
         return []

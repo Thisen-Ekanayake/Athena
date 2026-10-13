@@ -18,9 +18,6 @@ class Settings:
     )
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:6333")
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    JWT_SECRET: str = os.getenv("JWT_SECRET", "athena-dev-secret-change-me")
-    JWT_ALGORITHM: str = "HS256"
 
     # Swagger / ReDoc access control
     DOCS_ENABLED: bool = os.getenv("DOCS_ENABLED", "true").lower() == "true"
@@ -39,9 +36,9 @@ class Settings:
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 50
 
-    # Qdrant collection name
+    # Qdrant collection the embedding worker fills (athena.pipeline.embedding_worker.COLLECTION_NAME)
     QDRANT_COLLECTION: str = os.getenv(
-        "QDRANT_COLLECTION", "athena_embeddings"
+        "QDRANT_COLLECTION", "athena_content"
     )
 
 

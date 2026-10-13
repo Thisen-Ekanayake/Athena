@@ -84,7 +84,7 @@ class ContentItem(Base):
     is_trending = Column(Boolean, default=False)
     category_rank = Column(Integer, nullable=True)
     embedding_id = Column(String, nullable=True)
-    embedding_model = Column(String, default="text-embedding-3-small")
+    embedding_model = Column(String, nullable=True)  # the EMBED_MODEL that made the vector
     embedded_at = Column(DateTime(timezone=True), nullable=True)
     cluster_id = Column(PG_UUID(as_uuid=True), ForeignKey("clusters.id"), nullable=True)
     cluster_distance = Column(Float, nullable=True)  # distance to cluster centroid
@@ -270,6 +270,7 @@ class QAUsageLog(Base):
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     session_id = Column(String, nullable=False)
     turn_number = Column(Integer, nullable=False)
     question_length = Column(Integer, default=0)
@@ -310,9 +311,14 @@ class ClusterRunLog(Base):
 class SavedList(Base):
     """A user-created collection (e.g. 'NLP', 'Computer Vision') of content items."""
     __tablename__ = "saved_lists"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_saved_list_user_name"),
+    )
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    name = Column(String, nullable=False, unique=True)
+    # Null only for lists from before accounts; the first admin account takes them over.
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    name = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     items = relationship(
@@ -379,6 +385,39 @@ class AppSetting(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+# ── Accounts ─────────────────────────────────────────────────────────
+
+
+class User(Base):
+    """An account. The first one is the admin; the admin creates the rest (there is no public sign-up)."""
+    __tablename__ = "users"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    email = Column(String, unique=True, nullable=False)  # stored lower-case
+    display_name = Column(String, nullable=False)
+    password_hash = Column(String, nullable=False)       # argon2id
+    role = Column(String, nullable=False, default="user")  # admin | user
+    is_active = Column(Boolean, nullable=False, default=True)
+    must_change_password = Column(Boolean, nullable=False, default=False)  # set by temporary passwords
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class UserSession(Base):
+    """A login. The browser holds the token in an httpOnly cookie; only its SHA-256 is stored."""
+    __tablename__ = "user_sessions"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String, unique=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False)  # rolling: pushed back while the session is used
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    user_agent = Column(String, nullable=True)
+
+    user = relationship("User")
+
+
 # ── Research evolution ───────────────────────────────────────────────
 # Papers here are a separate corpus from content_items: they come from
 # OpenAlex, are grouped into curated topics, and never enter the feed.
@@ -402,6 +441,8 @@ class EvoTopic(Base):
     origin = Column(String, nullable=False, server_default="curated")  # curated | search
     query = Column(String, nullable=True)            # the search a search-built topic came from
     build_stats = Column(JSONB, nullable=True)       # the last build's summary (corpus, Semantic Scholar, timing)
+    # Who built a search-built topic; curated topics have none. Maps are shared with every user.
+    created_by = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     topic_papers = relationship("EvoTopicPaper", back_populates="topic", cascade="all, delete-orphan")

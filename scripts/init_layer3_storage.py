@@ -1,3 +1,4 @@
+from athena.core.llm import EMBED_DIM
 from athena.core.models import ReferenceEmbedding
 from athena.database.db import SessionLocal
 import sys
@@ -16,7 +17,7 @@ def init_qdrant_comments():
         url = f"{QDRANT_URL}/collections/comments"
         payload = {
             "vectors": {
-                "size": 1536,
+                "size": EMBED_DIM,
                 "distance": "Cosine"
             }
         }
@@ -41,7 +42,7 @@ def seed_reference_embeddings():
             print("Reference embeddings already seeded.")
             return
 
-        dummy_vector = [0.0] * 1536
+        dummy_vector = [0.0] * EMBED_DIM
 
         refs = [
             ReferenceEmbedding(

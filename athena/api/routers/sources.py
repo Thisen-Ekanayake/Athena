@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
+from athena.api.auth import require_admin
 from athena.api.deps import get_db
 from athena.api.schemas import (
     SourceResponse, SourceCreateRequest, SourceUpdateRequest,
@@ -59,7 +60,7 @@ def list_sources(
     return [_to_response(s) for s in sources]
 
 
-@router.post("/sources")
+@router.post("/sources", dependencies=[Depends(require_admin)])
 def add_source(
     request: SourceCreateRequest,
     db: Session = Depends(get_db),
@@ -106,7 +107,7 @@ def add_source(
     }
 
 
-@router.patch("/sources/{source_id}", response_model=SourceResponse)
+@router.patch("/sources/{source_id}", response_model=SourceResponse, dependencies=[Depends(require_admin)])
 def update_source(
     source_id: str,
     request: SourceUpdateRequest,
@@ -171,7 +172,8 @@ def update_source(
     return _to_response(source)
 
 
-@router.put("/sources/{source_id}/toggle", response_model=SourceToggleResponse)
+@router.put("/sources/{source_id}/toggle", response_model=SourceToggleResponse,
+            dependencies=[Depends(require_admin)])
 def toggle_source(
     source_id: str,
     db: Session = Depends(get_db),

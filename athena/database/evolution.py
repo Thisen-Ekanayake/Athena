@@ -57,11 +57,12 @@ def _chunks(rows: list, size: int = _BATCH):
 
 
 def upsert_topic(slug: str, name: str, aliases: list[str], description: str, seeds: list[dict],
-                 config: dict, origin: str = "curated", query: str | None = None) -> None:
+                 config: dict, origin: str = "curated", query: str | None = None,
+                 created_by: UUID | None = None) -> None:
     values = {"slug": slug, "name": name, "aliases": aliases, "description": description, "seeds": seeds,
               "config": config, "origin": origin, "query": query}
     with SessionLocal() as session:
-        stmt = insert(EvoTopic).values(id=uuid4(), status="pending", **values)
+        stmt = insert(EvoTopic).values(id=uuid4(), status="pending", created_by=created_by, **values)
         stmt = stmt.on_conflict_do_update(index_elements=["slug"], set_=values)
         session.execute(stmt)
         session.commit()
@@ -155,6 +156,7 @@ def topic_summary(topic: EvoTopic) -> dict:
         "origin": getattr(topic, "origin", None) or "curated",
         "query": getattr(topic, "query", None),
         "build_stats": getattr(topic, "build_stats", None) or {},
+        "created_by": str(topic.created_by) if getattr(topic, "created_by", None) else None,
     }
 
 
@@ -882,6 +884,18 @@ def pending_abstracts(session: Session, limit: int) -> list[EvoPaper]:
 def mark_abstracts(session: Session, paper_ids: list[UUID]) -> None:
     session.execute(update(EvoPaper).where(EvoPaper.id.in_(paper_ids))
                     .values(abstract_embedded_at=datetime.now(timezone.utc)))
+    session.commit()
+
+
+def forget_vectors(session: Session) -> None:
+    """Mark every chunk, gap statement and abstract as not embedded, and drop the loose links found with them.
+
+    For a switch of embedding model: the next GPU lane embeds everything again and rebuilds the themes.
+    """
+    session.execute(update(EvoChunk).values(embedded_at=None))
+    session.execute(update(EvoGapStatement).values(embedded_at=None, loose_checked_at=None))
+    session.execute(update(EvoPaper).values(abstract_embedded_at=None))
+    session.execute(delete(EvoLooseLink))
     session.commit()
 
 

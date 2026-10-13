@@ -157,7 +157,8 @@ def process_clusters(points, labels, raw_vectors, session):
         # Stability matching
         matched_cluster_id = None
         if existing_clusters:
-            valid_clusters = [c for c in existing_clusters if c.centroid]
+            # Centroids from another embedding model (another size) cannot match; those clusters go stale.
+            valid_clusters = [c for c in existing_clusters if c.centroid and len(c.centroid) == len(centroid)]
             similarities = [
                 np.dot(centroid, np.array(c.centroid)) / (np.linalg.norm(centroid) * np.linalg.norm(c.centroid))
                 for c in valid_clusters
