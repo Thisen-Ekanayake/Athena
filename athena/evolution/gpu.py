@@ -47,6 +47,9 @@ LOOSE_INSTRUCT = "Given a limitation stated in a research paper, retrieve passag
 LOOSE_SECTIONS = ["abstract", "intro", "method"]
 LOOSE_PER_GAP = 3
 LOOSE_FLOOR = 0.3
+# Cross-map links (E7): the same search against papers of maps the gap's paper is not in. Nearest chunks of
+# in-map papers are skipped after the search, so it asks for more.
+CROSS_SEARCH = 60
 
 
 class EndpointUnavailable(RuntimeError):
@@ -195,6 +198,47 @@ def _loose_links(http: httpx.Client, url: str, session) -> int:
     return found
 
 
+def _cross_links(http: httpx.Client, url: str, session) -> int:
+    """For each gap statement, the later method papers of other maps whose text matches it best."""
+    found = 0
+    while rows := db.pending_cross(session, FETCH):
+        own = db.paper_topic_kinds(session, list({g.paper_id for g, _ in rows}))
+        for i in range(0, len(rows), EMBED_BATCH):
+            batch = rows[i:i + EMBED_BATCH]
+            queries = [f"Instruct: {LOOSE_INSTRUCT}\nQuery: {_fit(http, url, g.sentence)[0]}" for g, _ in batch]
+            searched = []
+            for (g, year), vec in zip(batch, _embed(http, url, queries)):
+                maps = set(own.get(g.paper_id, {}))
+                hits = vectors.later_chunks_anywhere(vec, year, [str(g.paper_id), str(g.source_paper_id)],
+                                                     LOOSE_SECTIONS, limit=CROSS_SEARCH) if maps else []
+                searched.append((g, maps, hits))
+            places = db.paper_topic_kinds(session, list({UUID(h.payload["paper_id"]) for _, _, hits in searched
+                                                         for h in hits}))
+            for g, maps, hits in searched:
+                best: dict[str, object] = {}
+                for hit in hits:  # nearest first
+                    where = places.get(UUID(hit.payload["paper_id"]), {})
+                    # A paper in the gap's own map is a loose link there; elsewhere it must be a method paper.
+                    if where and not (maps & set(where)) and "method" in where.values():
+                        best.setdefault(hit.payload["paper_id"], hit)
+                links = [{"paper_id": UUID(pid), "chunk_id": UUID(str(hit.id)), "score": float(hit.score)}
+                         for pid, hit in list(best.items())[:LOOSE_PER_GAP] if hit.score >= LOOSE_FLOOR]
+                db.save_cross_links(session, g.id, links)
+                found += len(links)
+            db.mark_gaps(session, [g.id for g, _ in batch], "cross_checked_at")
+    logger.info(f"Found {found} cross-map links")
+    return found
+
+
+def cross_links() -> int:
+    """Cross-map links only, for gap statements embedded before the pass existed."""
+    vectors.ensure_collection()
+    url, server = embed_server()
+    llm.check_embed_space("evolution", embed_model_name())
+    with server, httpx.Client(timeout=600.0, headers=auth_headers(url)) as http, SessionLocal() as session:
+        return _cross_links(http, url, session)
+
+
 def embed_abstracts() -> int:
     """Tier 1 only: abstracts without a vector (a new search-built topic's), with no chunks, gaps or links."""
     url, server = embed_server()
@@ -204,7 +248,8 @@ def embed_abstracts() -> int:
 
 
 def embed_pending(limit: int | None = None) -> dict:
-    """Embed chunks and gap statements that have no vector yet, search loose links, then embed abstracts."""
+    """Embed chunks and gap statements that have no vector yet, search loose and cross-map links, then embed
+    abstracts."""
     vectors.ensure_collection()
     url, server = embed_server()
     llm.check_embed_space("evolution", embed_model_name())
@@ -213,6 +258,7 @@ def embed_pending(limit: int | None = None) -> dict:
         if limit is None:
             summary["gaps_embedded"] = _embed_gaps(http, url, session)
             summary["loose_links"] = _loose_links(http, url, session)
+            summary["cross_links"] = _cross_links(http, url, session)
             summary["abstracts_embedded"] = _embed_abstracts(http, url, session)
     return summary
 

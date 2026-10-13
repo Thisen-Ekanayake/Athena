@@ -35,6 +35,8 @@ POST /api/v1/evolution/topics/{slug}/ask                     — a question answ
                                                                citing paper and section
 GET|DELETE /api/v1/evolution/topics/{slug}/questions         — the user's questions to a map
 DELETE /api/v1/evolution/questions/{id}                      — one of them
+GET  /api/v1/evolution/topics/{slug}/links                   — papers shared with other maps, milestones borrowed
+                                                               and lent, and gaps other maps' papers may address
 """
 import json
 import re
@@ -331,6 +333,19 @@ def topic_gaps(slug: str, session: Session = Depends(get_db), r: redis_lib.Redis
     if cached:
         return cached
     payload = db.topic_gaps(session, topic)
+    cache_set(r, key, payload, settings.CACHE_CLUSTERS_TTL)
+    return payload
+
+
+@router.get("/topics/{slug}/links")
+def topic_links(slug: str, session: Session = Depends(get_db), r: redis_lib.Redis = Depends(get_redis)):
+    topic = _built_topic_or_409(session, slug)
+    # Other maps' builds change the links too, so the key carries every built map's build time.
+    key = _cache_key(session, topic, "links", db.maps_version(session))
+    cached = cache_get(r, key)
+    if cached:
+        return cached
+    payload = db.topic_links(session, topic)
     cache_set(r, key, payload, settings.CACHE_CLUSTERS_TTL)
     return payload
 

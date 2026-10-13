@@ -17,9 +17,9 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, aliased
 
 from athena.core.models import (
-    EvoChunk, EvoCitation, EvoCitationContext, EvoGapStatement, EvoGapTheme, EvoGapThemeMember, EvoLooseLink,
-    EvoIdeaCheck, EvoMainPathEdge, EvoMapQuestion, EvoMilestoneOverride, EvoPaper, EvoPaperNote, EvoReadingProgress,
-    EvoSection, EvoTopic, EvoTopicPaper,
+    EvoChunk, EvoCitation, EvoCitationContext, EvoCrossLink, EvoGapStatement, EvoGapTheme, EvoGapThemeMember,
+    EvoIdeaCheck, EvoLooseLink, EvoMainPathEdge, EvoMapQuestion, EvoMilestoneOverride, EvoPaper, EvoPaperNote,
+    EvoReadingProgress, EvoSection, EvoTopic, EvoTopicPaper,
 )
 from athena.database.db import SessionLocal
 from athena.evolution.config import TopicConfig
@@ -743,6 +743,149 @@ def delete_map_question(session: Session, user_id: UUID, question_id: UUID | Non
     return deleted
 
 
+# ── links between maps (E7) ────────────────────────────────────────────
+
+
+def maps_version(session: Session) -> str:
+    """Changes when any map is built or deleted, or the cross-map pass finds links."""
+    latest, count = session.execute(select(func.max(EvoTopic.built_at), func.count(EvoTopic.id))).one()
+    links = session.execute(select(func.count(EvoCrossLink.id))).scalar()
+    return f"{int(latest.timestamp()) if latest else 0}-{count}-{links}"
+
+
+def pending_cross(session: Session, limit: int) -> list[tuple[EvoGapStatement, int | None]]:
+    """Embedded gap statements not yet searched against other maps' papers, with the stating paper's year."""
+    source = aliased(EvoPaper)
+    return session.execute(
+        select(EvoGapStatement, source.year).join(source, EvoGapStatement.source_paper_id == source.id)
+        .where(EvoGapStatement.label == "gap", EvoGapStatement.embedded_at.isnot(None),
+               EvoGapStatement.cross_checked_at.is_(None)).limit(limit)).all()
+
+
+def paper_topic_kinds(session: Session, paper_ids: list[UUID]) -> dict[UUID, dict[str, str]]:
+    """Paper -> {topic id: kind} for every topic it is in, read fresh (the chunks' topic payload can be stale)."""
+    out: dict[UUID, dict[str, str]] = defaultdict(dict)
+    for pid, tid, kind in session.execute(select(EvoTopicPaper.paper_id, EvoTopicPaper.topic_id, EvoTopicPaper.kind)
+                                          .where(EvoTopicPaper.paper_id.in_(paper_ids))):
+        out[pid][str(tid)] = kind
+    return out
+
+
+def save_cross_links(session: Session, gap_id: UUID, links: list[dict]) -> None:
+    """Replace a gap statement's cross-map links. ``links``: [{paper_id, chunk_id, score}]."""
+    session.execute(delete(EvoCrossLink).where(EvoCrossLink.gap_id == gap_id))
+    if links:
+        session.execute(insert(EvoCrossLink).values([{"id": uuid4(), "gap_id": gap_id, **link} for link in links]))
+
+
+def topic_links(session: Session, topic: EvoTopic, limit: int = 40) -> dict:
+    """How this map connects to the others: papers they share, milestones one borrows from the other, and
+    the other maps' papers whose text matches this map's gaps."""
+    overrides = _overrides(session, topic.id)
+    rows = {p.id: (tp, p) for tp, p in _topic_rows(session, topic.id)}
+    weight = TopicConfig.from_dict(topic.config).weights.relevance
+    on_topic = {pid for pid, (tp, _) in rows.items() if on_topic_method(tp.kind, tp.score_detail, weight)}
+    here_milestone = {pid for pid, (tp, _) in rows.items()
+                      if effective_milestone(tp.is_milestone_auto, overrides[pid].action if pid in overrides else None)}
+    topics = {t.id: t for t in session.execute(
+        select(EvoTopic).where(EvoTopic.id != topic.id, EvoTopic.built_at.isnot(None))).scalars()}
+    pins = {(o.topic_id, o.paper_id): o.action for o in session.execute(select(EvoMilestoneOverride).where(
+        EvoMilestoneOverride.topic_id.in_(list(topics)))).scalars()}
+    elsewhere: dict[UUID, list[dict]] = defaultdict(list)  # paper -> its places in other maps
+    milestones_elsewhere: dict[UUID, dict] = {}            # other maps' milestones, any paper
+    for tp in session.execute(select(EvoTopicPaper).where(EvoTopicPaper.topic_id.in_(list(topics)))).scalars():
+        is_ms = effective_milestone(tp.is_milestone_auto, pins.get((tp.topic_id, tp.paper_id)))
+        if tp.paper_id in rows:
+            elsewhere[tp.paper_id].append({"topic": topics[tp.topic_id].slug, "topic_name": topics[tp.topic_id].name,
+                                           "milestone": is_ms})
+        if is_ms:
+            milestones_elsewhere.setdefault(tp.paper_id, {"topic": topics[tp.topic_id].slug,
+                                                          "topic_name": topics[tp.topic_id].name})
+    names = method_names(session, {pid: rows[pid][1].title for pid in elsewhere})
+
+    def mini(pid: UUID, title: str | None = None, year: int | None = None, name: str | None = None) -> dict:
+        if pid in rows:
+            tp, p = rows[pid]
+            return {"id": str(pid), "title": p.title, "year": p.year, "named_method": names.get(pid) or tp.named_method,
+                    "is_milestone": pid in here_milestone}
+        return {"id": str(pid), "title": title, "year": year, "named_method": name, "is_milestone": False}
+
+    def shared_rank(pid: UUID) -> tuple:
+        return (pid in here_milestone or any(e["milestone"] for e in elsewhere[pid]), rows[pid][0].milestone_score or 0)
+
+    shared = sorted(elsewhere, key=shared_rank, reverse=True)
+
+    def counted(citing_side: set[UUID], cited_side: dict[UUID, dict], exclude: set[UUID]) -> list[tuple[UUID, int]]:
+        counts: dict[UUID, int] = defaultdict(int)
+        if not citing_side or not cited_side:
+            return []
+        for citing, cited in session.execute(select(EvoCitation.citing_id, EvoCitation.cited_id).where(
+                EvoCitation.citing_id.in_(list(citing_side)), EvoCitation.cited_id.in_(list(cited_side)))):
+            if cited not in exclude:
+                counts[cited] += 1
+        return sorted(counts.items(), key=lambda kv: -kv[1])[:15]
+
+    borrowed_ids = counted(on_topic, milestones_elsewhere, set(rows))
+    other_papers = {pid for pid in session.execute(select(EvoTopicPaper.paper_id).where(
+        EvoTopicPaper.topic_id.in_(list(topics)))).scalars()} - set(rows)
+    lent_ids = counted(other_papers, {pid: {} for pid in here_milestone}, set())
+    lent_by: dict[UUID, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    if lent_ids:
+        topic_of = defaultdict(set)
+        for pid, tid in session.execute(select(EvoTopicPaper.paper_id, EvoTopicPaper.topic_id).where(
+                EvoTopicPaper.topic_id.in_(list(topics)), EvoTopicPaper.paper_id.in_(list(other_papers)))):
+            topic_of[pid].add(tid)
+        for citing, cited in session.execute(select(EvoCitation.citing_id, EvoCitation.cited_id).where(
+                EvoCitation.citing_id.in_(list(other_papers)), EvoCitation.cited_id.in_([p for p, _ in lent_ids]))):
+            for tid in topic_of[citing]:
+                lent_by[cited][topics[tid].name] += 1
+    info = {p.id: p for p in session.execute(select(EvoPaper).where(
+        EvoPaper.id.in_([pid for pid, _ in borrowed_ids]))).scalars()} if borrowed_ids else {}
+
+    def name_of(p: EvoPaper) -> str | None:
+        return (p.cited_name or {}).get("name") if isinstance(p.cited_name, dict) else None
+
+    # Gaps of this map that another map's papers may address (found by the GPU lane's cross-map pass).
+    cross = []
+    theme_of = {g: t for g, t in session.execute(
+        select(EvoGapThemeMember.gap_id, EvoGapTheme).join(EvoGapTheme, EvoGapThemeMember.theme_id == EvoGapTheme.id)
+        .where(EvoGapTheme.topic_id == topic.id)).all()}
+    if theme_of:
+        best: dict[tuple[UUID, UUID], tuple] = {}
+        for link, gap, paper, chunk_text, section_type in session.execute(
+                select(EvoCrossLink, EvoGapStatement, EvoPaper, EvoChunk.text, EvoChunk.section_type)
+                .join(EvoGapStatement, EvoCrossLink.gap_id == EvoGapStatement.id)
+                .join(EvoPaper, EvoCrossLink.paper_id == EvoPaper.id)
+                .join(EvoChunk, EvoChunk.id == EvoCrossLink.chunk_id)
+                .where(EvoCrossLink.gap_id.in_(list(theme_of)), EvoCrossLink.score >= LOOSE_MIN_SCORE)):
+            key = (theme_of[gap.id].id, paper.id)
+            if key not in best or link.score > best[key][0].score:
+                best[key] = (link, gap, paper, chunk_text, section_type)
+        maps_of = paper_topic_kinds(session, list({k[1] for k in best}))
+        for (_, pid), (link, gap, paper, text, section_type) in sorted(best.items(), key=lambda kv: -kv[1][0].score):
+            theme = theme_of[gap.id]
+            cross.append({
+                "theme": {"id": str(theme.id), "label": theme.label, "status": theme.status},
+                "gap": gap.sentence, "score": round(link.score, 3),
+                "paper": {"id": str(pid), "title": paper.title, "year": paper.year, "named_method": name_of(paper)},
+                "maps": [{"topic": topics[UUID(t)].slug, "topic_name": topics[UUID(t)].name}
+                         for t in maps_of.get(pid, {}) if UUID(t) in topics],
+                "passage": text[:600], "section_type": section_type,
+            })
+    return {
+        "topic": topic_summary(topic),
+        "shared": {"total": len(shared),
+                   "papers": [mini(pid) | {"elsewhere": elsewhere[pid]} for pid in shared[:limit]]},
+        "borrowed": [mini(pid, info[pid].title, info[pid].year, name_of(info[pid]))
+                     | {"from": milestones_elsewhere[pid], "citing_papers": n}
+                     for pid, n in borrowed_ids if pid in info],
+        "lent": [mini(pid) | {"citing_papers": n, "by": dict(sorted(lent_by[pid].items(), key=lambda kv: -kv[1]))}
+                 for pid, n in lent_ids],
+        "cross_gaps": cross[:30],
+        "cross_min_score": LOOSE_MIN_SCORE,
+    }
+
+
 # ── names citing papers use (E9) ───────────────────────────────────────
 
 
@@ -1254,6 +1397,18 @@ def topic_gaps(session: Session, topic: EvoTopic, examples: int = 3) -> dict:
                                                            EvoLooseLink.score >= LOOSE_MIN_SCORE)).scalars():
         loose[link.gap_id].append(link)
     names = method_names(session, {pid: p.title for pid, (_, p) in rows.items()})
+    # Papers of other maps whose text matches the theme's statements (the GPU lane's cross-map pass).
+    cross: dict[UUID, dict[UUID, float]] = defaultdict(dict)
+    for link in session.execute(select(EvoCrossLink).where(EvoCrossLink.gap_id.in_(gap_ids),
+                                                           EvoCrossLink.score >= LOOSE_MIN_SCORE)).scalars():
+        cross[link.gap_id][link.paper_id] = max(link.score, cross[link.gap_id].get(link.paper_id, 0.0))
+    cross_ids = list({pid for links in cross.values() for pid in links})
+    cross_titles = {pid: (title, year) for pid, title, year in session.execute(
+        select(EvoPaper.id, EvoPaper.title, EvoPaper.year).where(EvoPaper.id.in_(cross_ids)))} if cross_ids else {}
+    cross_maps: dict[UUID, list[str]] = defaultdict(list)
+    for pid, name in session.execute(select(EvoTopicPaper.paper_id, EvoTopic.name).join(
+            EvoTopic, EvoTopicPaper.topic_id == EvoTopic.id).where(EvoTopicPaper.paper_id.in_(cross_ids))):
+        cross_maps[pid].append(name)
 
     def mini(pid) -> dict | None:
         if pid not in rows:
@@ -1275,6 +1430,10 @@ def topic_gaps(session: Session, topic: EvoTopic, examples: int = 3) -> dict:
                 if link.paper_id in rows and rows[link.paper_id][0].kind == "method":
                     candidates[link.paper_id] = max(link.score, candidates.get(link.paper_id, 0.0))
         detail = t.detail or {}
+        elsewhere: dict[UUID, float] = {}
+        for g in gs:
+            for pid, score in cross.get(g.id, {}).items():
+                elsewhere[pid] = max(score, elsewhere.get(pid, 0.0))
         out.append({
             "id": str(t.id), "label": t.label, "size": t.size, "status": t.status,
             "first_year": t.first_year, "last_year": t.last_year,
@@ -1286,6 +1445,11 @@ def topic_gaps(session: Session, topic: EvoTopic, examples: int = 3) -> dict:
                           "paper": mini(g.paper_id), "stated_by": mini(g.source_paper_id)} for g in picks],
             "loose_candidates": [{"paper": mini(pid), "score": round(score, 3)}
                                  for pid, score in sorted(candidates.items(), key=lambda kv: -kv[1])[:5]],
+            "cross_candidates": [{"paper": {"id": str(pid), "title": cross_titles[pid][0],
+                                            "year": cross_titles[pid][1]},
+                                  "maps": cross_maps.get(pid, []), "score": round(score, 3)}
+                                 for pid, score in sorted(elsewhere.items(), key=lambda kv: -kv[1])[:3]
+                                 if pid in cross_titles],
         })
     order = {"persisting": 0, "new": 1, "addressed": 2, "quiet": 3}
     out.sort(key=lambda t: (order.get(t["status"], 3), -t["size"]))
@@ -1309,14 +1473,15 @@ def mark_abstracts(session: Session, paper_ids: list[UUID]) -> None:
 
 
 def forget_vectors(session: Session) -> None:
-    """Mark every chunk, gap statement and abstract as not embedded, and drop the loose links found with them.
+    """Mark every chunk, gap statement and abstract as not embedded, and drop the loose and cross-map links.
 
     For a switch of embedding model: the next GPU lane embeds everything again and rebuilds the themes.
     """
     session.execute(update(EvoChunk).values(embedded_at=None))
-    session.execute(update(EvoGapStatement).values(embedded_at=None, loose_checked_at=None))
+    session.execute(update(EvoGapStatement).values(embedded_at=None, loose_checked_at=None, cross_checked_at=None))
     session.execute(update(EvoPaper).values(abstract_embedded_at=None))
     session.execute(delete(EvoLooseLink))
+    session.execute(delete(EvoCrossLink))
     session.commit()
 
 
