@@ -1,6 +1,7 @@
 """API tests for the evolution tools (ROADMAP E1-E9), with the database layer mocked."""
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
@@ -112,3 +113,25 @@ def test_read_ticks_are_per_user(client):
     assert calls == [(USER.id, paper_id, True), (USER.id, paper_id, False)]
     with patch(f"{ROUTER_DB}.set_read", return_value=False):
         assert c.put(f"/api/v1/evolution/papers/{paper_id}/read").status_code == 404
+
+
+# ── E6 exports ─────────────────────────────────────────────────────────
+
+
+def test_export_milestones_as_bibtex(client):
+    c, _ = client
+    topic = SimpleNamespace(**{**vars(TOPIC), "built_at": datetime(2026, 10, 12)})
+    paper = {"id": "1", "title": "Fast R-CNN", "year": 2015, "authors": ["Ross Girshick"], "venue": None,
+             "doi": None, "arxiv_id": "1504.08083", "url": "https://arxiv.org/abs/1504.08083"}
+    with patch(f"{ROUTER_DB}.get_topic", return_value=topic), patch(f"{ROUTER_DB}.milestone_ids", return_value=[1]), \
+            patch(f"{ROUTER_DB}.export_papers", return_value=[paper]):
+        resp = c.get("/api/v1/evolution/topics/object-detection/export", params={"what": "milestones", "format": "bib"})
+    assert resp.status_code == 200
+    assert resp.headers["content-disposition"] == 'attachment; filename="object-detection-milestones.bib"'
+    assert resp.text.startswith("@misc{girshick2015fast,")
+
+
+def test_export_rejects_formats_that_do_not_fit(client):
+    c, _ = client
+    resp = c.get("/api/v1/evolution/topics/object-detection/export", params={"what": "gaps", "format": "bib"})
+    assert resp.status_code == 422
