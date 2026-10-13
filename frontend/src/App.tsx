@@ -18,6 +18,10 @@ const EvolutionPage = lazy(() =>
   import('./features/evolution/EvolutionPage').then((m) => ({ default: m.EvolutionPage })),
 )
 
+const IdeaCheckPage = lazy(() =>
+  import('./features/evolution/IdeaCheckPage').then((m) => ({ default: m.IdeaCheckPage })),
+)
+
 const evolution = (
   <Suspense fallback={<Spinner label="Loading…" />}>
     <EvolutionPage />
@@ -39,6 +43,7 @@ function App() {
           <Route path="clusters" element={<ClustersPage />} />
           <Route path="clusters/:id" element={<ClusterPage />} />
           <Route path="evolution" element={evolution} />
+          <Route path="evolution/ideas" element={<Suspense fallback={<Spinner label="Loading…" />}><IdeaCheckPage /></Suspense>} />
           <Route path="evolution/:slug" element={evolution} />
           <Route path="saved" element={<SavedPage />} />
           <Route path="search" element={<SearchPage />} />

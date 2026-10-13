@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, GitBranch, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { ArrowLeft, GitBranch, Lightbulb, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { apiErrorMessage } from '../../api/error'
 import { useIsAdmin } from '../../api/queries/auth'
 import { Button, ButtonLink } from '../../ui/Button'
@@ -63,7 +63,11 @@ export function EvolutionPage() {
         <TopicView key={slug} slug={slug} />
       ) : (
         <>
-          <PageHeader title="Evolution" description="How a field developed: which papers it grew from, its milestones, and the problems still open." />
+          <PageHeader
+            title="Evolution"
+            description="How a field developed: which papers it grew from, its milestones, and the problems still open."
+            actions={<ButtonLink to="/evolution/ideas" variant="ai" size="sm"><Lightbulb /> Check an idea</ButtonLink>}
+          />
           <TopicSearch />
           <div className="grid gap-8">
             <NewInMaps />
