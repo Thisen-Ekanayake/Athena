@@ -401,6 +401,7 @@ class User(Base):
     must_change_password = Column(Boolean, nullable=False, default=False)  # set by temporary passwords
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     last_login_at = Column(DateTime(timezone=True), nullable=True)
+    onboarded_at = Column(DateTime(timezone=True), nullable=True)  # finished or skipped the setup guide
 
 
 class UserSession(Base):
@@ -863,3 +864,44 @@ class WatchHit(Base):
     item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id", ondelete="CASCADE"), nullable=False)
     similarity = Column(Float, nullable=True)        # searches only
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+
+# ── Usage and sharing ────────────────────────────────────────────────
+
+
+class UsageEvent(Base):
+    """Model calls: who asked (none for background work), for what, and their tokens and cost.
+
+    Append-only, so a month's spend survives users deleting their questions and checks. Cost is priced when the
+    call is made, at the prices set then.
+    """
+    __tablename__ = "usage_events"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    feature = Column(String, nullable=False)         # qa | map_qa | idea_check | lit_review | summary | ...
+    kind = Column(String, nullable=False, default="chat")  # chat | embed
+    model = Column(String, nullable=False, default="")
+    calls = Column(Integer, nullable=False, default=1)  # background calls are summed into one row a minute
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    cost_usd = Column(Float, nullable=False, default=0.0)
+
+
+class MapShare(Base):
+    """A read-only link to a map for people without an account. The token is the whole secret."""
+    __tablename__ = "map_shares"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"), nullable=False,
+                      index=True)
+    token = Column(String, unique=True, nullable=False)
+    created_by = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=True)   # none: until revoked
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    views = Column(Integer, nullable=False, default=0)
+    last_viewed_at = Column(DateTime(timezone=True), nullable=True)
+
+    topic = relationship("EvoTopic")
