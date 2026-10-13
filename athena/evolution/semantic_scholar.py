@@ -38,6 +38,8 @@ PAPER_FIELDS = ",".join(["paperId", "externalIds", "title", "year", "citationCou
                         + [f"references.{f}" for f in _REF_FIELDS])
 CANDIDATE_FIELDS = PAPER_FIELDS + ",abstract,venue,publicationTypes"
 CONTEXT_FIELDS = ",".join(["contexts", "intents", "isInfluential", *_REF_FIELDS])
+CITATION_CONTEXT_FIELDS = "contexts,paperId"
+CITATION_PAGE = 1000  # the citations endpoint's largest page
 SEARCH_FIELDS = "paperId,externalIds,title,year,citationCount,abstract,venue,publicationTypes"
 
 
@@ -135,16 +137,18 @@ class SemanticScholarClient:
 
     # ── public API ──────────────────────────────────────────────────
 
-    def get_papers(self, ids: list[str], fields: str = PAPER_FIELDS) -> dict[str, S2Paper | None]:
+    def get_papers(self, ids: list[str], fields: str = PAPER_FIELDS,
+                   max_age: float | None = None) -> dict[str, S2Paper | None]:
         """Papers by Semantic Scholar identifier ('ARXIV:2106.09685', 'DOI:...', 'MAG:...').
 
         Unknown identifiers map to None. Each paper is cached separately, so asking again for a
-        slightly different set only fetches the new ones.
+        slightly different set only fetches the new ones. ``max_age`` (seconds) refetches papers cached
+        longer ago, for new preprints whose references Semantic Scholar has not extracted yet.
         """
         out: dict[str, S2Paper | None] = {}
         missing = []
         for pid in dict.fromkeys(i for i in ids if i):
-            cached = self._cache_read("paper", pid, fields)
+            cached = self._cache_read("paper", pid, fields, max_age)
             if cached is not None:
                 out[pid] = S2Paper.from_api(cached["data"]) if cached["data"] else None
             else:
@@ -207,6 +211,22 @@ class SemanticScholarClient:
                           intents=r.get("intents") or [], is_influential=bool(r.get("isInfluential")))
                 for r in rows if r.get("citedPaper")]
 
+    def citation_contexts(self, paper_id: str, limit: int = CITATION_PAGE) -> list[tuple[str, list[str]]]:
+        """(citing paper, sentences citing ``paper_id``) for up to ``limit`` citing papers, newest first.
+
+        One request per paper: enough to see what name recent papers use for it (the method-name feature).
+        """
+        key = f"{paper_id}:{limit}"
+        cached = self._cache_read("citations", key, CITATION_CONTEXT_FIELDS)
+        if cached is not None:
+            rows = cached["data"]
+        else:
+            data = self._request("GET", f"/paper/{paper_id}/citations",
+                                 {"fields": CITATION_CONTEXT_FIELDS, "limit": min(limit, CITATION_PAGE)})
+            rows = (data or {}).get("data") or []
+            self._cache_write("citations", key, CITATION_CONTEXT_FIELDS, rows)
+        return [((r.get("citingPaper") or {}).get("paperId") or "", r.get("contexts") or []) for r in rows]
+
     # ── transport ───────────────────────────────────────────────────
 
     def _cache_file(self, kind: str, key: str, fields: str) -> Path | None:
@@ -215,11 +235,11 @@ class SemanticScholarClient:
         digest = hashlib.sha256(json.dumps([kind, key, fields]).encode()).hexdigest()
         return self.cache_dir / digest[:2] / f"{digest}.json"
 
-    def _cache_read(self, kind: str, key: str, fields: str) -> dict | None:
+    def _cache_read(self, kind: str, key: str, fields: str, max_age: float | None = None) -> dict | None:
         path = self._cache_file(kind, key, fields)
         if path and path.exists():
             entry = json.loads(path.read_text())
-            if time.time() - entry["fetched_at"] < CACHE_TTL_SECONDS:
+            if time.time() - entry["fetched_at"] < min(CACHE_TTL_SECONDS, max_age or CACHE_TTL_SECONDS):
                 self.cache_hits += 1
                 return entry
         return None

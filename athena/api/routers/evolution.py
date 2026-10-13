@@ -25,6 +25,9 @@ GET  /api/v1/evolution/topics/{slug}/export?what=&format=    — milestones or t
                                                                Markdown; gap themes as CSV
 GET  /api/v1/evolution/topics/{slug}/people                  — key authors and labs per era, and who introduced
                                                                each milestone
+GET  /api/v1/evolution/items/{item_id}                       — a feed item's place in the maps, and the
+                                                               milestones it cites
+GET  /api/v1/evolution/new-papers?days=30&topic=             — recent feed papers that cite map milestones
 """
 import re
 import time
@@ -420,3 +423,21 @@ def export_topic(
     filename = f"{slug}-{what}.{format}"
     return Response(body, media_type=f"{MEDIA_TYPES[format]}; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+# ── the feed and the maps (E5) ─────────────────────────────────────────
+
+
+@router.get("/items/{item_id}")
+def feed_item_place(item_id: UUID, session: Session = Depends(get_db)):
+    place = db.feed_place(session, item_id)
+    if place is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return place
+
+
+@router.get("/new-papers")
+def new_papers(days: int = Query(30, ge=1, le=120), topic: str | None = Query(None, max_length=200),
+               session: Session = Depends(get_db)):
+    """Feed papers from the last ``days`` days that cite milestones, those citing the most first."""
+    return db.new_feed_papers(session, days, topic)

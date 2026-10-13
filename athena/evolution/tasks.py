@@ -35,3 +35,10 @@ def run_gpu_lane(embed: bool = True, classify: bool = True) -> dict:
     """Embed pending chunks, then label pending citing sentences, one model on the GPU at a time."""
     from athena.evolution.gpu import run_gpu_lane as run_lane
     return run_lane(embed=embed, classify=classify)
+
+
+@celery_app.task
+def link_feed() -> dict:
+    """Feed papers that are map papers, and new ones citing milestones. Network only: on the default queue."""
+    from athena.evolution.feedlink import check_feed_citations, link_feed_items
+    return {"linked": link_feed_items()} | check_feed_citations()
