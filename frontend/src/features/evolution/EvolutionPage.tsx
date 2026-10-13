@@ -17,6 +17,7 @@ import { EvolutionGraph } from './EvolutionGraph'
 import { GapsView } from './GapsView'
 import { PaperPanel } from './PaperPanel'
 import { ExportMenu } from './ExportMenu'
+import { FollowButton } from '../inbox/FollowButton'
 import type { GraphExporter } from './graphExport'
 import { NewInMaps } from './NewInMaps'
 import { ProposalPanel } from './ProposalPanel'
@@ -352,6 +353,7 @@ function TopicView({ slug }: { slug: string }) {
               <span className="font-mono text-[12px] text-fg-3 tabular-nums">
                 {total_papers} papers · {milestones} milestones · built {topic.built_at ? new Date(topic.built_at).toLocaleDateString() : '—'}
               </span>
+              {current.id && <FollowButton target={{ kind: 'map', topic_id: current.id }} />}
               <ExportMenu slug={slug} exporter={() => exporter.current} />
               {current.origin === 'search' && <SearchTopicActions topic={current} />}
             </span>

@@ -5,6 +5,7 @@ import { ArrowRight, GitBranch, Search, Sparkles } from 'lucide-react'
 import { useSearch } from '../api/queries/phase4'
 import { ItemList } from '../components/items/ItemRow'
 import { searchTopics } from '../features/evolution/api'
+import { FollowButton } from '../features/inbox/FollowButton'
 import { searchPapers } from '../features/search/api'
 import { LitReview, ResearchPaper } from '../features/search/ResearchResults'
 import { Button } from '../ui/Button'
@@ -83,7 +84,11 @@ export function SearchPage() {
 
   return (
     <div className="mx-auto max-w-[920px]">
-      <PageHeader title={q ? `“${q}”` : 'Search'} description="Search your library, or reach out to Semantic Scholar and draft a literature review from what comes back." />
+      <PageHeader
+        title={q ? `“${q}”` : 'Search'}
+        description="Search your library, or reach out to Semantic Scholar and draft a literature review from what comes back."
+        actions={q.length >= 3 && q.length <= 300 && <FollowButton target={{ kind: 'search', query: q }} />}
+      />
       <SearchForm key={q} initial={q} onSearch={(next) => update({ q: next })} />
 
       {q.length < 3 ? (
