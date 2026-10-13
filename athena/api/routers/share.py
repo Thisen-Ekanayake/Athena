@@ -65,12 +65,17 @@ def _public(payload: dict) -> dict:
 
 
 @router.get("/{token}")
-def shared_topic(found=Depends(shared), session: Session = Depends(get_db)):
-    """The map's summary; opening the link counts as a view."""
+def shared_topic(found=Depends(shared)):
+    """The map's summary. The page polls it while the map refreshes, so it does not count views."""
     share, topic = found
-    shares.count_view(session, share)
     return _public({"topic": db.topic_summary(topic)})["topic"] | {
         "shared": {"expires_at": shares.as_dict(share)["expires_at"]}}
+
+
+@router.post("/{token}/view", status_code=204)
+def shared_view(found=Depends(shared), session: Session = Depends(get_db)):
+    """The page says so once when it opens the link, so the link's maker can see it was opened."""
+    shares.count_view(session, found[0])
 
 
 @router.get("/{token}/graph")

@@ -150,11 +150,13 @@ def test_anyone_with_the_link_can_open_the_map_without_its_builders_details(env)
     assert body["shared"]["expires_at"] is None
 
 
-def test_opening_a_link_counts_a_view(env):
+def test_opening_a_link_counts_a_view_and_polling_does_not(env):
     Session, _, _ = env
     token = make_link(admin_client()).json()["token"]
+    c = anonymous()
     for _ in range(2):
-        anonymous().get(f"/api/v1/share/{token}")
+        assert c.post(f"/api/v1/share/{token}/view").status_code == 204
+        c.get(f"/api/v1/share/{token}")
     with Session() as s:
         assert s.execute(select(MapShare.views)).scalar_one() == 2
 
