@@ -7,6 +7,7 @@ import { FeedPage } from './pages/FeedPage'
 import { HomePage } from './pages/HomePage'
 import { PaperPage } from './pages/PaperPage'
 import { ChangePasswordPage, LoginPage, RequireAuth, SetupPage } from './pages/AuthPages'
+import { InboxPage } from './pages/InboxPage'
 import { SavedPage } from './pages/SavedPage'
 import { SearchPage } from './pages/SearchPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -46,6 +47,7 @@ function App() {
           <Route path="evolution/ideas" element={<Suspense fallback={<Spinner label="Loading…" />}><IdeaCheckPage /></Suspense>} />
           <Route path="evolution/:slug" element={evolution} />
           <Route path="saved" element={<SavedPage />} />
+          <Route path="inbox" element={<InboxPage />} />
           <Route path="search" element={<SearchPage />} />
           {/* Research search and the literature review now live on the search page. */}
           <Route path="research" element={<Navigate to="/search" replace />} />

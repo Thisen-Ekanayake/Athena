@@ -8,6 +8,7 @@ import { Button } from '../../ui/Button'
 import { Kbd } from '../../ui/Kbd'
 import { OwlCoin } from '../../ui/OwlCoin'
 import { timeAgo } from '../items/format'
+import { InboxBell } from './InboxBell'
 import { SyncDialog } from './SyncLog'
 
 /** The most recent fetch across all sources, as "4 minutes ago". */
@@ -54,7 +55,8 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
         <span className="min-w-0 flex-1 truncate">Search papers and topics, or ask a question</span>
         <Kbd className="max-sm:hidden">⌘K</Kbd>
       </button>
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex items-center gap-2">
+        <InboxBell />
         {lastSynced && <span className="text-[12px] whitespace-nowrap text-fg-3 max-lg:hidden">Synced {lastSynced}</span>}
         <Button variant="secondary" size="sm" onClick={sync} disabled={starting} title="Fetch new items from every source">
           <RefreshCw className={starting ? 'animate-spin' : undefined} /> <span className="max-sm:sr-only">Sync</span>
