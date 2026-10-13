@@ -17,6 +17,7 @@ import { GapsView } from './GapsView'
 import { PaperPanel } from './PaperPanel'
 import { ExportMenu } from './ExportMenu'
 import type { GraphExporter } from './graphExport'
+import { PeopleView } from './PeopleView'
 import { ReadingPath } from './ReadingPath'
 import { ProposalPanel } from './ProposalPanel'
 import { TimelineStrip } from './TimelineStrip'
@@ -43,11 +44,12 @@ const LIMITS = [
   { value: '600', label: '600' },
 ]
 
-type Tab = 'map' | 'path' | 'gaps' | 'no-full-text'
+type Tab = 'map' | 'path' | 'gaps' | 'people' | 'no-full-text'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'map', label: 'Lineage map' },
   { id: 'path', label: 'Reading path' },
   { id: 'gaps', label: 'Open problems' },
+  { id: 'people', label: 'People' },
 ]
 const TAB_IDS = new Set<string>([...TABS.map((t) => t.id), 'no-full-text'])
 
@@ -398,6 +400,8 @@ function TopicView({ slug }: { slug: string }) {
         <ReadingPath slug={slug} onSelect={selectInMap} />
       ) : tab === 'gaps' ? (
         <GapsView slug={slug} onSelect={selectInMap} />
+      ) : tab === 'people' ? (
+        <PeopleView slug={slug} onSelect={selectInMap} />
       ) : (
         <div className="grid gap-3">
           <Button variant="ghost" size="sm" className="-ml-2.5 justify-self-start" onClick={() => setTab('map')}><ArrowLeft /> Back to the map</Button>
