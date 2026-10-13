@@ -698,6 +698,10 @@ export interface MapSnapshot {
 export interface TopicChanges {
   topic: EvolutionTopic
   refresh_days: number
+  /** The named-method milestone feature (E9) is on for this map */
+  named_method: boolean
+  /** ...and the current build already used it */
+  named_method_in_scores: boolean
   snapshots: MapSnapshot[]
 }
 
@@ -721,11 +725,11 @@ const useTopicAction = (slug: string, path: string) => {
 export const useRefreshTopic = (slug: string) => useTopicAction(slug, 'refresh')
 export const useReadFullText = (slug: string) => useTopicAction(slug, 'full-text')
 
-export const useRefreshInterval = (slug: string) => {
+export const useTopicSettings = (slug: string) => {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: async (refresh_days: number) =>
-      (await apiClient.patch<{ refresh_days: number }>(`/evolution/topics/${slug}/settings`, { refresh_days })).data,
+    mutationFn: async (settings: { refresh_days?: number; named_method?: boolean }) =>
+      (await apiClient.patch<{ refresh_days: number; named_method: boolean }>(`/evolution/topics/${slug}/settings`, settings)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['evolution', 'changes', slug] }),
   })
 }
