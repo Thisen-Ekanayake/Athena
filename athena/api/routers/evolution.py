@@ -35,8 +35,8 @@ POST /api/v1/evolution/topics/{slug}/ask                     — a question answ
                                                                citing paper and section
 GET|DELETE /api/v1/evolution/topics/{slug}/questions         — the user's questions to a map
 DELETE /api/v1/evolution/questions/{id}                      — one of them
-GET  /api/v1/evolution/topics/{slug}/links                   — papers shared with other maps, milestones borrowed
-                                                               and lent, and gaps other maps' papers may address
+GET  /api/v1/evolution/topics/{slug}/links                   — papers shared with other maps, and milestones
+                                                               borrowed and lent
 GET  /api/v1/evolution/topics/{slug}/changes                 — snapshots and what changed between them
 POST /api/v1/evolution/topics/{slug}/refresh                 — rebuild, read new full text, GPU lane, snapshot (admin)
 POST /api/v1/evolution/topics/{slug}/full-text               — read full text and run the GPU lane only (admin)

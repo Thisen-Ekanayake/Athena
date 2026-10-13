@@ -311,10 +311,9 @@ def test_questions_are_per_user(client):
 
 def test_links_are_cached_until_any_map_changes(client):
     c, _ = client
-    payload = {"topic": {}, "shared": {"total": 0, "papers": []}, "borrowed": [], "lent": [], "cross_gaps": [],
-               "cross_min_score": 0.68}
+    payload = {"topic": {}, "shared": {"total": 0, "papers": []}, "borrowed": [], "lent": []}
     with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), patch(f"{ROUTER_DB}.labels_version", return_value="0"), \
-            patch(f"{ROUTER_DB}.maps_version", side_effect=["1-6-0", "1-6-0", "2-6-0"]), \
+            patch(f"{ROUTER_DB}.maps_version", side_effect=["1-6", "1-6", "2-6"]), \
             patch(f"{ROUTER_DB}.topic_links", return_value=payload) as build:
         for _ in range(3):
             assert c.get("/api/v1/evolution/topics/object-detection/links").json() == payload

@@ -47,8 +47,8 @@ LOOSE_INSTRUCT = "Given a limitation stated in a research paper, retrieve passag
 LOOSE_SECTIONS = ["abstract", "intro", "method"]
 LOOSE_PER_GAP = 3
 LOOSE_FLOOR = 0.3
-# Cross-map links (E7): the same search against papers of maps the gap's paper is not in. Nearest chunks of
-# in-map papers are skipped after the search, so it asks for more.
+# Cross-map links (E7, an experiment kept out of the lane): the same search against papers of maps the gap's
+# paper is not in. Nearest chunks of in-map papers are skipped after the search, so it asks for more.
 CROSS_SEARCH = 60
 
 
@@ -231,7 +231,14 @@ def _cross_links(http: httpx.Client, url: str, session) -> int:
 
 
 def cross_links() -> int:
-    """Cross-map links only, for gap statements embedded before the pass existed."""
+    """Cross-map gap links, run by hand; not part of the lane and not shown.
+
+    Measured 2026-10-13 on blind samples of the first run (2,248 links over 1,806 statements): 3 of 40 dev links
+    addressed their gap, at no score cutoff better than 2 in 10 (above 0.65, the in-map loose-link cutoff of
+    0.68 kept 4 links in all). Asking the 9B to confirm each link (yes, then yes again with thinking) kept 3 of 6
+    correct on dev and 1 of 6 on 60 fresh links: across fields the chunks match on generic wording ("large
+    models are expensive", "multi-scale features"). Kept to try better checks on, not as a feature.
+    """
     vectors.ensure_collection()
     url, server = embed_server()
     llm.check_embed_space("evolution", embed_model_name())
@@ -248,8 +255,7 @@ def embed_abstracts() -> int:
 
 
 def embed_pending(limit: int | None = None) -> dict:
-    """Embed chunks and gap statements that have no vector yet, search loose and cross-map links, then embed
-    abstracts."""
+    """Embed chunks and gap statements that have no vector yet, search loose links, then embed abstracts."""
     vectors.ensure_collection()
     url, server = embed_server()
     llm.check_embed_space("evolution", embed_model_name())
@@ -258,7 +264,6 @@ def embed_pending(limit: int | None = None) -> dict:
         if limit is None:
             summary["gaps_embedded"] = _embed_gaps(http, url, session)
             summary["loose_links"] = _loose_links(http, url, session)
-            summary["cross_links"] = _cross_links(http, url, session)
             summary["abstracts_embedded"] = _embed_abstracts(http, url, session)
     return summary
 

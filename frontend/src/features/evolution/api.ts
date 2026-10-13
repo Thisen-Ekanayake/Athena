@@ -646,16 +646,6 @@ export interface TopicLinks {
   shared: { total: number; papers: (LinkPaper & { elsewhere: { topic: string; topic_name: string; milestone: boolean }[] })[] }
   borrowed: (LinkPaper & { from: { topic: string; topic_name: string }; citing_papers: number })[]
   lent: (LinkPaper & { citing_papers: number; by: Record<string, number> })[]
-  cross_gaps: {
-    theme: { id: string; label: string; status: GapTheme['status'] }
-    gap: string
-    score: number
-    paper: LinkPaper
-    maps: { topic: string; topic_name: string }[]
-    passage: string
-    section_type: string
-  }[]
-  cross_min_score: number
 }
 
 export const useTopicLinks = (slug: string) =>
