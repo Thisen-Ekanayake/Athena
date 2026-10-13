@@ -51,3 +51,29 @@ def test_first_snapshot_has_no_changes_and_identical_ones_are_empty():
     s = snap(["m1"], [theme("T", "new", ["a"])], ["m1"])
     assert diff(None, s) is None
     assert is_empty(diff(s, s)) and not is_empty(None)
+
+
+def test_a_failed_refresh_leaves_the_previous_map_readable(monkeypatch):
+    import pytest
+
+    from athena.database import evolution as db
+    from athena.evolution import build, tasks
+    statuses = []
+    monkeypatch.setattr(db, "get_topic", lambda session, slug: type("T", (), {"origin": "curated"})())
+    monkeypatch.setattr(db, "set_topic_status", lambda slug, status, detail=None, stats=None: statuses.append(status))
+    monkeypatch.setattr("athena.database.db.SessionLocal", lambda: _NullSession())
+
+    def boom(slug, **kwargs):
+        raise RuntimeError("OpenAlex is down")
+    monkeypatch.setattr(build, "build_topic", boom)
+    with pytest.raises(RuntimeError):
+        tasks.refresh_build("peft")
+    assert statuses == ["ready"]
+
+
+class _NullSession:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False

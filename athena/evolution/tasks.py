@@ -68,16 +68,24 @@ def fetch_method_names_step(slug: str) -> dict:
 
 @celery_app.task
 def refresh_build(slug: str) -> dict:
-    """Rebuild with the old map readable meanwhile (status ``refining``). A failure stops the chain."""
+    """Rebuild with the old map readable meanwhile (status ``refining``). A failure stops the chain.
+
+    The build saves in one transaction, so when it fails the previous map is still there: it goes back to
+    ``ready`` with a note, instead of the ``failed`` a first build gets.
+    """
     from athena.database import evolution as db
     from athena.database.db import SessionLocal
     from athena.evolution.build import build_search_topic, build_topic as run_build
     with SessionLocal() as session:
         topic = db.get_topic(session, slug)
         origin = topic.origin if topic else None
-    if origin == "search":
-        return build_search_topic(slug, stage_status="refining", snapshot=False)
-    return run_build(slug, stage_status="refining", snapshot=False)
+    try:
+        if origin == "search":
+            return build_search_topic(slug, stage_status="refining", snapshot=False)
+        return run_build(slug, stage_status="refining", snapshot=False)
+    except Exception as exc:
+        db.set_topic_status(slug, "ready", f"The refresh failed, so this is the previous build: {exc}"[:500])
+        raise
 
 
 @celery_app.task
