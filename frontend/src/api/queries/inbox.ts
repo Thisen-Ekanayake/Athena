@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../client'
 
-export type InboxKind = 'map_changes' | 'map_new' | 'feed_citations' | 'watch_matches' | 'digest'
+export type InboxKind = 'map_changes' | 'map_new' | 'feed_citations' | 'watch_matches' | 'digest' | 'budget'
 
 /** A feed item an entry points at; similarity is set for searches. */
 export interface InboxItem {

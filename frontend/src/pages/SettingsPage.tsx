@@ -10,6 +10,7 @@ import { useAddSource, useSources, useToggleSource, useUpdateSource, type Previe
 import { timeAgo } from '../components/items/format'
 import { SyncLog } from '../components/layout/SyncLog'
 import { NotificationsSettings } from '../features/inbox/NotificationsSettings'
+import { UsageSettings } from '../features/usage/UsageSettings'
 import { PasswordForm } from './AuthPages'
 import { useAppStore, type Accent } from '../store/appStore'
 import { Button } from '../ui/Button'
@@ -22,13 +23,15 @@ import { Spinner } from '../ui/Spinner'
 import { cn } from '../ui/cn'
 import { inputClass } from '../ui/inputClass'
 
-// Admin tabs change Athena for everyone; Account, Notifications and Appearance are each person's own.
+// Admin tabs change Athena for everyone; Account, Notifications, Usage and Appearance are each person's own
+// (Usage also shows admins the whole app).
 const TABS = [
   { id: 'sources', label: 'Sources', admin: true },
   { id: 'keys', label: 'Models and keys', admin: true },
   { id: 'users', label: 'Users', admin: true },
   { id: 'account', label: 'Account', admin: false },
   { id: 'notifications', label: 'Notifications', admin: false },
+  { id: 'usage', label: 'Usage', admin: false },
   { id: 'appearance', label: 'Appearance', admin: false },
   { id: 'clusters', label: 'Clusters', admin: true },
   { id: 'health', label: 'Health', admin: true },
@@ -88,6 +91,7 @@ export function SettingsPage() {
           {active === 'users' && <UsersSection />}
           {active === 'account' && <AccountSection />}
           {active === 'notifications' && <NotificationsSettings />}
+          {active === 'usage' && <UsageSettings />}
           {active === 'appearance' && <AppearanceSection />}
           {active === 'clusters' && <ClustersSection />}
           {active === 'health' && <HealthSection />}
@@ -296,7 +300,7 @@ const CHAT_FIELDS: Field[] = [
   { key: 'LLM_SUMMARY_MODEL', label: 'Summaries', placeholder: 'same model' },
   { key: 'LLM_QA_MODEL', label: 'Q&A', placeholder: 'same model' },
   { key: 'LLM_LIT_REVIEW_MODEL', label: 'Literature reviews', placeholder: 'same model' },
-  { key: 'LLM_PRICE_IN_PER_M', label: 'Input price', hint: 'USD per million tokens, for the cost logs. 0 for local models.' },
+  { key: 'LLM_PRICE_IN_PER_M', label: 'Input price', hint: 'USD per million tokens, for Settings → Usage and the budget. 0 for local models.' },
   { key: 'LLM_PRICE_OUT_PER_M', label: 'Output price', hint: 'USD per million tokens.' },
 ]
 
@@ -304,6 +308,7 @@ const EMBED_FIELDS: Field[] = [
   { key: 'EMBED_BASE_URL', label: 'Server address', placeholder: 'same as chat', wide: true },
   { key: 'EMBED_MODEL', label: 'Model' },
   { key: 'EMBED_DIMENSIONS', label: 'Dimensions', placeholder: "model's own", hint: 'Only for models that shorten vectors themselves (OpenAI text-embedding-3). Athena keeps 1024.' },
+  { key: 'EMBED_PRICE_PER_M', label: 'Price', hint: 'USD per million tokens. 0 for local models.' },
 ]
 
 function ModelFields({ title, fields, form, defaults, onChange }: {
@@ -540,7 +545,7 @@ function UsersSection() {
     <section className="grid gap-6">
       <SectionTitle
         title="Users"
-        description="There is no public sign-up: add people here and pass on their temporary password. Users can read everything, save lists, ask questions and build maps up to a daily limit; admins can also change sources, models, users and maps."
+        description={<>There is no public sign-up: add people here and pass on their temporary password. Users can read everything, save lists, ask questions and build maps up to a daily limit; admins can also change sources, models, users and maps. What each person has used, and the limits, are under <Link to="/settings/usage" className="text-accent hover:underline">Usage</Link>.</>}
       />
       <Card className="p-4">
         <form onSubmit={add} className="grid gap-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto_auto] sm:items-end">
