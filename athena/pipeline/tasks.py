@@ -76,6 +76,11 @@ def setup_periodic_tasks(sender, **kwargs):
     sender.add_periodic_task(86400.0, generate_all_trending_briefs.s(), name='daily trending briefs')
     # Feed papers that are in a map, or cite a map's milestones
     sender.add_periodic_task(21600.0, athena.evolution.tasks.link_feed.s(), name='link the feed to the maps')
+    # Nightly: refresh the evolution maps whose last build is older than their interval
+    from celery.schedules import crontab
+    from athena.evolution.refresh import REFRESH_HOUR_UTC
+    sender.add_periodic_task(crontab(hour=REFRESH_HOUR_UTC, minute=0), athena.evolution.tasks.refresh_due_topics.s(),
+                             name='refresh evolution maps')
 
 
 @celery_app.task

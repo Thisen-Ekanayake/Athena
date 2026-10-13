@@ -70,6 +70,9 @@ class TopicConfig:
     key_routes: int = 3                # top-SPC edges the key-route main path starts from
     # Tier 2 (full text): milestones, main-path papers and this many of each milestone's strongest citers
     tier2_successors: int = 8
+    # Refresh (E4): rebuild, read new full text and run the GPU lane when the last build is this many days old.
+    # 0 turns the scheduled refresh off for the topic.
+    refresh_days: int = 30
 
     @classmethod
     def from_dict(cls, data: dict | None) -> "TopicConfig":

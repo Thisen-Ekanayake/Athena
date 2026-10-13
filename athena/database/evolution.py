@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, aliased
 from athena.core.models import (
     EvoChunk, EvoCitation, EvoCitationContext, EvoCrossLink, EvoGapStatement, EvoGapTheme, EvoGapThemeMember,
     EvoIdeaCheck, EvoLooseLink, EvoMainPathEdge, EvoMapQuestion, EvoMilestoneOverride, EvoPaper, EvoPaperNote,
-    EvoReadingProgress, EvoSection, EvoTopic, EvoTopicPaper,
+    EvoReadingProgress, EvoSection, EvoSnapshot, EvoTopic, EvoTopicPaper,
 )
 from athena.database.db import SessionLocal
 from athena.evolution.config import TopicConfig
@@ -137,6 +137,7 @@ def _topic_rows(session: Session, topic_id) -> list[tuple[EvoTopicPaper, EvoPape
 
 def list_topics(session: Session) -> list[dict]:
     out = []
+    changes = latest_changes(session)
     for topic in session.execute(select(EvoTopic).order_by(EvoTopic.name)).scalars():
         rows = _topic_rows(session, topic.id)
         overrides = _overrides(session, topic.id)
@@ -144,7 +145,8 @@ def list_topics(session: Session) -> list[dict]:
             effective_milestone(tp.is_milestone_auto, overrides[p.id].action if p.id in overrides else None)
             for tp, p in rows
         )
-        out.append(topic_summary(topic) | {"paper_count": len(rows), "milestone_count": milestones})
+        out.append(topic_summary(topic) | {"paper_count": len(rows), "milestone_count": milestones,
+                                           "last_change": changes.get(topic.slug)})
     return out
 
 
@@ -884,6 +886,87 @@ def topic_links(session: Session, topic: EvoTopic, limit: int = 40) -> dict:
         "cross_gaps": cross[:30],
         "cross_min_score": LOOSE_MIN_SCORE,
     }
+
+
+# ── snapshots and changes (E4) ─────────────────────────────────────────
+
+
+def snapshot_state(session: Session, topic: EvoTopic) -> tuple[dict, dict[str, dict]]:
+    """The topic as it stands: milestones, gap themes with their members, paper IDs; and each paper's
+    title, year and score (for naming the best new papers)."""
+    overrides = _overrides(session, topic.id)
+    rows = _topic_rows(session, topic.id)
+    milestones = [(tp, p) for tp, p in rows
+                  if effective_milestone(tp.is_milestone_auto, overrides[p.id].action if p.id in overrides else None)]
+    names = method_names(session, {p.id: p.title for _, p in milestones})
+    themes = list(session.execute(select(EvoGapTheme).where(EvoGapTheme.topic_id == topic.id)).scalars())
+    members: dict[UUID, list[str]] = defaultdict(list)
+    for theme_id, gap_id in session.execute(select(EvoGapThemeMember.theme_id, EvoGapThemeMember.gap_id).where(
+            EvoGapThemeMember.theme_id.in_([t.id for t in themes]))):
+        members[theme_id].append(str(gap_id))
+    state = {
+        "milestones": sorted(({"paper_id": str(p.id), "title": p.title, "year": p.year,
+                               "named_method": names.get(p.id) or tp.named_method,
+                               "score": round(tp.milestone_score or 0.0, 3)} for tp, p in milestones),
+                             key=lambda m: (m["year"] or 0, m["title"])),
+        "themes": [{"label": t.label, "status": t.status, "size": t.size, "first_year": t.first_year,
+                    "last_year": t.last_year, "members": sorted(members.get(t.id, []))} for t in themes],
+        "paper_ids": sorted(str(p.id) for _, p in rows),
+    }
+    info = {str(p.id): {"title": p.title, "year": p.year, "score": tp.milestone_score or 0.0} for tp, p in rows}
+    return state, info
+
+
+def take_snapshot(session: Session, topic: EvoTopic, reason: str) -> dict:
+    """Store the topic's current state and what changed since the last snapshot."""
+    from athena.evolution.snapshots import OPEN, diff
+    state, info = snapshot_state(session, topic)
+    last = session.execute(select(EvoSnapshot).where(EvoSnapshot.topic_id == topic.id)
+                           .order_by(EvoSnapshot.taken_at.desc()).limit(1)).scalar_one_or_none()
+    before = {"milestones": last.milestones, "themes": last.themes, "paper_ids": last.paper_ids} if last else None
+    stats = {"papers": len(state["paper_ids"]), "milestones": len(state["milestones"]),
+             "themes": len(state["themes"]), "open_themes": sum(t["status"] in OPEN for t in state["themes"])}
+    row = EvoSnapshot(topic_id=topic.id, taken_at=datetime.now(timezone.utc), built_at=topic.built_at,
+                      reason=reason, stats=stats, changes=diff(before, state, info), **state)
+    session.add(row)
+    session.commit()
+    return {"id": str(row.id), "stats": stats, "changes": row.changes}
+
+
+def topic_changes(session: Session, topic: EvoTopic, limit: int = 20) -> dict:
+    """Snapshots newest first, each with what changed since the one before."""
+    rows = session.execute(select(EvoSnapshot).where(EvoSnapshot.topic_id == topic.id)
+                           .order_by(EvoSnapshot.taken_at.desc()).limit(limit)).scalars()
+    config = TopicConfig.from_dict(topic.config)
+    return {"topic": topic_summary(topic), "refresh_days": config.refresh_days,
+            "snapshots": [{"id": str(r.id), "taken_at": r.taken_at.isoformat(), "reason": r.reason,
+                           "built_at": r.built_at.isoformat() if r.built_at else None, "stats": r.stats or {},
+                           "changes": r.changes} for r in rows]}
+
+
+def latest_changes(session: Session) -> dict[str, dict]:
+    """Each topic's latest snapshot that changed something, for the topic cards."""
+    out = {}
+    rows = session.execute(select(EvoSnapshot, EvoTopic.slug).join(EvoTopic, EvoSnapshot.topic_id == EvoTopic.id)
+                           .where(EvoSnapshot.changes.isnot(None)).order_by(EvoSnapshot.taken_at.desc())).all()
+    for snap, slug in rows:
+        c = snap.changes or {}
+        counts = {"new_milestones": len(c.get("new_milestones", [])), "new_gaps": len(c.get("new_gaps", [])),
+                  "solved_gaps": len(c.get("solved_gaps", [])), "papers_added": c.get("papers_added", 0)}
+        if slug not in out and any(counts.values()):
+            out[slug] = {"taken_at": snap.taken_at.isoformat(), **counts}
+    return out
+
+
+def due_for_refresh(session: Session, now: datetime, limit: int) -> list[str]:
+    """Built topics whose last build is older than their refresh interval, oldest first."""
+    due = []
+    for topic in session.execute(select(EvoTopic).where(EvoTopic.status == "ready", EvoTopic.built_at.isnot(None))
+                                 .order_by(EvoTopic.built_at)).scalars():
+        days = TopicConfig.from_dict(topic.config).refresh_days
+        if days > 0 and topic.built_at <= now - timedelta(days=days):
+            due.append(topic.slug)
+    return due[:limit]
 
 
 # ── names citing papers use (E9) ───────────────────────────────────────

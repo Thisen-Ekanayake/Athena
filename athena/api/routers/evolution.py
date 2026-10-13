@@ -37,6 +37,10 @@ GET|DELETE /api/v1/evolution/topics/{slug}/questions         — the user's ques
 DELETE /api/v1/evolution/questions/{id}                      — one of them
 GET  /api/v1/evolution/topics/{slug}/links                   — papers shared with other maps, milestones borrowed
                                                                and lent, and gaps other maps' papers may address
+GET  /api/v1/evolution/topics/{slug}/changes                 — snapshots and what changed between them
+POST /api/v1/evolution/topics/{slug}/refresh                 — rebuild, read new full text, GPU lane, snapshot (admin)
+POST /api/v1/evolution/topics/{slug}/full-text               — read full text and run the GPU lane only (admin)
+PATCH /api/v1/evolution/topics/{slug}/settings               — how often the map is refreshed (admin)
 """
 import json
 import re
@@ -91,6 +95,10 @@ class AskRequest(BaseModel):
     question: str = Field(..., min_length=3, max_length=1000)
     sections: list[Literal["method", "results", "limitations"]] = Field(default_factory=list, max_length=3)
     history: list[AskTurn] = Field(default_factory=list, max_length=6)
+
+
+class TopicSettingsRequest(BaseModel):
+    refresh_days: int = Field(..., ge=0, le=365)
 
 
 class ProposalRequest(BaseModel):
@@ -587,3 +595,52 @@ def delete_map_question(question_id: UUID, session: Session = Depends(get_db),
                         user: User = Depends(auth.active_user)):
     if not db.delete_map_question(session, user.id, question_id=question_id):
         raise HTTPException(status_code=404, detail="Question not found")
+
+
+# ── refresh and changelog (E4) ─────────────────────────────────────────
+
+
+@router.get("/topics/{slug}/changes")
+def topic_changes(slug: str, session: Session = Depends(get_db)):
+    return db.topic_changes(session, _topic_or_404(session, slug))
+
+
+def _queue_or_503(slug: str, **kwargs) -> str:
+    from athena.evolution.refresh import queue_refresh
+    try:
+        return queue_refresh(slug, **kwargs)
+    except Exception as exc:
+        logger.warning(f"Could not queue the refresh of {slug}: {exc}")
+        raise HTTPException(status_code=503, detail="The task queue is not reachable; is Redis running?")
+
+
+@router.post("/topics/{slug}/refresh", status_code=202, dependencies=[Depends(auth.require_admin)])
+def refresh_topic(slug: str, session: Session = Depends(get_db), r: redis_lib.Redis = Depends(get_redis)):
+    """Everything a scheduled refresh does, now. The map stays readable while it runs."""
+    topic = _built_topic_or_409(session, slug)
+    if topic.status in ("pending", "building", "refining"):
+        raise HTTPException(status_code=409, detail="This map is already being built")
+    before = (topic.status, topic.status_detail)
+    db.set_topic_status(slug, "refining", "Refresh queued")
+    try:
+        task_id = _queue_or_503(slug)
+    except HTTPException:
+        db.set_topic_status(slug, *before)
+        raise
+    cache_invalidate(r, f"evo:{slug}:*")
+    return {"queued": True, "task_id": task_id}
+
+
+@router.post("/topics/{slug}/full-text", status_code=202, dependencies=[Depends(auth.require_admin)])
+def read_full_text(slug: str, session: Session = Depends(get_db)):
+    """Tier 2 full text, then the GPU lane (labels, embeddings, gap themes), then a snapshot. No rebuild."""
+    _built_topic_or_409(session, slug)
+    return {"queued": True, "task_id": _queue_or_503(slug, rebuild=False, reason="full_text")}
+
+
+@router.patch("/topics/{slug}/settings", dependencies=[Depends(auth.require_admin)])
+def topic_settings(slug: str, body: TopicSettingsRequest, session: Session = Depends(get_db)):
+    topic = _topic_or_404(session, slug)
+    topic.config = {**(topic.config or {}), "refresh_days": body.refresh_days}
+    session.commit()
+    return {"slug": slug, "refresh_days": body.refresh_days}
