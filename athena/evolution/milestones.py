@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from athena.evolution import graph as g
 from athena.evolution.config import TopicConfig
+from athena.evolution.eras import era_bounds, era_of
 from athena.evolution.corpus import Corpus, classify_kind, relevance
 from athena.evolution.names import NAME_TOKEN
 
@@ -64,28 +65,6 @@ class TopicScores:
     papers: dict[str, PaperScore]
     main_path: list[tuple[str, str, float]]  # (citing, cited, spc_weight)
     stats: dict
-
-
-def era_bounds(paper_years: list[int], eras: int, max_era_years: int) -> list[tuple[int, int]]:
-    """Split years into eras holding equal numbers of papers, then cut any era longer than ``max_era_years``.
-
-    A paper's era follows from the rank of its year, so one year never spans two eras.
-    """
-    ordered = sorted(paper_years)
-    n = len(ordered)
-    starts = sorted({ordered[min(n - 1, i * n // eras)] for i in range(eras)})
-    bounds = []
-    for i, start in enumerate(starts):
-        end = starts[i + 1] - 1 if i + 1 < len(starts) else ordered[-1]
-        while end - start + 1 > max_era_years:
-            bounds.append((start, start + max_era_years - 1))
-            start += max_era_years
-        bounds.append((start, end))
-    return bounds
-
-
-def era_of(year: int, bounds: list[tuple[int, int]]) -> tuple[int, int]:
-    return next(b for b in bounds if b[0] <= year <= b[1])
 
 
 def select_milestones(scores: dict[str, PaperScore], years: dict[str, int | None],
