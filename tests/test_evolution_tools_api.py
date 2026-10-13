@@ -1,7 +1,7 @@
 """API tests for the evolution tools (ROADMAP E1-E9), with the database layer mocked."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
@@ -220,3 +220,87 @@ def test_idea_checks_are_private(client):
 def test_short_ideas_are_rejected(client):
     c, _ = client
     assert c.post("/api/v1/evolution/idea-checks", json={"idea": "too short"}).status_code == 422
+
+
+# ── E3 questions to a map ──────────────────────────────────────────────
+
+
+class FakeStream:
+    def __init__(self, tokens):
+        self.tokens = list(tokens)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self.tokens:
+            raise StopAsyncIteration
+        delta = SimpleNamespace(content=self.tokens.pop(0))
+        return SimpleNamespace(choices=[SimpleNamespace(delta=delta)])
+
+
+class FakeChat:
+    def __init__(self, tokens):
+        self.tokens = tokens
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+    async def create(self, **kwargs):
+        self.kwargs = kwargs
+        return FakeStream(self.tokens)
+
+
+def _events(resp):
+    import json
+    return [json.loads(line[6:]) for line in resp.text.splitlines() if line.startswith("data: {")]
+
+
+def test_ask_streams_sources_then_tokens_then_the_saved_id(client):
+    from athena.evolution.ask import Source
+    c, redis = client
+    as_user()
+    src = Source(n=1, paper_id="p", title="LoRA", year=2021, named_method="LoRA", section_type="method",
+                 heading="Method", text="Merged weights.", abstract_only=False, score=0.8)
+    chat = FakeChat(["Weights merge ", "[1]."])
+    with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), \
+            patch("athena.evolution.ask.retrieve", return_value=[src]) as retrieve, \
+            patch("athena.core.llm.async_chat_client", return_value=chat), \
+            patch(f"{ROUTER_DB}.save_map_question", return_value=uuid4()) as save:
+        resp = c.post("/api/v1/evolution/topics/object-detection/ask",
+                      json={"question": "Why no latency?", "sections": ["method"]})
+    events = _events(resp)
+    assert events[0]["sources"][0]["title"] == "LoRA" and events[0]["abstract_only"] == 0
+    assert [e["token"] for e in events[1:3]] == ["Weights merge ", "[1]."]
+    assert events[3]["done"] is True
+    assert retrieve.call_args.args[2:] == ("Why no latency?", ["method"])
+    assert save.call_args.args[:4] == (USER.id, TOPIC.id, "Why no latency?", "Weights merge [1].")
+    assert int(redis.get(f"limit:{USER.id}:map_qa_tokens:{datetime.now(timezone.utc):%Y-%m-%d}")) > 0
+
+
+def test_ask_stops_at_the_token_allowance(client):
+    c, redis = client
+    as_user()
+    redis.set(f"limit:{USER.id}:map_qa_tokens:{datetime.now(timezone.utc):%Y-%m-%d}", 10**9)
+    with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), patch("athena.evolution.ask.retrieve") as retrieve:
+        resp = c.post("/api/v1/evolution/topics/object-detection/ask", json={"question": "Why?"})
+    assert resp.status_code == 429 and "tokens" in resp.json()["detail"]
+    retrieve.assert_not_called()
+
+
+def test_ask_without_an_embedder_is_503(client):
+    from athena.evolution.ask import AskUnavailable
+    c, _ = client
+    with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), \
+            patch("athena.evolution.ask.retrieve", side_effect=AskUnavailable("no model")):
+        resp = c.post("/api/v1/evolution/topics/object-detection/ask", json={"question": "Why?"})
+    assert resp.status_code == 503
+
+
+def test_questions_are_per_user(client):
+    c, _ = client
+    as_user()
+    with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), \
+            patch(f"{ROUTER_DB}.map_questions", return_value=[]) as read:
+        assert c.get("/api/v1/evolution/topics/object-detection/questions").json() == []
+    assert read.call_args.args[1:] == (USER.id, TOPIC.id)
+    with patch(f"{ROUTER_DB}.delete_map_question", return_value=0):
+        assert c.delete(f"/api/v1/evolution/questions/{uuid4()}").status_code == 404
