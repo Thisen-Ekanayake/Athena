@@ -28,7 +28,9 @@ MODEL_SETTINGS = {
     "EMBED_BASE_URL": "",
     "EMBED_MODEL": llm.DEFAULT_EMBED_MODEL,
     "EMBED_DIMENSIONS": "",
+    "EMBED_PRICE_PER_M": "0",
 }
+NUMERIC_MODEL_SETTINGS = {"LLM_PRICE_IN_PER_M", "LLM_PRICE_OUT_PER_M", "EMBED_DIMENSIONS", "EMBED_PRICE_PER_M"}
 
 
 def _mask(value: str) -> str:
@@ -124,18 +126,24 @@ def get_model_settings():
     return _model_settings()
 
 
-@router.put("/models")
-def update_model_settings(body: ModelSettingsUpdate, db: Session = Depends(get_db)):
-    unknown = set(body.values) - set(MODEL_SETTINGS)
+def save_settings(db: Session, values: dict[str, str], allowed, numeric=(), whole=()) -> None:
+    """Store ``values`` in the settings table; an empty value deletes the row, so the environment applies again.
+
+    Every key must be in ``allowed``; those in ``numeric`` must be numbers no lower than 0, and those in ``whole``
+    whole numbers.
+    """
+    unknown = set(values) - set(allowed)
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown settings: {', '.join(sorted(unknown))}")
-    for key, value in body.values.items():
+    for key, value in values.items():
         value = value.strip()
-        if key in ("LLM_PRICE_IN_PER_M", "LLM_PRICE_OUT_PER_M", "EMBED_DIMENSIONS") and value:
+        if (key in numeric or key in whole) and value:
             try:
-                float(value)
+                number = int(value) if key in whole else float(value)
             except ValueError:
-                raise HTTPException(status_code=422, detail=f"{key} must be a number")
+                raise HTTPException(status_code=422, detail=f"{key} must be a {'whole ' if key in whole else ''}number")
+            if number < 0:
+                raise HTTPException(status_code=422, detail=f"{key} can't be negative")
         row = db.get(AppSetting, key)
         if not value:
             if row:
@@ -146,6 +154,11 @@ def update_model_settings(body: ModelSettingsUpdate, db: Session = Depends(get_d
         else:
             db.add(AppSetting(key=key, value=value, updated_at=datetime.utcnow()))
     db.commit()
+
+
+@router.put("/models")
+def update_model_settings(body: ModelSettingsUpdate, db: Session = Depends(get_db)):
+    save_settings(db, body.values, MODEL_SETTINGS, NUMERIC_MODEL_SETTINGS)
     return _model_settings()
 
 
