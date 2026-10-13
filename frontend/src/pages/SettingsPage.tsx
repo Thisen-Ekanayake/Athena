@@ -1,9 +1,9 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { Link, NavLink, useParams } from 'react-router-dom'
+import { Link, NavLink, useNavigate, useParams } from 'react-router-dom'
 import { ArrowDownWideNarrow, ArrowUpNarrowWide, Check, Eye, EyeOff, Pencil, RefreshCw, Trash2, X, ExternalLink } from 'lucide-react'
 import { apiClient, type Source } from '../api/client'
 import { apiErrorMessage } from '../api/error'
-import { useCreateUser, useCurrentUser, useIsAdmin, useResetPassword, useUpdateUser, useUsers, type AuthUser, type IssuedUser, type Role } from '../api/queries/auth'
+import { useCreateUser, useCurrentUser, useIsAdmin, useResetPassword, useSetOnboarded, useUpdateUser, useUsers, type AuthUser, type IssuedUser, type Role } from '../api/queries/auth'
 import { useApiKeys, useDeleteApiKey, useSetApiKey } from '../api/queries/app_settings'
 import { useClusters, useFetchHealth, useScoringHealth } from '../api/queries/phase4'
 import { useAddSource, useSources, useToggleSource, useUpdateSource, type PreviewResponse } from '../api/queries/sources'
@@ -371,6 +371,8 @@ function KeysSection() {
 
 function AccountSection() {
   const user = useCurrentUser()
+  const guide = useSetOnboarded()
+  const navigate = useNavigate()
   if (!user) return null
   return (
     <section className="grid gap-8">
@@ -387,6 +389,15 @@ function AccountSection() {
       <div>
         <SectionTitle title="Password" description="Changing it logs out your other sessions. Forgot it? Your admin can issue a temporary one." />
         <Card className="max-w-[420px] p-4"><PasswordForm /></Card>
+      </div>
+      <div>
+        <SectionTitle
+          title="Setup guide"
+          description={user.role === 'admin' ? 'Connect a model, follow or build a map, follow sources and fetch the first papers.' : 'Follow or build a map, and follow a few sources.'}
+        />
+        <Button variant="secondary" onClick={() => guide.mutate(false, { onSuccess: () => navigate('/welcome') })} disabled={guide.isPending}>
+          Run the setup guide again
+        </Button>
       </div>
     </section>
   )

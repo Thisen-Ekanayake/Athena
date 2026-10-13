@@ -23,6 +23,10 @@ const SharedMapPage = lazy(() =>
   import('./features/evolution/SharedMapPage').then((m) => ({ default: m.SharedMapPage })),
 )
 
+const WelcomePage = lazy(() =>
+  import('./features/onboarding/WelcomePage').then((m) => ({ default: m.WelcomePage })),
+)
+
 const IdeaCheckPage = lazy(() =>
   import('./features/evolution/IdeaCheckPage').then((m) => ({ default: m.IdeaCheckPage })),
 )
@@ -40,6 +44,8 @@ function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/setup" element={<SetupPage />} />
         <Route path="/change-password" element={<ChangePasswordPage />} />
+        {/* The setup guide, outside the app shell; new accounts are sent here first */}
+        <Route path="/welcome" element={<RequireAuth guide><Suspense fallback={<Spinner label="Loading…" />}><WelcomePage /></Suspense></RequireAuth>} />
         {/* A map behind a share link: no account needed */}
         <Route path="/share/:token" element={<Suspense fallback={<Spinner label="Loading…" />}><SharedMapPage /></Suspense>} />
         <Route path="/" element={<RequireAuth><AppShell /></RequireAuth>}>
