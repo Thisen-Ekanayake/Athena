@@ -19,6 +19,7 @@ import athena.pipeline.clustering
 import athena.pipeline.scoring
 import athena.pipeline.summarisation_tasks  # noqa: F401  (registers the summary tasks with every worker)
 import athena.evolution.tasks  # noqa: F401  (registers the evolution queue's tasks)
+import athena.pipeline.watches  # noqa: F401  (registers the watch checks and digests)
 from athena.core.logging import setup_redis_logging
 
 # Staging directory for full-text files (configurable via env; defaults to persistent
@@ -81,6 +82,10 @@ def setup_periodic_tasks(sender, **kwargs):
     from athena.evolution.refresh import REFRESH_HOUR_UTC
     sender.add_periodic_task(crontab(hour=REFRESH_HOUR_UTC, minute=0), athena.evolution.tasks.refresh_due_topics.s(),
                              name='refresh evolution maps')
+    # Follows: searches, sources and clusters against new feed items; daily digests after the map refresh
+    sender.add_periodic_task(3600.0, athena.pipeline.watches.check_watches.s(), name='check watches every hour')
+    sender.add_periodic_task(crontab(hour=athena.pipeline.watches.DIGEST_HOUR_UTC, minute=0),
+                             athena.pipeline.watches.send_digests.s(), name='inbox digests')
 
 
 @celery_app.task
