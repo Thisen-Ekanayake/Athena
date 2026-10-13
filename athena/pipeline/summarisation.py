@@ -64,6 +64,9 @@ def check_budget_before_call(job_type: str, tier: int = 2) -> bool:
     Tier 1 (urgent/trending) is exempt from the 80% threshold.
     Tier 2/3 pauses at 80% of daily budget to reserve capacity for urgent items.
     """
+    if usage.app_over_budget():
+        logger.warning("This month's model budget is used up; summaries paused until next month")
+        return False
     today_spend = redis.get('summary_spend:' + today_date())
     if today_spend is None:
         return True

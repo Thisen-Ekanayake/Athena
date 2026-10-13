@@ -86,6 +86,20 @@ def setup_periodic_tasks(sender, **kwargs):
     sender.add_periodic_task(3600.0, athena.pipeline.watches.check_watches.s(), name='check watches every hour')
     sender.add_periodic_task(crontab(hour=athena.pipeline.watches.DIGEST_HOUR_UTC, minute=0),
                              athena.pipeline.watches.send_digests.s(), name='inbox digests')
+    # The month's model spend against its budget: admins hear at 80% and 100%
+    sender.add_periodic_task(3600.0, check_model_budget.s(), name='check the model budget every hour')
+
+
+@celery_app.task
+def check_model_budget():
+    """Tell the admins, once a month each, when model spend passes 80% and then 100% of the monthly budget."""
+    from athena.core import usage
+    from athena.database.db import SessionLocal
+    usage.flush()  # this worker's own background calls count too
+    with SessionLocal() as session:
+        threshold = usage.budget_alerts(session)
+        session.commit()
+    return threshold
 
 
 @celery_app.task
