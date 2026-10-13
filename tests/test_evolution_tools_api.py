@@ -319,3 +319,54 @@ def test_links_are_cached_until_any_map_changes(client):
         for _ in range(3):
             assert c.get("/api/v1/evolution/topics/object-detection/links").json() == payload
     assert build.call_count == 2
+
+
+# ── E4 refresh and changes ─────────────────────────────────────────────
+
+
+def test_refresh_is_admin_only(client):
+    c, _ = client
+    as_user()
+    assert c.post("/api/v1/evolution/topics/object-detection/refresh").status_code == 403
+    assert c.post("/api/v1/evolution/topics/object-detection/full-text").status_code == 403
+    assert c.patch("/api/v1/evolution/topics/object-detection/settings", json={"refresh_days": 7}).status_code == 403
+
+
+def test_refresh_queues_the_chain_and_keeps_the_map_readable(client):
+    c, _ = client
+    with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), patch(f"{ROUTER_DB}.set_topic_status") as status, \
+            patch("athena.evolution.refresh.queue_refresh", return_value="t1") as queue:
+        resp = c.post("/api/v1/evolution/topics/object-detection/refresh")
+    assert resp.status_code == 202 and resp.json()["task_id"] == "t1"
+    assert status.call_args.args == ("object-detection", "refining", "Refresh queued")
+    assert queue.call_args.args == ("object-detection",)
+
+
+def test_refresh_of_a_busy_map_is_409(client):
+    c, _ = client
+    busy = SimpleNamespace(**{**vars(TOPIC), "status": "building"})
+    with patch(f"{ROUTER_DB}.get_topic", return_value=busy):
+        assert c.post("/api/v1/evolution/topics/object-detection/refresh").status_code == 409
+
+
+def test_full_text_skips_the_rebuild(client):
+    c, _ = client
+    with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), \
+            patch("athena.evolution.refresh.queue_refresh", return_value="t2") as queue:
+        assert c.post("/api/v1/evolution/topics/object-detection/full-text").status_code == 202
+    assert queue.call_args.kwargs == {"rebuild": False, "reason": "full_text"}
+
+
+def test_refresh_interval_is_bounded(client):
+    c, _ = client
+    assert c.patch("/api/v1/evolution/topics/object-detection/settings", json={"refresh_days": 400}).status_code == 422
+
+
+def test_refresh_chain_order():
+    from athena.evolution.refresh import refresh_chain
+    names = [t.task.rsplit(".", 1)[1] for t in refresh_chain("peft").tasks]
+    assert names == ["fetch_method_names_step", "refresh_build", "refresh_full_text", "refresh_gpu_lane",
+                     "snapshot_topic"]
+    assert [t.task.rsplit(".", 1)[1] for t in refresh_chain("peft", rebuild=False).tasks] == [
+        "refresh_full_text", "refresh_gpu_lane", "snapshot_topic"]
+    assert refresh_chain("peft").tasks[0].options["queue"] == "celery"
