@@ -13,7 +13,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from loguru import logger
 
 from athena.api.routers import (
-    feed, items, clusters, trending, search, sources, sync, app_settings, saved, evolution, auth as auth_routes,
+    feed, items, clusters, trending, search, sources, sync, app_settings, saved, evolution, inbox, auth as auth_routes,
     users,
 )
 from athena.api import qa_api
@@ -108,6 +108,7 @@ def create_app() -> FastAPI:
     app.include_router(app_settings.router, dependencies=admin)
     app.include_router(saved.router, dependencies=login)
     app.include_router(evolution.router, dependencies=login)
+    app.include_router(inbox.router, dependencies=login)
     app.include_router(qa_api.router, prefix="/api/v1", tags=["QA"], dependencies=login)
     app.include_router(
         score_api.app.router, prefix="/api/v1",

@@ -900,8 +900,27 @@ def take_snapshot(session: Session, topic: EvoTopic, reason: str) -> dict:
     row = EvoSnapshot(topic_id=topic.id, taken_at=datetime.now(timezone.utc), built_at=topic.built_at,
                       reason=reason, stats=stats, changes=diff(before, state, info), **state)
     session.add(row)
+    _announce(session, topic, reason, row.changes, stats, first=before is None)
     session.commit()
     return {"id": str(row.id), "stats": stats, "changes": row.changes}
+
+
+def _announce(session: Session, topic: EvoTopic, reason: str, changes: dict | None, stats: dict,
+              first: bool) -> None:
+    """Inbox entries for a snapshot: a map's first build, or a later one that changed something."""
+    from athena.database import inbox
+    from athena.evolution.snapshots import is_empty, summary
+    if reason == "baseline":
+        return  # recorded for an existing map, not news
+    if first:
+        inbox.add_event(session, "map_new", f"New map: {topic.name}",
+                        f"{stats['papers']} papers, {stats['milestones']} milestones", f"/evolution/{topic.slug}",
+                        topic.id, {"stats": stats})
+    elif changes is not None and not is_empty(changes):
+        inbox.add_event(session, "map_changes", f"{topic.name} updated", "; ".join(summary(changes)) or None,
+                        f"/evolution/{topic.slug}?tab=changes", topic.id,
+                        {"reason": reason, "counts": {k: (len(v) if isinstance(v, list) else v)
+                                                      for k, v in changes.items()}})
 
 
 def _named_method_in_scores(session: Session, topic: EvoTopic) -> bool:

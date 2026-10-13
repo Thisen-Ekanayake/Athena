@@ -72,6 +72,19 @@ def milestone_citations(cited: set[UUID], membership: dict[UUID, list[dict]]) ->
     return cites, dict(per_map)
 
 
+def announce(session, citing: list) -> None:
+    """One inbox entry for the feed papers found citing milestones in this run."""
+    from athena.database import inbox
+    names = lambda cites: list(dict.fromkeys(c.get("named_method") or c["title"] for c in cites))  # noqa: E731
+    titles = [item.title for item, _ in citing[:3]]
+    n = len(citing)
+    inbox.add_event(
+        session, "feed_citations", f"{n} new {'paper cites' if n == 1 else 'papers cite'} milestones in your maps",
+        "; ".join(titles) + ("; ..." if n > 3 else ""), "/evolution", None,
+        {"items": [{"id": str(item.id), "title": item.title, "cites": names(cites)[:5],
+                    "maps": sorted({c["topic_name"] for c in cites})} for item, cites in citing[:20]]})
+
+
 def check_feed_citations(s2=None, openalex=None, now: datetime | None = None) -> dict:
     """Which map milestones each recent feed paper cites."""
     from athena.core.models import ContentCategory, ContentItem, EvoPaper
@@ -122,6 +135,7 @@ def check_feed_citations(s2=None, openalex=None, now: datetime | None = None) ->
                     counts[work.arxiv_id] = len(work.referenced_works)
                     refs[work.arxiv_id] = {known[w] for w in work.referenced_works if w in known}
         membership = db.map_membership(session, list({pid for ids in refs.values() for pid in ids}))
+        citing = []
         for arxiv, item in due.items():
             cites, per_map = milestone_citations(refs.get(arxiv, set()), membership)
             item.extra_data = {**(item.extra_data or {}), "evolution": {
@@ -129,6 +143,10 @@ def check_feed_citations(s2=None, openalex=None, now: datetime | None = None) ->
             summary["checked"] += 1
             summary["with_references"] += arxiv in counts
             summary["citing_milestones"] += bool(cites)
+            if cites:
+                citing.append((item, cites))
+        if citing:
+            announce(session, citing)
         session.commit()
     logger.info(f"Feed citations: {summary}")
     return summary

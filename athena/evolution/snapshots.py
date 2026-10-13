@@ -90,3 +90,28 @@ def is_empty(changes: dict | None) -> bool:
     return changes is not None and not any(changes[k] for k in (
         "new_milestones", "dropped_milestones", "papers_added", "papers_removed", "new_gaps", "solved_gaps",
         "reopened_gaps", "faded_gaps"))
+
+
+def summary(changes: dict) -> list[str]:
+    """Short phrases for an inbox entry: "2 new milestones (DoRA, PiSSA)", "1 gap solved", ..."""
+    def count(n: int, one: str, many: str) -> str:
+        return f"{n} {one if n == 1 else many}"
+
+    def named(items: list[dict], key: str = "named_method", fallback: str = "title", limit: int = 3) -> str:
+        names = [i.get(key) or i.get(fallback) or "" for i in items[:limit]]
+        return f" ({', '.join(n for n in names if n)}{', ...' if len(items) > limit else ''})" if names else ""
+
+    parts = []
+    if changes.get("new_milestones"):
+        parts.append(count(len(changes["new_milestones"]), "new milestone", "new milestones")
+                     + named(changes["new_milestones"]))
+    if changes.get("solved_gaps"):
+        parts.append(count(len(changes["solved_gaps"]), "gap solved", "gaps solved")
+                     + named(changes["solved_gaps"], key="label"))
+    if changes.get("new_gaps"):
+        parts.append(count(len(changes["new_gaps"]), "new gap", "new gaps") + named(changes["new_gaps"], key="label"))
+    if changes.get("papers_added"):
+        parts.append(count(changes["papers_added"], "new paper", "new papers"))
+    if changes.get("dropped_milestones"):
+        parts.append(count(len(changes["dropped_milestones"]), "milestone dropped", "milestones dropped"))
+    return parts

@@ -784,3 +784,31 @@ class EvoSnapshot(Base):
     paper_ids = Column(JSONB, nullable=False, default=[])
     stats = Column(JSONB, nullable=False, default={})
     changes = Column(JSONB, nullable=True)           # against the previous snapshot; null for the first
+
+
+# ── Inbox ────────────────────────────────────────────────────────────
+
+
+class InboxEvent(Base):
+    """Something worth telling every user about: a map changed, a new map is ready, new papers cite milestones.
+
+    Events are shared (maps are a shared library); each user's read position is in ``InboxState``.
+    """
+    __tablename__ = "inbox_events"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    kind = Column(String, nullable=False)            # map_changes | map_new | feed_citations
+    title = Column(String, nullable=False)
+    body = Column(String, nullable=True)
+    link = Column(String, nullable=True)             # a path in the app
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"), nullable=True)
+    payload = Column(JSONB, nullable=False, default={})
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+
+class InboxState(Base):
+    """Where a user has read the inbox up to."""
+    __tablename__ = "inbox_state"
+
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    last_seen_at = Column(DateTime(timezone=True), nullable=False)
