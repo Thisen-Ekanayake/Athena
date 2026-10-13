@@ -34,7 +34,7 @@ Athena ships two launchers:
 
 ### `./run_docker.sh` — full stack in Docker
 
-Runs everything (Postgres, Redis, Qdrant, API, worker, frontend) via Docker Compose. Best for a production-like run.
+Runs everything (Postgres, Redis, Qdrant, GROBID, API, the crawl, summary and research-evolution workers, frontend) via Docker Compose. Best for a production-like run. The model server is not containerised: it needs the GPU, so start it on the host (see Configuration).
 
 ```bash
 cp .env.example .env
@@ -77,7 +77,7 @@ The model server is started by `./run_native.sh`, or by hand from the repo root:
 llama-server --models-preset config/llama-router.ini --models-max 1 --port 8080
 ```
 
-With Docker, the containers reach it on the host at `host.docker.internal:8080`.
+With Docker, the containers reach it on the host at `host.docker.internal:8080`. The `summary` and `evolution` services take one job at a time, because the model server answers one request at a time.
 
 ## Development
 
