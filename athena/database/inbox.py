@@ -10,6 +10,7 @@ open the inbox, after their account was created) count as unread.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -22,6 +23,7 @@ from athena.core.models import InboxEvent, InboxSettings, InboxState, User
 INBOX_DAYS = 60
 MUTABLE_KINDS = ("map_new", "feed_citations")
 DEFAULT_SETTINGS = {"digest": "weekly", "digest_day": 0, "muted_kinds": [], "last_digest_at": None}
+DIGEST_HOUR_UTC = int(os.getenv("INBOX_DIGEST_HOUR_UTC", "1"))  # 06:30 in Sri Lanka, after the nightly map refresh
 
 
 def add_event(session: Session, kind: str, title: str, body: str | None = None, link: str | None = None,

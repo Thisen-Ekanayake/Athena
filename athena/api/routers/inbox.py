@@ -48,7 +48,7 @@ def seen(session: Session = Depends(get_db), user: User = Depends(auth.active_us
 def _public(settings: dict) -> dict:
     last = settings.get("last_digest_at")
     return {k: v for k, v in settings.items() if k != "last_digest_at"} | {
-        "last_digest_at": last.isoformat() if last else None}
+        "last_digest_at": last.isoformat() if last else None, "digest_hour_utc": db.DIGEST_HOUR_UTC}
 
 
 @router.get("/settings")

@@ -18,7 +18,6 @@ papers and the latest trending briefs. It makes no model call.
 """
 from __future__ import annotations
 
-import os
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
@@ -26,6 +25,7 @@ from uuid import UUID
 from loguru import logger
 from sqlalchemy import func, select
 
+from athena.database.inbox import DIGEST_HOUR_UTC  # noqa: F401  (the beat schedule reads it from here)
 from athena.pipeline.celery_app import celery_app
 
 # Query-to-item cosine similarity a followed search needs (Qwen3-Embedding-8B, 1024 dims, query instruction).
@@ -38,9 +38,7 @@ CLUSTER_DAYS = 3
 MAX_CANDIDATES = 2000          # newest first; a backlog bigger than this is not news
 EVENT_ITEMS = 20               # items kept in one inbox entry
 DIGEST_ITEMS = 5
-DIGEST_HOUR_UTC = int(os.getenv("INBOX_DIGEST_HOUR_UTC", "1"))  # 06:30 in Sri Lanka, after the map refresh
 DIGEST_GUARD = timedelta(hours=20)  # a digest never comes twice in a day, whatever the schedule did
-DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 
 # ── watch checks ─────────────────────────────────────────────────────
