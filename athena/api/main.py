@@ -14,7 +14,7 @@ from loguru import logger
 
 from athena.api.routers import (
     feed, items, clusters, trending, search, sources, sync, app_settings, saved, evolution, inbox, auth as auth_routes,
-    users, watches, usage,
+    users, watches, usage, share,
 )
 from athena.api import qa_api
 from athena.api import score_api
@@ -92,7 +92,7 @@ def create_app() -> FastAPI:
                 return get_redoc_html(openapi_url="/openapi.json", title="Athena API")
 
     # ── Routers ─────────────────────────────────────────
-    # Every route needs a logged-in account, except logging in itself and /health.
+    # Every route needs a logged-in account, except logging in itself, shared map links and /health.
     # Admin-only routes add require_admin themselves (see routers/users.py, sources.py, evolution.py, ...).
     login = [Depends(active_user)]
     admin = [Depends(require_admin)]
@@ -111,6 +111,7 @@ def create_app() -> FastAPI:
     app.include_router(inbox.router, dependencies=login)
     app.include_router(watches.router, dependencies=login)
     app.include_router(usage.router, dependencies=login)  # the admin views add require_admin themselves
+    app.include_router(share.router)  # read-only maps behind a share link; the token is the access
     app.include_router(qa_api.router, prefix="/api/v1", tags=["QA"], dependencies=login)
     app.include_router(
         score_api.app.router, prefix="/api/v1",
