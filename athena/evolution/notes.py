@@ -99,10 +99,11 @@ def write_notes(slug: str, paper_ids: list[UUID], r) -> int:
                 if paper["paper_id"] in have:
                     continue
                 answer, usage = llm.chat_json(prompt(topic.name, paper), SCHEMA, "paper_note", system=SYSTEM,
-                                              max_tokens=160)
+                                              max_tokens=160, feature="reading_notes")
                 if answer is not None and paper.get("abstract") and answer.get("abstract_matches") is False:
                     answer, usage = llm.chat_json(prompt(topic.name, paper | {"abstract": None}), SCHEMA,
-                                                  "paper_note", system=SYSTEM, max_tokens=160)
+                                                  "paper_note", system=SYSTEM, max_tokens=160,
+                                                  feature="reading_notes")
                 if answer is None:
                     logger.warning(f"Reading path {slug}: the model's answer for {paper['title']!r} did not parse")
                     continue  # tried again on the next read

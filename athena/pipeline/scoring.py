@@ -6,6 +6,7 @@ Consumes items from the Redis scoring queue (emitted after Layer 2 embedding).
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
+from uuid import UUID
 
 import numpy as np
 from celery import shared_task
@@ -42,18 +43,22 @@ CHUNK_SIZE = 500
 # Default scoring config weights per category
 # ──────────────────────────────────────────────────────────
 
+# The five signal weights sum to 1. "preference" is not part of the score: it is the share a user's interests
+# get in their "For you" order (athena.pipeline.interests).
+BASE_SIGNALS = ("citation", "engagement", "sentiment", "recency", "authority")
+DEFAULT_PREFERENCE = 0.30
 DEFAULT_WEIGHTS = {
     "paper": {
         "citation": 0.30, "engagement": 0.15, "sentiment": 0.15,
-        "recency": 0.20, "authority": 0.20, "half_life_days": 60,
+        "recency": 0.20, "authority": 0.20, "half_life_days": 60, "preference": DEFAULT_PREFERENCE,
     },
     "company_blog": {
         "citation": 0.10, "engagement": 0.25, "sentiment": 0.20,
-        "recency": 0.30, "authority": 0.15, "half_life_days": 14,
+        "recency": 0.30, "authority": 0.15, "half_life_days": 14, "preference": DEFAULT_PREFERENCE,
     },
     "community_blog": {
         "citation": 0.10, "engagement": 0.30, "sentiment": 0.20,
-        "recency": 0.25, "authority": 0.15, "half_life_days": 21,
+        "recency": 0.25, "authority": 0.15, "half_life_days": 21, "preference": DEFAULT_PREFERENCE,
     },
 }
 
@@ -71,7 +76,7 @@ DEFAULT_AUTHORITY = {
 def _embed(texts: list[str]):
     """The shared embedding model (athena.core.llm), loaded lazily."""
     from athena.core import llm
-    return llm.embed(texts)
+    return llm.embed(texts, feature="scoring")
 
 
 def _get_weights(category: str, session) -> Dict[str, Any]:
@@ -82,7 +87,7 @@ def _get_weights(category: str, session) -> Dict[str, Any]:
             .where(ScoringConfig.is_active .is_(True))
             .where(ScoringConfig.category == category)
             .order_by(ScoringConfig.version.desc())
-        ).scalar_one_or_none()
+        ).scalars().first()
 
         if config:
             return {
@@ -92,7 +97,9 @@ def _get_weights(category: str, session) -> Dict[str, Any]:
                 "recency": config.weight_recency,
                 "authority": config.weight_authority,
                 "half_life_days": config.half_life_days,
+                "preference": DEFAULT_PREFERENCE if config.weight_preference is None else config.weight_preference,
                 "version": config.version,
+                "saved": True,
             }
     except Exception as e:
         logger.warning(f"Failed to load scoring config for {category}: {e}")
@@ -103,19 +110,39 @@ def _get_weights(category: str, session) -> Dict[str, Any]:
     return default
 
 
-def _get_prev_snapshot(item_id, session) -> tuple:
-    """Get previous metric snapshot from ~7 days ago for velocity computation."""
+def engagement_raw(signals: list) -> float:
+    """The mean of an item's normalised engagement signals, or 0 without any: what metric snapshots store."""
+    return sum(signals) / len(signals) if signals else 0.0
+
+
+def _get_prev_snapshot(item_id, session) -> tuple | None:
+    """(citations, raw engagement) from the latest metric snapshot at least 7 days old, or None without one."""
     seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
     prev = session.execute(
         select(MetricSnapshot)
         .where(MetricSnapshot.item_id == item_id)
         .where(MetricSnapshot.snapshot_date <= seven_days_ago)
         .order_by(MetricSnapshot.snapshot_date.desc())
+        .limit(1)
     ).scalar_one_or_none()
 
     if prev:
         return prev.citation_count, prev.engagement_raw
-    return 0, 0.0
+    return None
+
+
+def _week_ago_metrics(item, session, eng_now: float) -> tuple:
+    """What an item had a week ago. Without a snapshot from then, an item younger than a week had nothing, and
+    for an older one there is nothing to compare with, so it counts as unchanged (not as gaining everything)."""
+    prev = _get_prev_snapshot(item.id, session)
+    if prev is not None:
+        return prev
+    published = item.published_at
+    if published is not None and published.tzinfo is None:
+        published = published.replace(tzinfo=timezone.utc)
+    if published is not None and datetime.now(timezone.utc) - published < timedelta(days=7):
+        return 0, 0.0
+    return item.citation_count or 0, eng_now
 
 
 def score_item(item_id: str, session=None) -> Optional[float]:
@@ -153,6 +180,7 @@ def score_item(item_id: str, session=None) -> Optional[float]:
         # 2. Engagement
         source_url = source.url if source else ""
         engagement = compute_engagement_score(metadata, source_url)
+        engagement_signals = _extract_engagement_signals(metadata, source_url)
 
         # 3. Sentiment (uses the embedding model — may return 0.5 if unavailable)
         sentiment = compute_sentiment_score(metadata, _embed)
@@ -161,10 +189,12 @@ def score_item(item_id: str, session=None) -> Optional[float]:
         half_life = weights.get("half_life_days", 30)
         recency = compute_recency_score(item.published_at, half_life)
 
-        # 5. Velocity (from metric snapshots)
-        prev_citations, prev_engagement = _get_prev_snapshot(item.id, session)
+        # 5. Velocity (from metric snapshots). Compared like with like: the raw engagement mean that snapshots
+        # store, so an item without engagement data has none to gain (the 0.5 neutral score is not a reading).
+        eng_now = engagement_raw(engagement_signals)
+        prev_citations, prev_engagement = _week_ago_metrics(item, session, eng_now)
         velocity = compute_velocity_score(
-            item.citation_count or 0, engagement,
+            item.citation_count or 0, eng_now,
             prev_citations, prev_engagement,
         )
 
@@ -180,7 +210,6 @@ def score_item(item_id: str, session=None) -> Optional[float]:
         )
 
         # 8. Trending check
-        engagement_signals = _extract_engagement_signals(metadata, source_url)
         is_trending = check_trending_criteria(
             velocity, item.published_at, len(engagement_signals)
         )
@@ -330,7 +359,7 @@ def _iter_item_ids(stmt) -> Any:
     server-side cursor instead of loading the whole result set into memory.
     """
     with SessionLocal() as session:
-        result = session.execute(stmt).execution_options(yield_per=CHUNK_SIZE)
+        result = session.execute(stmt.execution_options(yield_per=CHUNK_SIZE))
         for row in result.scalars():
             yield row
 
@@ -393,49 +422,9 @@ def refresh_recency_scores():
 
 @shared_task
 def take_metric_snapshot():
-    """Daily snapshot: capture current citation_count + engagement for velocity computation."""
-    logger.info("Taking daily metric snapshot...")
-    now = datetime.now(timezone.utc)
-
-    total = 0
-    with SessionLocal() as session:
-        result = session.execute(
-            select(ContentItem)
-        ).execution_options(yield_per=CHUNK_SIZE)
-
-        source_url_cache: Dict[Any, str] = {}
-
-        for item in result.scalars():
-            metadata = item.extra_data or {}
-            # Cache source URLs per-run to avoid one SELECT per item when many items
-            # share the same source.
-            src_id = item.source_id
-            if src_id in source_url_cache:
-                source_url = source_url_cache[src_id]
-            else:
-                source = session.execute(
-                    select(Source).where(Source.id == src_id)
-                ).scalar_one_or_none()
-                source_url = source.url if source else ""
-                source_url_cache[src_id] = source_url
-
-            eng_signals = _extract_engagement_signals(metadata, source_url)
-            eng_raw = sum(eng_signals) / len(eng_signals) if eng_signals else 0.0
-
-            snapshot = MetricSnapshot(
-                item_id=item.id,
-                citation_count=item.citation_count or 0,
-                engagement_raw=eng_raw,
-                snapshot_date=now,
-            )
-            session.add(snapshot)
-            total += 1
-
-            if total % CHUNK_SIZE == 0:
-                session.commit()
-
-        session.commit()
-        logger.info(f"Metric snapshot complete. {total} snapshots saved.")
+    """Kept for messages queued before athena.pipeline.momentum took over: runs the day's momentum work."""
+    from athena.pipeline.momentum import daily_momentum
+    return daily_momentum()
 
 
 @shared_task
@@ -446,35 +435,33 @@ def score_new_item(item_id: str):
 
 
 def enqueue_summary_tier(item_id: str, score: float, is_trending: bool):
-    """Emits the item to the correct Celery queue based on Layer 3 score."""
-    from athena.pipeline.summarisation_tasks import summarise_item_worker
+    """Emits the item to the correct Celery queue based on Layer 3 score.
 
-    if is_trending or score >= 0.75:
+    An item whose summary is already complete is left alone: rescoring (every six hours for recency) must not
+    send finished summaries back to the queue.
+    """
+    from athena.pipeline.summarisation_tasks import summarise_item_worker
+    from athena.core.models import SummaryStatus
+
+    item_uuid = UUID(str(item_id))
+    with SessionLocal() as session:
+        status = session.execute(select(ContentItem.summary_status).where(ContentItem.id == item_uuid)).scalar()
+        if status == SummaryStatus.COMPLETE:
+            return
+        if is_trending or score >= 0.75:
+            tier, new_status = "summary_urgent", None
+        elif score >= 0.40:
+            tier, new_status = "pending (Tier 2 batch)", SummaryStatus.PENDING
+        else:
+            tier, new_status = "lazy", SummaryStatus.LAZY
+        if new_status is not None:
+            session.execute(update(ContentItem).where(ContentItem.id == item_uuid).values(summary_status=new_status))
+            session.commit()
+
+    if new_status is None:
         # Tier 1 - Urgent
         summarise_item_worker.apply_async(args=[item_id], queue='summary_urgent')
-        logger.info(f"Item {item_id} enqueued to summary_urgent")
-    elif score >= 0.40:
-        # Tier 2 - handled by hourly batch, just set to pending
-        with SessionLocal() as session:
-            from athena.core.models import ContentItem, SummaryStatus
-            session.execute(
-                update(ContentItem).where(ContentItem.id == item_id).values(
-                    summary_status=SummaryStatus.PENDING
-                )
-            )
-            session.commit()
-        logger.info(f"Item {item_id} marked as pending for Tier 2 batch")
-    else:
-        # Tier 3 - Lazy
-        with SessionLocal() as session:
-            from athena.core.models import ContentItem, SummaryStatus
-            session.execute(
-                update(ContentItem).where(ContentItem.id == item_id).values(
-                    summary_status=SummaryStatus.LAZY
-                )
-            )
-            session.commit()
-        logger.info(f"Item {item_id} marked as lazy summarisation")
+    logger.info(f"Item {item_id} enqueued to {tier}")
 
 
 def populate_default_scoring_config():
@@ -495,6 +482,7 @@ def populate_default_scoring_config():
                 weight_sentiment=weights["sentiment"],
                 weight_recency=weights["recency"],
                 weight_authority=weights["authority"],
+                weight_preference=weights["preference"],
                 half_life_days=weights["half_life_days"],
                 is_active=True,
                 notes="Default config",

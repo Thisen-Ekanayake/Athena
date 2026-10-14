@@ -1,5 +1,26 @@
+import { createContext, useContext } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../../api/client'
+import { timeAgo } from '../../components/items/format'
+
+/**
+ * Where a map's read routes live. Logged in, they are /evolution/topics/<slug>; behind a share link (R2), the same
+ * answers come from /share/<token> and the map is read-only: nothing that needs an account (read ticks, pins,
+ * questions, follows, links to other pages). Query keys start with ``key`` so the two caches stay apart.
+ */
+export interface MapScope {
+  base: (slug: string) => string
+  key: string
+  readOnly: boolean
+}
+
+export const ACCOUNT_SCOPE: MapScope = { base: (slug) => `/evolution/topics/${slug}`, key: 'evolution', readOnly: false }
+
+export const shareScope = (token: string): MapScope => ({ base: () => `/share/${token}`, key: `share:${token}`, readOnly: true })
+
+export const MapScopeContext = createContext<MapScope>(ACCOUNT_SCOPE)
+
+export const useMapScope = () => useContext(MapScopeContext)
 
 export type TopicStatus = 'pending' | 'building' | 'refining' | 'ready' | 'failed'
 
@@ -113,6 +134,32 @@ export interface EvolutionPaperDetail extends EvolutionNode {
   full_text: { status?: 'parsed' | 'failed' | 's2_contexts'; sections?: number; contexts?: number; error?: string }
   gaps: PaperGap[]
   loose_matches: LooseMatch[]
+  /** OpenAlex's citations per calendar year, oldest first; empty until fetched */
+  citations_by_year?: YearCount[]
+}
+
+export interface YearCount {
+  year: number
+  citations: number
+  /** The current year, still running */
+  partial: boolean
+}
+
+export interface RisingPaper extends EvolutionNode {
+  last_12_months: number
+  previous_12_months: number
+  ratio: number
+  citations_by_year: YearCount[]
+}
+
+/** The map's papers gaining citations fastest (last twelve months against the twelve before). */
+export const useTopicRising = (slug: string, limit = 10) => {
+  const scope = useMapScope()
+  return useQuery({
+    queryKey: [scope.key, 'rising', slug, limit],
+    queryFn: async () => (await apiClient.get<{ papers: RisingPaper[] }>(`${scope.base(slug)}/rising`, { params: { limit } })).data.papers,
+    staleTime: 10 * 60 * 1000,
+  })
 }
 
 export interface PaperGap {
@@ -257,12 +304,15 @@ export const useCreateTopic = () => {
 }
 
 /** One topic's status, polled while the worker has something to do for it. */
-export const useTopicStatus = (slug: string) =>
-  useQuery({
-    queryKey: ['evolution', 'status', slug],
-    queryFn: async () => (await apiClient.get<EvolutionTopic>(`/evolution/topics/${slug}`)).data,
+export const useTopicStatus = (slug: string) => {
+  const scope = useMapScope()
+  return useQuery({
+    queryKey: [scope.key, 'status', slug],
+    queryFn: async () => (await apiClient.get<EvolutionTopic>(scope.base(slug))).data,
     refetchInterval: (query) => (query.state.data && isBusy(query.state.data.status) ? 2500 : false),
+    retry: scope.readOnly ? false : 3,  // a dead share link is a 404 that stays one
   })
+}
 
 export const useRebuildTopic = (slug: string) => {
   const queryClient = useQueryClient()
@@ -286,41 +336,47 @@ export const useDeleteTopic = () => {
 }
 
 /** ``version`` (status and build time) refetches the map when a build or refinement finishes. */
-export const useTopicGraph = (slug: string | undefined, limit: number, version = '', enabled = true) =>
-  useQuery({
-    queryKey: ['evolution', 'graph', slug, limit, version],
+export const useTopicGraph = (slug: string | undefined, limit: number, version = '', enabled = true) => {
+  const scope = useMapScope()
+  return useQuery({
+    queryKey: [scope.key, 'graph', slug, limit, version],
     queryFn: async () =>
-      (await apiClient.get<EvolutionGraph>(`/evolution/topics/${slug}/graph`, { params: { limit } })).data,
+      (await apiClient.get<EvolutionGraph>(`${scope.base(slug!)}/graph`, { params: { limit } })).data,
     enabled: !!slug && enabled,
     staleTime: 5 * 60 * 1000,
     placeholderData: (previous) => previous,
   })
+}
 
-export const useTopicTimeline = (slug: string | undefined, version = '', enabled = true) =>
-  useQuery({
-    queryKey: ['evolution', 'timeline', slug, version],
-    queryFn: async () => (await apiClient.get<EvolutionTimeline>(`/evolution/topics/${slug}/timeline`)).data,
+export const useTopicTimeline = (slug: string | undefined, version = '', enabled = true) => {
+  const scope = useMapScope()
+  return useQuery({
+    queryKey: [scope.key, 'timeline', slug, version],
+    queryFn: async () => (await apiClient.get<EvolutionTimeline>(`${scope.base(slug!)}/timeline`)).data,
     enabled: !!slug && enabled,
     staleTime: 5 * 60 * 1000,
     placeholderData: (previous) => previous,
   })
+}
 
-export const topicGapsQuery = (slug: string | undefined) => ({
-  queryKey: ['evolution', 'gaps', slug],
-  queryFn: async () => (await apiClient.get<TopicGaps>(`/evolution/topics/${slug}/gaps`)).data,
+export const topicGapsQuery = (slug: string | undefined, scope: MapScope = ACCOUNT_SCOPE) => ({
+  queryKey: [scope.key, 'gaps', slug],
+  queryFn: async () => (await apiClient.get<TopicGaps>(`${scope.base(slug!)}/gaps`)).data,
   enabled: !!slug,
   staleTime: 5 * 60 * 1000,
 })
 
-export const useTopicGaps = (slug: string | undefined) => useQuery(topicGapsQuery(slug))
+export const useTopicGaps = (slug: string | undefined) => useQuery(topicGapsQuery(slug, useMapScope()))
 
-export const usePaperDetail = (slug: string | undefined, paperId: string | null) =>
-  useQuery({
-    queryKey: ['evolution', 'paper', slug, paperId],
+export const usePaperDetail = (slug: string | undefined, paperId: string | null) => {
+  const scope = useMapScope()
+  return useQuery({
+    queryKey: [scope.key, 'paper', slug, paperId],
     queryFn: async () =>
-      (await apiClient.get<EvolutionPaperDetail>(`/evolution/topics/${slug}/papers/${paperId}`)).data,
+      (await apiClient.get<EvolutionPaperDetail>(`${scope.base(slug!)}/papers/${paperId}`)).data,
     enabled: !!slug && !!paperId,
   })
+}
 
 export const useSetMilestone = (slug: string) => {
   const queryClient = useQueryClient()
@@ -369,14 +425,16 @@ export interface ReadingPath {
 const readingPathKey = (slug: string, n: number) => ['evolution', 'reading-path', slug, n] as const
 
 /** Polled while the notes are being written. */
-export const useReadingPath = (slug: string, n: number) =>
-  useQuery({
-    queryKey: readingPathKey(slug, n),
+export const useReadingPath = (slug: string, n: number) => {
+  const scope = useMapScope()
+  return useQuery({
+    queryKey: scope.readOnly ? [scope.key, 'reading-path', slug, n] : readingPathKey(slug, n),
     queryFn: async () =>
-      (await apiClient.get<ReadingPath>(`/evolution/topics/${slug}/reading-path`, { params: { n } })).data,
+      (await apiClient.get<ReadingPath>(`${scope.base(slug)}/reading-path`, { params: { n } })).data,
     placeholderData: (previous) => previous,
     refetchInterval: (query) => (query.state.data?.notes_pending ? 3000 : false),
   })
+}
 
 /** Ticks a paper read or unread. Reading is per paper, so every map's path picks it up. */
 export const useMarkRead = (slug: string, n: number) => {
@@ -393,7 +451,10 @@ export const useMarkRead = (slug: string, n: number) => {
         return { ...path, survey: path.survey && tick(path.survey), steps: path.steps.map(tick) }
       })
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['evolution', 'reading-path'] }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['evolution', 'reading-path'] })
+      queryClient.invalidateQueries({ queryKey: ['me'] })  // the paper panel's read mark, and a feed item's
+    },
   })
 }
 
@@ -437,12 +498,14 @@ export interface TopicPeople {
   papers_with_ids: number
 }
 
-export const useTopicPeople = (slug: string) =>
-  useQuery({
-    queryKey: ['evolution', 'people', slug],
-    queryFn: async () => (await apiClient.get<TopicPeople>(`/evolution/topics/${slug}/people`)).data,
+export const useTopicPeople = (slug: string) => {
+  const scope = useMapScope()
+  return useQuery({
+    queryKey: [scope.key, 'people', slug],
+    queryFn: async () => (await apiClient.get<TopicPeople>(`${scope.base(slug)}/people`)).data,
     staleTime: 5 * 60 * 1000,
   })
+}
 
 // ── the feed and the maps (E5) ─────────────────────────────────────────
 
@@ -707,11 +770,13 @@ export interface TopicChanges {
   snapshots: MapSnapshot[]
 }
 
-export const useTopicChanges = (slug: string) =>
-  useQuery({
-    queryKey: ['evolution', 'changes', slug],
-    queryFn: async () => (await apiClient.get<TopicChanges>(`/evolution/topics/${slug}/changes`)).data,
+export const useTopicChanges = (slug: string) => {
+  const scope = useMapScope()
+  return useQuery({
+    queryKey: [scope.key, 'changes', slug],
+    queryFn: async () => (await apiClient.get<TopicChanges>(`${scope.base(slug)}/changes`)).data,
   })
+}
 
 const useTopicAction = (slug: string, path: string) => {
   const queryClient = useQueryClient()
@@ -735,3 +800,74 @@ export const useTopicSettings = (slug: string) => {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['evolution', 'changes', slug] }),
   })
 }
+
+// ── share links (R2) ───────────────────────────────────────────────────
+
+export interface MapShare {
+  id: string
+  token: string
+  created_by: string | null
+  creator: string | null
+  created_at: string | null
+  /** None: until revoked */
+  expires_at: string | null
+  views: number
+  last_viewed_at: string | null
+  /** Only in the list of every map's links */
+  topic?: { slug: string; name: string }
+}
+
+/** "expires in 29 days", "never expires". */
+export const shareExpiry = (share: MapShare) => (share.expires_at ? `expires ${timeAgo(share.expires_at)}` : 'never expires')
+
+/** The page's own address for a link: the app serves /share/<token> without a login. */
+export const shareUrl = (token: string) => `${window.location.origin}/share/${token}`
+
+export const useSharing = () =>
+  useQuery({
+    queryKey: ['evolution', 'sharing'],
+    queryFn: async () => (await apiClient.get<{ enabled: boolean }>('/evolution/sharing')).data.enabled,
+    staleTime: 5 * 60 * 1000,
+  })
+
+export const useSetSharing = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (enabled: boolean) => (await apiClient.put<{ enabled: boolean }>('/evolution/sharing', { enabled })).data.enabled,
+    onSuccess: (enabled) => {
+      queryClient.setQueryData(['evolution', 'sharing'], enabled)
+      queryClient.invalidateQueries({ queryKey: ['evolution', 'shares'] })
+    },
+  })
+}
+
+/** The active links to one map (``slug``) or to every map: the viewer's own, or everyone's for an admin. */
+export const useShares = (slug?: string, enabled = true) =>
+  useQuery({
+    queryKey: ['evolution', 'shares', slug ?? '*'],
+    queryFn: async () =>
+      (await apiClient.get<{ enabled: boolean; shares: MapShare[] }>(slug ? `/evolution/topics/${slug}/shares` : '/evolution/shares')).data,
+    enabled,
+  })
+
+export const useCreateShare = (slug: string) => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (expiresDays: number | null) =>
+      (await apiClient.post<MapShare>(`/evolution/topics/${slug}/shares`, { expires_days: expiresDays })).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['evolution', 'shares'] }),
+  })
+}
+
+export const useRevokeShare = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await apiClient.delete(`/evolution/shares/${id}`)
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['evolution', 'shares'] }),
+  })
+}
+
+/** Opening a shared link counts one view, once per page load. */
+export const countShareView = (token: string) => apiClient.post(`/share/${token}/view`).catch(() => undefined)

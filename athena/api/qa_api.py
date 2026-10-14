@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from athena.core import llm
+from athena.core import llm, usage
 from athena.core.models import ContentItem, QAFetchCache, QAUsageLog, User
 from athena.core.qa_fetcher import fetch_article_content
 from athena.api.auth import require_admin, spend
@@ -176,20 +176,27 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
                     messages=messages,
                     max_tokens=800,
                     stream=True,
+                    stream_options={"include_usage": True},  # the last chunk carries the served model's counts
                     extra_body=llm.chat_extra(),
                 )
 
-                answer_tokens = 0
+                parts, counted = [], None
                 async for chunk in stream:
-                    delta = chunk.choices[0].delta.content
+                    if getattr(chunk, "usage", None):
+                        counted = chunk.usage
+                    delta = chunk.choices[0].delta.content if chunk.choices else None
                     if delta:
-                        answer_tokens += 1
+                        parts.append(delta)
                         yield f"data: {json.dumps({'token': delta})}\n\n"
                 yield "data: [DONE]\n\n"
 
-                # Update tokens and cost
-                total_tokens = input_tokens + answer_tokens
-                cost = llm.cost(input_tokens, answer_tokens)
+                # Update tokens and cost: the server's counts, else the estimates
+                prompt_tokens, answer_tokens = usage.tokens_of(counted)
+                prompt_tokens = prompt_tokens or input_tokens
+                answer_tokens = answer_tokens or est_tokens("".join(parts))
+                total_tokens = prompt_tokens + answer_tokens
+                cost = llm.cost(prompt_tokens, answer_tokens)
+                usage.add("qa", model, prompt_tokens, answer_tokens, user_id=user.id)
 
                 r.incrby(f"qa_session_tokens:{session_id}", total_tokens)
                 r.expire(f"qa_session_tokens:{session_id}", 86400)
@@ -205,7 +212,7 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
                     question_length=len(req.question),
                     fetch_method=result.method,
                     fetch_latency_ms=fetch_latency,
-                    article_tokens=input_tokens,
+                    article_tokens=prompt_tokens,
                     history_tokens=0,
                     answer_tokens=answer_tokens,
                     total_cost_usd=cost,

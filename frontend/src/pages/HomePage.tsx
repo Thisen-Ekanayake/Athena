@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import { ArrowRight, Compass, GitBranch, Newspaper, Sparkles, TrendingUp } from 'lucide-react'
 import { useFeed, useTrending } from '../api/queries'
+import { useRising } from '../api/queries/momentum'
+import { RisingList } from '../features/momentum/RisingList'
 import { topicGapsQuery, useEvolutionTopics } from '../features/evolution/api'
 import { AstrolabePortal } from '../features/astrolabe/AstrolabePortal'
 import { ItemList } from '../components/items/ItemRow'
@@ -53,6 +55,7 @@ export function HomePage() {
   const today = useFeed('date', null, '24h', null, 1)
   const top = useFeed('score', null, '7d', null, 5)
   const trending = useTrending(null)
+  const rising = useRising('7d', 5)
   const topics = useEvolutionTopics()
   const ready = (topics.data ?? []).filter((t) => t.status === 'ready')
   const gaps = useQueries({ queries: ready.map((t) => topicGapsQuery(t.slug)) })
@@ -94,19 +97,18 @@ export function HomePage() {
         </Card>
 
         <Card className="lg:col-span-2">
-          <CardHeader icon={TrendingUp} title="Trending now" action={<TileLink to="/trending">All</TileLink>} />
-          {trending.isLoading ? (
+          <CardHeader icon={TrendingUp} title="Rising fast" action={<TileLink to="/trending">All</TileLink>} />
+          {rising.isLoading ? (
             <TileSkeleton />
-          ) : trending.data?.brief ? (
-            <div className="grid gap-2 px-4 pt-1 pb-4">
-              <p className="text-[13.5px] font-medium text-fg">{trending.data.brief.theme}</p>
-              <p className="line-clamp-6 text-[13px] leading-relaxed text-fg-2">{trending.data.brief.brief}</p>
-              <p className="flex items-center gap-1.5 text-[11.5px] text-fg-3"><Sparkles className="h-3 w-3 text-accent" aria-hidden="true" /> Brief written by AI</p>
-            </div>
-          ) : trending.data?.items.length ? (
-            <ItemList items={trending.data.items.slice(0, 3)} showSummary={false} bare />
+          ) : rising.data?.length ? (
+            <RisingList items={rising.data} period="7d" bare />
           ) : (
-            <TileEmpty>Nothing is trending right now.</TileEmpty>
+            <TileEmpty>No paper gained citations this week. Counts are checked once a day.</TileEmpty>
+          )}
+          {trending.data?.brief && (
+            <Link to="/trending" className="flex items-center gap-1.5 border-t border-line px-4 py-2.5 text-[12.5px] text-fg-2 hover:text-fg">
+              <Sparkles className="h-3 w-3 text-accent" aria-hidden="true" /> Trending: {trending.data.brief.theme}
+            </Link>
           )}
         </Card>
 

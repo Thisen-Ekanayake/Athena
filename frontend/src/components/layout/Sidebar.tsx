@@ -1,5 +1,5 @@
 import { Link, NavLink, useNavigate } from 'react-router-dom'
-import { Bookmark, GitBranch, House, Layers, LogOut, Newspaper, Settings, TrendingUp, type LucideIcon } from 'lucide-react'
+import { GitBranch, House, Layers, Library, LogOut, Newspaper, Settings, TrendingUp, type LucideIcon } from 'lucide-react'
 import { useCurrentUser, useLogout } from '../../api/queries/auth'
 import { useAppStore, type Accent } from '../../store/appStore'
 import { Button } from '../../ui/Button'
@@ -12,7 +12,7 @@ const NAV: { to: string; label: string; icon: LucideIcon; end?: boolean }[] = [
   { to: '/trending', label: 'Trending', icon: TrendingUp },
   { to: '/clusters', label: 'Clusters', icon: Layers },
   { to: '/evolution', label: 'Evolution', icon: GitBranch },
-  { to: '/saved', label: 'Saved', icon: Bookmark },
+  { to: '/library', label: 'Library', icon: Library },
 ]
 
 const ACCENTS: { value: Accent; label: string; swatch: string }[] = [

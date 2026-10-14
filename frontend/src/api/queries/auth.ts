@@ -13,6 +13,8 @@ export interface AuthUser {
   must_change_password: boolean
   created_at: string | null
   last_login_at: string | null
+  /** None until the setup guide is finished or skipped; the app opens the guide until then */
+  onboarded_at: string | null
 }
 
 export interface AuthStatus {
@@ -113,5 +115,14 @@ export const useResetPassword = () => {
   return useMutation({
     mutationFn: async (id: string) => (await apiClient.post<IssuedUser>(`/users/${id}/reset-password`)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
+  })
+}
+
+/** Finish or skip the setup guide (``done``), or bring it back. */
+export const useSetOnboarded = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (done: boolean) => (await apiClient.post<AuthUser>('/auth/onboarding', { done })).data,
+    onSuccess: (user) => queryClient.setQueryData<AuthStatus>(['auth'], { needs_setup: false, user }),
   })
 }

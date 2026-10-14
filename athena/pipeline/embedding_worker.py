@@ -108,7 +108,7 @@ def process_batch(item_ids: List[str]):
         try:
             # 1. Generate Embeddings (the client retries rate limits itself)
             model = llm.embed_model()
-            embeddings = [vec.tolist() for vec in llm.embed(batch_texts)]
+            embeddings = [vec.tolist() for vec in llm.embed(batch_texts, feature="feed_embed")]
 
             # 2. Upsert to Qdrant
             points = []

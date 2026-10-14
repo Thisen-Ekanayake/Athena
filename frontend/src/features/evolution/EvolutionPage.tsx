@@ -21,6 +21,8 @@ import { FollowButton } from '../inbox/FollowButton'
 import type { GraphExporter } from './graphExport'
 import { NewInMaps } from './NewInMaps'
 import { ProposalPanel } from './ProposalPanel'
+import { ShareMenu } from './ShareMenu'
+import { WriteReviewButton } from '../reviews/WriteReviewButton'
 import { TimelineStrip } from './TimelineStrip'
 import {
   createProposal,
@@ -28,6 +30,7 @@ import {
   isBusy,
   searchTopics,
   useDeleteTopic,
+  useMapScope,
   useEvolutionTopics,
   useRebuildTopic,
   useTopicGraph,
@@ -64,6 +67,8 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'changes', label: 'Changes' },
 ]
 const TAB_IDS = new Set<string>([...TABS.map((t) => t.id), 'no-full-text'])
+// A shared link leaves out what needs an account (questions cost model time) and other maps it can't open.
+const SHARED_TABS = new Set<Tab>(['map', 'path', 'gaps', 'people', 'changes', 'no-full-text'])
 
 /** How a field developed: its lineage of papers, its milestones and the problems still open. */
 export function EvolutionPage() {
@@ -271,10 +276,12 @@ function LastChange({ change: c }: { change: NonNullable<EvolutionTopic['last_ch
   return <p className="text-[12px] text-accent-ink">Updated {timeAgo(c.taken_at)}: {parts.join(', ')}</p>
 }
 
-function TopicView({ slug }: { slug: string }) {
+/** One map with its tabs. Behind a share link (a read-only map scope) it leaves out what needs an account. */
+export function TopicView({ slug }: { slug: string }) {
+  const { readOnly } = useMapScope()
   const [params, setParams] = useSearchParams()
   const tabParam = params.get('tab') ?? 'map'
-  const tab = (TAB_IDS.has(tabParam) ? tabParam : 'map') as Tab
+  const tab = (TAB_IDS.has(tabParam) && (!readOnly || SHARED_TABS.has(tabParam as Tab)) ? tabParam : 'map') as Tab
   // The tab and the selected paper live in the URL, so other pages can link to a paper in the map.
   const selectedId = params.get('paper')
   const navigateTo = (t: Tab, paper: string | null) => {
@@ -297,7 +304,7 @@ function TopicView({ slug }: { slug: string }) {
   const selectInMap = (id: string) => navigateTo('map', id)
   const exporter = useRef<GraphExporter | null>(null)
 
-  const back = <ButtonLink to="/evolution" variant="ghost" size="sm" className="mb-3 -ml-2.5"><ArrowLeft /> Evolution</ButtonLink>
+  const back = readOnly ? null : <ButtonLink to="/evolution" variant="ghost" size="sm" className="mb-3 -ml-2.5"><ArrowLeft /> Evolution</ButtonLink>
 
   if (status.isLoading) {
     return <>{back}<Spinner label="Loading the topic…" /></>
@@ -353,13 +360,15 @@ function TopicView({ slug }: { slug: string }) {
               <span className="font-mono text-[12px] text-fg-3 tabular-nums">
                 {total_papers} papers · {milestones} milestones · built {topic.built_at ? new Date(topic.built_at).toLocaleDateString() : '—'}
               </span>
-              {current.id && <FollowButton target={{ kind: 'map', topic_id: current.id }} />}
-              <ExportMenu slug={slug} exporter={() => exporter.current} />
-              {current.origin === 'search' && <SearchTopicActions topic={current} />}
+              {!readOnly && current.id && <FollowButton target={{ kind: 'map', topic_id: current.id }} />}
+              {!readOnly && <ShareMenu slug={slug} name={topic.name} />}
+              <ExportMenu slug={slug} filename={topic.slug} exporter={() => exporter.current} />
+              {!readOnly && topic.built_at && <WriteReviewButton slug={slug} />}
+              {!readOnly && current.origin === 'search' && <SearchTopicActions topic={current} />}
             </span>
           }
         />
-        {current.origin === 'search' && s2Skipped && (
+        {!readOnly && current.origin === 'search' && s2Skipped && (
           <Notice className="mt-3 max-w-3xl" title="Built from OpenAlex alone">
             Semantic Scholar was skipped ({current.build_stats.s2?.replace(/^skipped \((.*)\)$/, '$1')}), so recent arXiv papers may be missing citations. Add a key in Settings, then rebuild.
           </Notice>
@@ -372,7 +381,7 @@ function TopicView({ slug }: { slug: string }) {
       </section>
 
       <div className="flex flex-wrap items-center gap-1 border-b border-line" role="tablist" aria-label="Views">
-        {TABS.map(({ id, label }) => (
+        {TABS.filter((t) => !readOnly || SHARED_TABS.has(t.id)).map(({ id, label }) => (
           <button
             key={id}
             type="button"
@@ -426,7 +435,7 @@ function TopicView({ slug }: { slug: string }) {
               <p className="rounded-xl border border-line bg-surface p-4 text-[13px] text-fg-2">
                 Select a star in the map, or a milestone above. A thread then traces what the paper built on and what built on it.
               </p>
-              <NewInMaps topic={slug} limit={5} />
+              {!readOnly && <NewInMaps topic={slug} limit={5} />}
             </aside>
           )}
         </div>

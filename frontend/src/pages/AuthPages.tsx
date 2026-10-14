@@ -189,8 +189,11 @@ function Centered({ children }: { children: ReactNode }) {
   return <div className="flex min-h-screen items-center justify-center bg-bg">{children}</div>
 }
 
-/** Pages inside the app shell need an account; send everyone else to setup, login or a password change. */
-export function RequireAuth({ children }: { children: ReactNode }) {
+/**
+ * Pages inside the app shell need an account; send everyone else to setup, login or a password change, and new
+ * accounts to the setup guide first. The guide itself passes ``guide`` so it is not sent to itself.
+ */
+export function RequireAuth({ children, guide = false }: { children: ReactNode; guide?: boolean }) {
   const { data: status, isLoading, isError } = useAuthStatus()
   const location = useLocation()
 
@@ -207,5 +210,6 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   if (status.needs_setup) return <Navigate to="/setup" replace />
   if (!status.user) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />
   if (status.user.must_change_password) return <Navigate to="/change-password" replace />
+  if (!guide && !status.user.onboarded_at) return <Navigate to="/welcome" replace />
   return <>{children}</>
 }

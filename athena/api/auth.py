@@ -27,6 +27,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from athena.api.deps import get_db, get_redis
+from athena.core import usage
 from athena.core.config_store import get_setting
 from athena.core.models import User, UserSession
 
@@ -183,9 +184,12 @@ def daily_limit(action: str) -> int:
 
 
 def use(r, user: User, action: str) -> None:
-    """Count one ``action`` for ``user`` today; past the daily limit, refuse with 429. Admins are not counted."""
+    """Count one ``action`` for ``user`` today; past the daily limit, or the month's budget or token cap
+    (``athena.core.usage``), refuse with 429. Admins are not counted."""
     if user.role == "admin":
         return
+    if reason := usage.refusal(user):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=reason)
     key = f"limit:{user.id}:{action}:{_now():%Y-%m-%d}"
     used = int(r.incr(key))
     if used == 1:
@@ -226,6 +230,21 @@ def add_tokens(r, user: User, action: str, tokens: int) -> None:
     key = _token_key(user, action)
     r.incrby(key, tokens)
     r.expire(key, 2 * 86400)
+
+
+def allowances(r, user: User) -> list[dict]:
+    """What ``user`` has used of today's allowances; admins have none, so their limits read as None."""
+    today = f"{_now():%Y-%m-%d}"
+    out = []
+    for action, label in LIMIT_LABELS.items():
+        used = 0 if user.role == "admin" else int(r.get(f"limit:{user.id}:{action}:{today}") or 0)
+        out.append({"action": action, "label": label, "used": used,
+                    "limit": None if user.role == "admin" else daily_limit(action)})
+        if action in TOKEN_LIMITS:
+            tokens = 0 if user.role == "admin" else int(r.get(_token_key(user, action)) or 0)
+            out.append({"action": f"{action}_tokens", "label": f"tokens for {label}", "used": tokens,
+                        "limit": None if user.role == "admin" else token_limit(action)})
+    return out
 
 
 def spend(action: str):

@@ -27,7 +27,7 @@ const PAGES: { label: string; to: string; icon: LucideIcon; keywords: string }[]
   { label: 'Trending', to: '/trending', icon: TrendingUp, keywords: 'rising hot popular' },
   { label: 'Clusters', to: '/clusters', icon: Layers, keywords: 'themes groups topics' },
   { label: 'Evolution', to: '/evolution', icon: GitBranch, keywords: 'lineage history graph gaps milestones' },
-  { label: 'Saved', to: '/saved', icon: Bookmark, keywords: 'lists reading bookmarks' },
+  { label: 'Library', to: '/library', icon: Bookmark, keywords: 'saved lists reading bookmarks notes highlights read' },
   { label: 'Settings', to: '/settings', icon: Settings, keywords: 'sources keys appearance sync health' },
 ]
 

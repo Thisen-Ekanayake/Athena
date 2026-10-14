@@ -12,7 +12,9 @@ from sqlalchemy.pool import StaticPool
 from athena.api import auth
 from athena.api.deps import get_db, get_redis
 from athena.api.main import app
-from athena.core.models import SavedList, SavedListItem, User, UserSession
+from athena.core.models import (
+    InterestProfile, ItemFeedback, ItemRead, SavedList, SavedListItem, User, UserHighlight, UserNote, UserSession,
+)
 
 pytestmark = pytest.mark.real_auth
 
@@ -42,7 +44,9 @@ class FakeRedis:
 @pytest.fixture
 def db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    tables = [User.__table__, UserSession.__table__, SavedList.__table__, SavedListItem.__table__]
+    tables = [User.__table__, UserSession.__table__, SavedList.__table__, SavedListItem.__table__,
+              ItemRead.__table__, UserNote.__table__, UserHighlight.__table__, ItemFeedback.__table__,
+              InterestProfile.__table__]
     for table in tables:
         table.create(engine)
     Session = sessionmaker(bind=engine)
@@ -219,3 +223,42 @@ class TestPerUserData:
             assert codes == [200, 200, 429]
             assert all(admin.post("/api/v1/evolution/proposals", json={"query": "object tracking"}).status_code
                        == 200 for _ in range(3))
+
+
+class TestOnboarding:
+    def test_new_accounts_start_without_the_guide_done(self, db):
+        admin = client()
+        assert setup_admin(admin).json()["onboarded_at"] is None
+        _, bo = make_user(admin)
+        assert bo.get("/api/v1/auth/status").json()["user"]["onboarded_at"] is None
+
+    def test_finishing_or_skipping_puts_the_guide_away_and_it_can_come_back(self, db):
+        c = client()
+        setup_admin(c)
+        assert c.post("/api/v1/auth/onboarding", json={"done": True}).json()["onboarded_at"] is not None
+        assert c.get("/api/v1/auth/status").json()["user"]["onboarded_at"] is not None
+        assert c.post("/api/v1/auth/onboarding", json={"done": False}).json()["onboarded_at"] is None
+
+    def test_the_guide_waits_for_a_temporary_password_to_be_replaced(self, db):
+        admin = client()
+        setup_admin(admin)
+        made = admin.post("/api/v1/users", json={"email": "cy@example.com", "display_name": "Cy"}).json()
+        c = client()
+        c.post("/api/v1/auth/login", json={"email": "cy@example.com", "password": made["temporary_password"]})
+        assert c.post("/api/v1/auth/onboarding", json={"done": True}).status_code == 403
+        assert client().post("/api/v1/auth/onboarding", json={"done": True}).status_code == 401
+
+    def test_accounts_from_before_the_guide_are_marked_once(self, db):
+        from athena.api.migrations import add_release
+        Session, _ = db
+        c = client()
+        setup_admin(c)
+        settings: dict[str, str] = {}
+        with patch.object(add_release, "engine", Session.kw["bind"]), \
+                patch("athena.core.config_store.get_setting", lambda k, d="": settings.get(k, d)), \
+                patch("athena.core.config_store.set_setting", side_effect=settings.__setitem__):
+            assert add_release.mark_existing_accounts() == 1
+            _, bo = make_user(c)  # made after the release: sees the guide
+            assert add_release.mark_existing_accounts() == 0
+        assert c.get("/api/v1/auth/status").json()["user"]["onboarded_at"] is not None
+        assert bo.get("/api/v1/auth/status").json()["user"]["onboarded_at"] is None

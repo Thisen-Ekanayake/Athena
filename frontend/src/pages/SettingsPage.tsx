@@ -1,15 +1,20 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
-import { Link, NavLink, useParams } from 'react-router-dom'
+import { Link, NavLink, useNavigate, useParams } from 'react-router-dom'
 import { ArrowDownWideNarrow, ArrowUpNarrowWide, Check, Eye, EyeOff, Pencil, RefreshCw, Trash2, X, ExternalLink } from 'lucide-react'
 import { apiClient, type Source } from '../api/client'
 import { apiErrorMessage } from '../api/error'
-import { useCreateUser, useCurrentUser, useIsAdmin, useResetPassword, useUpdateUser, useUsers, type AuthUser, type IssuedUser, type Role } from '../api/queries/auth'
-import { useApiKeys, useDeleteApiKey, useModelSettings, useSetApiKey, useTestModels, useUpdateModelSettings, type ModelTestResult } from '../api/queries/app_settings'
+import { useCreateUser, useCurrentUser, useIsAdmin, useResetPassword, useSetOnboarded, useUpdateUser, useUsers, type AuthUser, type IssuedUser, type Role } from '../api/queries/auth'
+import { useApiKeys, useDeleteApiKey, useSetApiKey } from '../api/queries/app_settings'
 import { useClusters, useFetchHealth, useScoringHealth } from '../api/queries/phase4'
 import { useAddSource, useSources, useToggleSource, useUpdateSource, type PreviewResponse } from '../api/queries/sources'
 import { timeAgo } from '../components/items/format'
 import { SyncLog } from '../components/layout/SyncLog'
+import { SharingSettings } from '../features/evolution/SharingSettings'
+import { ModelsCard } from '../features/settings/ModelsCard'
+import { ScoringSettings } from '../features/settings/ScoringSettings'
+import { PersonalisationSettings } from '../features/personalisation/PersonalisationSettings'
 import { NotificationsSettings } from '../features/inbox/NotificationsSettings'
+import { UsageSettings } from '../features/usage/UsageSettings'
 import { PasswordForm } from './AuthPages'
 import { useAppStore, type Accent } from '../store/appStore'
 import { Button } from '../ui/Button'
@@ -22,13 +27,18 @@ import { Spinner } from '../ui/Spinner'
 import { cn } from '../ui/cn'
 import { inputClass } from '../ui/inputClass'
 
-// Admin tabs change Athena for everyone; Account, Notifications and Appearance are each person's own.
+// Admin tabs change Athena for everyone; Account, Notifications, Personalisation, Usage and Appearance are each
+// person's own (Usage also shows admins the whole app).
 const TABS = [
   { id: 'sources', label: 'Sources', admin: true },
   { id: 'keys', label: 'Models and keys', admin: true },
   { id: 'users', label: 'Users', admin: true },
+  { id: 'sharing', label: 'Sharing', admin: true },
+  { id: 'scoring', label: 'Scoring', admin: true },
   { id: 'account', label: 'Account', admin: false },
   { id: 'notifications', label: 'Notifications', admin: false },
+  { id: 'personalisation', label: 'Personalisation', admin: false },
+  { id: 'usage', label: 'Usage', admin: false },
   { id: 'appearance', label: 'Appearance', admin: false },
   { id: 'clusters', label: 'Clusters', admin: true },
   { id: 'health', label: 'Health', admin: true },
@@ -86,8 +96,12 @@ export function SettingsPage() {
           {active === 'sources' && <SourcesSection />}
           {active === 'keys' && <KeysSection />}
           {active === 'users' && <UsersSection />}
+          {active === 'sharing' && <SharingSettings />}
+          {active === 'scoring' && <ScoringSettings />}
           {active === 'account' && <AccountSection />}
           {active === 'notifications' && <NotificationsSettings />}
+          {active === 'personalisation' && <PersonalisationSettings />}
+          {active === 'usage' && <UsageSettings />}
           {active === 'appearance' && <AppearanceSection />}
           {active === 'clusters' && <ClustersSection />}
           {active === 'health' && <HealthSection />}
@@ -287,108 +301,6 @@ const KEYS: { key: string; label: string; hint: string }[] = [
   { key: 'SEMANTIC_SCHOLAR_API_KEY', label: 'Semantic Scholar', hint: 'Adds citation counts and live paper search. Optional: without it, requests are slower and rate-limited.' },
 ]
 
-type Field = { key: string; label: string; placeholder?: string; hint?: string; wide?: boolean }
-
-const CHAT_FIELDS: Field[] = [
-  { key: 'LLM_BASE_URL', label: 'Server address', hint: 'Any OpenAI-compatible endpoint, ending in /v1.', wide: true },
-  { key: 'LLM_CHAT_MODEL', label: 'Model' },
-  { key: 'LLM_SERVER', label: 'Server type', placeholder: 'auto', hint: 'llama.cpp or other. Auto treats OpenAI as other and anything else as llama.cpp.' },
-  { key: 'LLM_SUMMARY_MODEL', label: 'Summaries', placeholder: 'same model' },
-  { key: 'LLM_QA_MODEL', label: 'Q&A', placeholder: 'same model' },
-  { key: 'LLM_LIT_REVIEW_MODEL', label: 'Literature reviews', placeholder: 'same model' },
-  { key: 'LLM_PRICE_IN_PER_M', label: 'Input price', hint: 'USD per million tokens, for the cost logs. 0 for local models.' },
-  { key: 'LLM_PRICE_OUT_PER_M', label: 'Output price', hint: 'USD per million tokens.' },
-]
-
-const EMBED_FIELDS: Field[] = [
-  { key: 'EMBED_BASE_URL', label: 'Server address', placeholder: 'same as chat', wide: true },
-  { key: 'EMBED_MODEL', label: 'Model' },
-  { key: 'EMBED_DIMENSIONS', label: 'Dimensions', placeholder: "model's own", hint: 'Only for models that shorten vectors themselves (OpenAI text-embedding-3). Athena keeps 1024.' },
-]
-
-function ModelFields({ title, fields, form, defaults, onChange }: {
-  title: string
-  fields: Field[]
-  form: Record<string, string>
-  defaults: Record<string, string>
-  onChange: (key: string, value: string) => void
-}) {
-  return (
-    <fieldset className="grid gap-3">
-      <legend className="mb-1 text-[13px] font-medium text-fg">{title}</legend>
-      <div className="grid gap-3 sm:grid-cols-3">
-        {fields.map((f) => (
-          <label key={f.key} className={cn('grid content-start gap-1', f.wide && 'sm:col-span-3')}>
-            <span className="text-[12px] text-fg-3">{f.label}</span>
-            <input
-              value={form[f.key] ?? ''}
-              onChange={(e) => onChange(f.key, e.target.value)}
-              placeholder={f.placeholder ?? defaults[f.key] ?? ''}
-              className={cn(inputClass, 'font-mono')}
-            />
-            {f.hint && <span className="text-[11.5px] text-fg-3">{f.hint}</span>}
-          </label>
-        ))}
-      </div>
-    </fieldset>
-  )
-}
-
-function TestLine({ label, result }: { label: string; result?: ModelTestResult }) {
-  if (!result) return null
-  return (
-    <p className="flex flex-wrap items-center gap-2 text-[12.5px]">
-      <span className="text-fg-2">{label}</span>
-      {result.ok ? <Chip tone="good">Ready</Chip> : <Chip tone="bad">Failed</Chip>}
-      <span className="font-mono text-fg-3">{result.model ?? ''} · {result.latency_ms} ms{result.dimensions ? ` · ${result.dimensions} dims` : ''}</span>
-      {result.error && <span className="w-full text-bad">{result.error}</span>}
-    </p>
-  )
-}
-
-function ModelsCard() {
-  const { data } = useModelSettings()
-  const update = useUpdateModelSettings()
-  const test = useTestModels()
-  const [edits, setEdits] = useState<Record<string, string>>({})
-  if (!data) return <Card className="p-4"><Spinner label="Loading model settings…" /></Card>
-
-  const form = { ...data.values, ...edits }
-  const dirty = Object.keys(edits).length > 0
-  const embedModel = (form.EMBED_MODEL || data.defaults.EMBED_MODEL).trim()
-  const stale = Object.entries(data.embed_spaces).filter(([, made]) => made && made !== embedModel)
-
-  return (
-    <Card className="grid gap-5 p-4">
-      <ModelFields title="Chat" fields={CHAT_FIELDS} form={form} defaults={data.defaults} onChange={(k, v) => setEdits((e) => ({ ...e, [k]: v }))} />
-      <ModelFields title="Embeddings" fields={EMBED_FIELDS} form={form} defaults={data.defaults} onChange={(k, v) => setEdits((e) => ({ ...e, [k]: v }))} />
-      {stale.length > 0 && (
-        <Notice tone="warn" title="Stored vectors come from another model">
-          {stale.map(([space, made]) => `${space === 'feed' ? 'Feed' : 'Evolution'} vectors were made by ${made}`).join('; ')}.
-          {' '}Searches compare like with like, so re-embed after switching: <span className="font-mono">scripts/backfill_embeddings.py --reset</span>.
-        </Notice>
-      )}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" disabled={!dirty || update.isPending} onClick={() => update.mutate(edits, { onSuccess: () => setEdits({}) })}>
-          {update.isPending ? 'Saving…' : 'Save'}
-        </Button>
-        {dirty && <Button variant="ghost" onClick={() => setEdits({})}>Discard</Button>}
-        <Button variant="secondary" className="ml-auto" disabled={test.isPending || dirty} onClick={() => test.mutate()} title={dirty ? 'Save first' : undefined}>
-          <RefreshCw className={cn(test.isPending && 'animate-spin')} /> {test.isPending ? 'Testing…' : 'Test models'}
-        </Button>
-      </div>
-      {update.isError && <p className="text-[12px] text-bad">{apiErrorMessage(update.error, 'The settings could not be saved.')}</p>}
-      {test.isError && <p className="text-[12px] text-bad">{apiErrorMessage(test.error, 'The test could not run.')}</p>}
-      {test.data && (
-        <div className="grid gap-1.5">
-          <TestLine label="Chat" result={test.data.chat} />
-          <TestLine label="Embeddings" result={test.data.embed} />
-        </div>
-      )}
-    </Card>
-  )
-}
-
 function KeyRow({ keyName, label, hint }: { keyName: string; label: string; hint: string }) {
   const { data: keys } = useApiKeys()
   const setKey = useSetApiKey()
@@ -465,6 +377,8 @@ function KeysSection() {
 
 function AccountSection() {
   const user = useCurrentUser()
+  const guide = useSetOnboarded()
+  const navigate = useNavigate()
   if (!user) return null
   return (
     <section className="grid gap-8">
@@ -481,6 +395,15 @@ function AccountSection() {
       <div>
         <SectionTitle title="Password" description="Changing it logs out your other sessions. Forgot it? Your admin can issue a temporary one." />
         <Card className="max-w-[420px] p-4"><PasswordForm /></Card>
+      </div>
+      <div>
+        <SectionTitle
+          title="Setup guide"
+          description={user.role === 'admin' ? 'Connect a model, follow or build a map, follow sources and fetch the first papers.' : 'Follow or build a map, and follow a few sources.'}
+        />
+        <Button variant="secondary" onClick={() => guide.mutate(false, { onSuccess: () => navigate('/welcome') })} disabled={guide.isPending}>
+          Run the setup guide again
+        </Button>
       </div>
     </section>
   )
@@ -540,7 +463,7 @@ function UsersSection() {
     <section className="grid gap-6">
       <SectionTitle
         title="Users"
-        description="There is no public sign-up: add people here and pass on their temporary password. Users can read everything, save lists, ask questions and build maps up to a daily limit; admins can also change sources, models, users and maps."
+        description={<>There is no public sign-up: add people here and pass on their temporary password. Users can read everything, save lists, ask questions and build maps up to a daily limit; admins can also change sources, models, users and maps. What each person has used, and the limits, are under <Link to="/settings/usage" className="text-accent hover:underline">Usage</Link>.</>}
       />
       <Card className="p-4">
         <form onSubmit={add} className="grid gap-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto_auto] sm:items-end">

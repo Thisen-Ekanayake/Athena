@@ -1,8 +1,8 @@
 from datetime import datetime
 from uuid import uuid4
 from sqlalchemy import (
-    Column, String, DateTime, Integer, Float, Boolean, ARRAY,
-    Enum as SQLEnum, ForeignKey, UniqueConstraint, func,
+    Column, String, DateTime, Integer, Float, Boolean, ARRAY, JSON,
+    Enum as SQLEnum, ForeignKey, Index, UniqueConstraint, func,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import declarative_base, relationship
@@ -72,7 +72,7 @@ class ContentItem(Base):
     url = Column(String, unique=True, nullable=False)
     published_at = Column(DateTime(timezone=True), nullable=False)
     fetched_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    authors = Column(ARRAY(String), default=[])
+    authors = Column(ARRAY(String).with_variant(JSON(), "sqlite"), default=[])  # JSON in the SQLite tests
     abstract = Column(String, nullable=True)
     full_text_path = Column(String, nullable=True)
     citation_count = Column(Integer, default=0)
@@ -83,6 +83,9 @@ class ContentItem(Base):
     scored_at = Column(DateTime(timezone=True), nullable=True)
     is_trending = Column(Boolean, default=False)
     category_rank = Column(Integer, nullable=True)
+    # Citations gained over the last 7 and 30 days, from metric snapshots (athena.pipeline.momentum); papers only
+    citation_gain_7d = Column(Integer, nullable=True)
+    citation_gain_30d = Column(Integer, nullable=True)
     embedding_id = Column(String, nullable=True)
     embedding_model = Column(String, nullable=True)  # the EMBED_MODEL that made the vector
     embedded_at = Column(DateTime(timezone=True), nullable=True)
@@ -185,6 +188,8 @@ class ScoringConfig(Base):
     weight_sentiment = Column(Float, default=0.15)
     weight_recency = Column(Float, default=0.20)
     weight_authority = Column(Float, default=0.20)
+    # The "For you" order's share for a user's interests (athena.pipeline.interests); the five above sum to 1
+    weight_preference = Column(Float, default=0.30)
     half_life_days = Column(Integer, default=30)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -192,14 +197,20 @@ class ScoringConfig(Base):
 
 
 class MetricSnapshot(Base):
-    """Daily snapshot of citation_count + engagement per item for velocity computation."""
+    """An item's citation count and raw engagement on one day, for velocity and the momentum charts.
+
+    ``daily`` rows are taken once a day (athena.pipeline.momentum); ``rebuilt`` rows are a paper's past, rebuilt
+    once from the dates of the papers citing it, one row per day the count changed.
+    """
     __tablename__ = "metric_snapshots"
+    __table_args__ = (Index("ix_metric_snapshots_item_date", "item_id", "snapshot_date"),)
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
     citation_count = Column(Integer, default=0)
     engagement_raw = Column(Float, default=0.0)
     snapshot_date = Column(DateTime(timezone=True), default=datetime.utcnow)
+    source = Column(String, nullable=False, default="daily", server_default="daily")  # daily | rebuilt
 
     content_item = relationship("ContentItem", backref="metric_snapshots")
 
@@ -401,6 +412,7 @@ class User(Base):
     must_change_password = Column(Boolean, nullable=False, default=False)  # set by temporary passwords
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     last_login_at = Column(DateTime(timezone=True), nullable=True)
+    onboarded_at = Column(DateTime(timezone=True), nullable=True)  # finished or skipped the setup guide
 
 
 class UserSession(Base):
@@ -863,3 +875,156 @@ class WatchHit(Base):
     item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id", ondelete="CASCADE"), nullable=False)
     similarity = Column(Float, nullable=True)        # searches only
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+
+
+# ── Usage and sharing ────────────────────────────────────────────────
+
+
+class UsageEvent(Base):
+    """Model calls: who asked (none for background work), for what, and their tokens and cost.
+
+    Append-only, so a month's spend survives users deleting their questions and checks. Cost is priced when the
+    call is made, at the prices set then.
+    """
+    __tablename__ = "usage_events"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    feature = Column(String, nullable=False)         # qa | map_qa | idea_check | lit_review | summary | ...
+    kind = Column(String, nullable=False, default="chat")  # chat | embed
+    model = Column(String, nullable=False, default="")
+    calls = Column(Integer, nullable=False, default=1)  # background calls are summed into one row a minute
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    cost_usd = Column(Float, nullable=False, default=0.0)
+
+
+class MapShare(Base):
+    """A read-only link to a map for people without an account. The token is the whole secret."""
+    __tablename__ = "map_shares"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"), nullable=False,
+                      index=True)
+    token = Column(String, unique=True, nullable=False)
+    created_by = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=True)   # none: until revoked
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    views = Column(Integer, nullable=False, default=0)
+    last_viewed_at = Column(DateTime(timezone=True), nullable=True)
+
+    topic = relationship("EvoTopic")
+
+
+# ── Reading and personalisation ──────────────────────────────────────
+
+
+class ItemRead(Base):
+    """A feed item a user has marked as read. Map papers have their own (EvoReadingProgress); a feed item and the
+    map paper it is stay in step (athena.database.personal)."""
+    __tablename__ = "item_reads"
+
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id", ondelete="CASCADE"), primary_key=True)
+    read_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class UserNote(Base):
+    """A user's own note on a feed item or a map paper. ``target`` names the paper once per user (``item:<id>`` or
+    ``paper:<id>``); the foreign key that matches it removes the note with the paper."""
+    __tablename__ = "user_notes"
+    __table_args__ = (UniqueConstraint("user_id", "target", name="uq_user_note_target"),)
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    target = Column(String, nullable=False)
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id", ondelete="CASCADE"), nullable=True)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"), nullable=True)
+    body = Column(String, nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class UserHighlight(Base):
+    """A passage a user marked in text the app shows: an abstract, a summary, a takeaway, or a passage an answer
+    about a map cited. Kept as the quote with its offsets and a little text on either side, so it can be found
+    again if the text around it changes; one that can't be found is still listed."""
+    __tablename__ = "user_highlights"
+    __table_args__ = (Index("ix_user_highlights_user_target", "user_id", "target"),)
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    target = Column(String, nullable=False)          # item:<id> | paper:<id>
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id", ondelete="CASCADE"), nullable=True)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"), nullable=True)
+    field = Column(String, nullable=False)           # abstract | summary | takeaway:<n> | passage
+    quote = Column(String, nullable=False)
+    start_offset = Column(Integer, nullable=True)    # where the quote was in the field's text
+    end_offset = Column(Integer, nullable=True)
+    prefix = Column(String, nullable=True)           # up to 32 characters before and after it
+    suffix = Column(String, nullable=True)
+    comment = Column(String, nullable=True)
+    context = Column(JSONB, nullable=False, default={})  # passages: the map, section and chunk they came from
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ItemFeedback(Base):
+    """A user's reaction to a feed item: up (more like this), down (less), or hide (not interested: also left out
+    of their feed). One per item; a new reaction replaces the old one."""
+    __tablename__ = "item_feedback"
+    __table_args__ = (Index("ix_item_feedback_user_reaction", "user_id", "reaction"),)
+
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id", ondelete="CASCADE"), primary_key=True)
+    reaction = Column(String, nullable=False)        # up | down | hide
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class InterestProfile(Base):
+    """What a user's reactions and saves say they like, as two vectors in the feed's embedding space: the mean of
+    the items they liked or saved, and of those they marked down or hid (athena.pipeline.interests). Rebuilt
+    whenever those change, and when the feed's embedding model does. No row: nothing learned yet, and on."""
+    __tablename__ = "interest_profiles"
+
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=True)   # "Personalise my feed"
+    positive = Column(ARRAY(Float).with_variant(JSON(), "sqlite"), nullable=True)  # JSON in the SQLite tests
+    negative = Column(ARRAY(Float).with_variant(JSON(), "sqlite"), nullable=True)
+    n_positive = Column(Integer, nullable=False, default=0)
+    n_negative = Column(Integer, nullable=False, default=0)
+    embed_model = Column(String, nullable=True)      # the model that made the vectors; None: rebuild on next use
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+# ── Writing ──────────────────────────────────────────────────────────
+
+
+class LitReview(Base):
+    """A literature review a user asked for (athena.evolution.review).
+
+    ``map`` reviews are grounded in a built map: its eras, milestones, open problems and the papers' own text.
+    ``abstracts`` reviews come from search results when no map matches. Written in the background section by
+    section; ``sections`` and ``progress`` fill in as it goes, and ``sources`` holds the numbered references.
+    """
+    __tablename__ = "lit_reviews"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="SET NULL"), nullable=True)
+    query = Column(String, nullable=True)
+    title = Column(String, nullable=False)
+    mode = Column(String, nullable=False)              # map | abstracts
+    status = Column(String, nullable=False, default="queued")  # queued | running | done | failed
+    progress = Column(JSONB, nullable=False, default={})       # {step, of, label, at}
+    sections = Column(JSONB, nullable=False, default=[])       # [{key, title, level, markdown}]
+    sources = Column(JSONB, nullable=False, default=[])        # [{n, title, year, authors, venue, doi, arxiv_id, url}]
+    markdown = Column(String, nullable=True)
+    error = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    built_at = Column(DateTime(timezone=True), nullable=True)  # the map build it was written from
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    finished_at = Column(DateTime(timezone=True), nullable=True)

@@ -13,9 +13,12 @@ import redis as redis_lib
 from athena.api.deps import get_db, get_redis
 from athena.api.cache import cache_get, cache_set
 from athena.api.config import settings
-from athena.api.routers.feed import _build_feed_item
+from athena.api.auth import active_user
+from athena.api.routers.feed import _build_feed_item, _for_user
+from athena.database import feedback
+from athena.pipeline import interests
 from athena.core.models import (
-    ContentItem, Cluster, Source,
+    ContentItem, Cluster, Source, User,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["Clusters"])
@@ -83,6 +86,7 @@ def get_cluster_detail(
     sort: str = Query("score", pattern="^(score|date)$"),
     db: Session = Depends(get_db),
     r: redis_lib.Redis = Depends(get_redis),
+    user: User = Depends(active_user),
 ):
     """
     Returns cluster metadata and top items sorted by score.
@@ -94,10 +98,12 @@ def get_cluster_detail(
             status_code=400, detail="Invalid cluster ID format"
         )
 
-    cache_key = f"cluster:{cluster_id}:{page}:{sort}"
+    hides = feedback.has_hidden(db, user.id)
+    mine = f":u{user.id}:{interests.version(r, user.id)}" if hides else ""
+    cache_key = f"cluster:{cluster_id}:{page}:{limit}:{sort}{mine}"
     cached = cache_get(r, cache_key)
     if cached:
-        return cached
+        return _for_user(db, user, cached)
 
     cluster = db.execute(
         select(Cluster).where(Cluster.id == cluster_uuid)
@@ -106,17 +112,19 @@ def get_cluster_detail(
     if not cluster:
         raise HTTPException(status_code=404, detail="Cluster not found")
 
+    in_cluster = [ContentItem.cluster_id == cluster_uuid] + ([feedback.not_hidden(user.id)] if hides else [])
+
     # Item count
     total = db.execute(
         select(func.count(ContentItem.id))
-        .where(ContentItem.cluster_id == cluster_uuid)
+        .where(*in_cluster)
     ).scalar() or 0
 
     # Items query
     items_query = (
         select(ContentItem)
         .join(Source, ContentItem.source_id == Source.id, isouter=True)
-        .where(ContentItem.cluster_id == cluster_uuid)
+        .where(*in_cluster)
     )
     if sort == "score":
         items_query = items_query.order_by(desc(ContentItem.score))
@@ -146,4 +154,4 @@ def get_cluster_detail(
     }
 
     cache_set(r, cache_key, response, settings.CACHE_CLUSTER_DETAIL_TTL)
-    return response
+    return _for_user(db, user, response)

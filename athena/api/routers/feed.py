@@ -3,12 +3,16 @@ Athena Layer 5 — Feed Router
 
 GET /api/v1/feed — paginated, sorted, filtered content feed.
 """
+from datetime import datetime, timedelta
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query
+from loguru import logger
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, desc
-from datetime import datetime, timedelta
 import redis as redis_lib
 
+from athena.api.auth import active_user
 from athena.api.deps import get_db, get_redis
 from athena.api.cache import cache_get, cache_set
 from athena.api.config import settings
@@ -16,8 +20,10 @@ from athena.api.schemas import (
     FeedResponse,
 )
 from athena.core.models import (
-    ContentItem, Source, Cluster, ItemLink,
+    ContentItem, Source, Cluster, ItemLink, User,
 )
+from athena.database import feedback, personal
+from athena.pipeline import interests
 
 router = APIRouter(prefix="/api/v1", tags=["Feed"])
 
@@ -53,12 +59,14 @@ def _build_feed_item(item: ContentItem, related_count: int = 0) -> dict:
         "related_count": related_count,
         # Milestones of the evolution maps this paper cites (athena.evolution.feedlink)
         "milestones_cited": len(((item.extra_data or {}).get("evolution") or {}).get("cites") or []),
+        # Citations gained this week (athena.pipeline.momentum); papers only, None until known
+        "citation_gain_7d": item.citation_gain_7d,
     }
 
 
 @router.get("/feed", response_model=FeedResponse)
 def get_feed(
-    sort: str = Query("score", pattern="^(score|date|trending)$"),
+    sort: str = Query("score", pattern="^(score|date|trending|foryou)$"),
     category: str | None = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=50),
@@ -67,46 +75,50 @@ def get_feed(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     date_range: str | None = Query(None, pattern="^(24h|7d|30d)$"),
+    unread: bool = Query(False),
     db: Session = Depends(get_db),
     r: redis_lib.Redis = Depends(get_redis),
+    user: User = Depends(active_user),
 ):
     """
     Returns a paginated, sorted list of content cards.
-    The primary endpoint for the main feed.
+    The primary endpoint for the main feed. Items the user marked "not interested" are left out of every order;
+    ``foryou`` orders by the score blended with the user's interests (athena.pipeline.interests), and falls back to
+    the score (``personalised`` false) while there is nothing to learn from or personalisation is off.
+    ``unread`` leaves out what the user marked read.
     """
+    filters = f"{category}:{cluster_id}:{source_id}:{date_from}:{date_to}:{date_range}"
+    conditions = _conditions(category, cluster_id, source_id, date_from, date_to, date_range)
+    hides = feedback.has_hidden(db, user.id)
+    if hides:
+        conditions.append(feedback.not_hidden(user.id))
+    if unread:
+        conditions.append(personal.unread_filter(user.id))
+
+    if sort == "foryou":
+        profile = interests.active_profile(db, user.id)
+        if profile is not None:
+            try:
+                ranking = interests.ranked(db, r, user.id, profile, conditions, f"{filters}:{unread}")
+                return _for_user(db, user, _ranked_page(db, ranking["order"], page, limit))
+            except Exception as exc:  # Qdrant down: the plain score order below
+                logger.warning(f"For you: falling back to the score for {user.id}: {exc}")
+        sort = "score"
+
     # ── Cache check ─────────────────────────────────────
-    cache_key = f"feed:{sort}:{category}:{page}:{limit}:{cluster_id}:{source_id}:{date_from}:{date_to}:{date_range}"  # noqa: E501
+    # The user only joins the key when the page depends on them; each item's own state is added afterwards.
+    mine = f":u{user.id}:{interests.version(r, user.id)}" if unread or hides else ""
+    cache_key = f"feed:{sort}:{page}:{limit}:{filters}{mine}"
     cached = cache_get(r, cache_key)
     if cached:
-        return cached
+        return _for_user(db, user, cached)
 
     # ── Build query ─────────────────────────────────────
     query = select(ContentItem).join(
         Source, ContentItem.source_id == Source.id, isouter=True
     ).outerjoin(
         Cluster, ContentItem.cluster_id == Cluster.id
-    )
-
-    # Filters
-    if category:
-        query = query.where(ContentItem.category == category)
-    if cluster_id:
-        query = query.where(ContentItem.cluster_id == cluster_id)
-    if source_id:
-        query = query.where(ContentItem.source_id == source_id)
-    if date_from:
-        query = query.where(ContentItem.published_at >= date_from)
-    if date_to:
-        query = query.where(ContentItem.published_at <= date_to)
-
-    if date_range:
-        now = datetime.utcnow()
-        if date_range == "24h":
-            query = query.where(ContentItem.published_at >= now - timedelta(hours=24))
-        elif date_range == "7d":
-            query = query.where(ContentItem.published_at >= now - timedelta(days=7))
-        elif date_range == "30d":
-            query = query.where(ContentItem.published_at >= now - timedelta(days=30))
+    ).where(*conditions)
 
     # Sort
     if sort == "score":
@@ -127,7 +139,49 @@ def get_feed(
         query.offset(offset).limit(limit)
     ).scalars().all()
 
-    # Get related counts for each item
+    # ── Build response ──────────────────────────────────
+    response = {
+        "items": _feed_items(db, items),
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "has_next": (page * limit) < total,
+        },
+        "personalised": False,
+    }
+
+    # ── Cache store ─────────────────────────────────────
+    ttl = settings.CACHE_FEED_SCORE_TTL if sort == "score" else settings.CACHE_FEED_DATE_TTL  # noqa: E501
+    if unread:
+        ttl = min(ttl, 60)  # marking an item read changes this page
+    cache_set(r, cache_key, response, ttl)
+
+    return _for_user(db, user, response)
+
+
+def _conditions(category, cluster_id, source_id, date_from, date_to, date_range) -> list:
+    """The feed's filters as WHERE clauses on ContentItem."""
+    conditions = []
+    if category:
+        conditions.append(ContentItem.category == category)
+    if cluster_id:
+        conditions.append(ContentItem.cluster_id == cluster_id)
+    if source_id:
+        conditions.append(ContentItem.source_id == source_id)
+    if date_from:
+        conditions.append(ContentItem.published_at >= date_from)
+    if date_to:
+        conditions.append(ContentItem.published_at <= date_to)
+    if date_range:
+        now = datetime.utcnow()
+        since = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30)}[date_range]
+        conditions.append(ContentItem.published_at >= now - since)
+    return conditions
+
+
+def _feed_items(db: Session, items: list) -> list[dict]:
+    """Feed cards for ``items``, with how many related items each has."""
     item_ids = [item.id for item in items]
     related_counts = {}
     if item_ids:
@@ -141,23 +195,26 @@ def get_feed(
         )
         for row in db.execute(related_q).all():
             related_counts[row[0]] = row[1]
+    return [_build_feed_item(item, related_counts.get(item.id, 0)) for item in items]
 
-    # ── Build response ──────────────────────────────────
-    response = {
-        "items": [
-            _build_feed_item(item, related_counts.get(item.id, 0))
-            for item in items
-        ],
-        "pagination": {
-            "page": page,
-            "limit": limit,
-            "total": total,
-            "has_next": (page * limit) < total,
-        },
+
+def _ranked_page(db: Session, order: list, page: int, limit: int) -> dict:
+    """One page of a For-you order ([[id, for_you, interest rank], ...]), each card with its interest rank."""
+    rows = order[(page - 1) * limit:page * limit]
+    ids = [UUID(row[0]) for row in rows]
+    found = {i.id: i for i in db.execute(select(ContentItem).where(ContentItem.id.in_(ids))).scalars().all()} \
+        if ids else {}
+    items = [found[i] for i in ids if i in found]
+    interest = {UUID(row[0]): row[2] for row in rows}
+    return {
+        "items": [card | {"interest": interest.get(item.id)} for card, item in zip(_feed_items(db, items), items)],
+        "pagination": {"page": page, "limit": limit, "total": len(order), "has_next": page * limit < len(order)},
+        "personalised": True,
     }
 
-    # ── Cache store ─────────────────────────────────────
-    ttl = settings.CACHE_FEED_SCORE_TTL if sort == "score" else settings.CACHE_FEED_DATE_TTL  # noqa: E501
-    cache_set(r, cache_key, response, ttl)
 
-    return response
+def _for_user(db: Session, user: User, response: dict) -> dict:
+    """The page with each item's ``me`` (read, reaction, annotated) for this user."""
+    ids = [UUID(str(i["id"])) for i in response["items"]]
+    reactions = feedback.reactions_for(db, user.id, ids)
+    return response | {"items": personal.overlay(db, user.id, response["items"], reactions)}

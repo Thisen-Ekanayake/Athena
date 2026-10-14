@@ -6,6 +6,8 @@ export interface SavedList {
   id: string
   name: string
   item_count: number
+  /** Items in it you marked read */
+  read_count?: number
   created_at?: string
   // Only present when lists are fetched in the context of a specific item.
   contains_item?: boolean | null
@@ -25,12 +27,12 @@ export const useLists = (itemId?: string, enabled: boolean = true) => {
   })
 }
 
-/** Content items saved in a list, as feed cards. */
-export const useListItems = (listId: string | null) => {
+/** Content items saved in a list, as feed cards; ``unread`` leaves out what you marked read. */
+export const useListItems = (listId: string | null, unread = false) => {
   return useQuery({
-    queryKey: ['list-items', listId],
+    queryKey: ['list-items', listId, unread],
     queryFn: async () => {
-      const { data } = await apiClient.get<{ items: FeedItem[] }>(`/lists/${listId}/items`)
+      const { data } = await apiClient.get<{ items: FeedItem[] }>(`/lists/${listId}/items`, { params: unread ? { unread: true } : undefined })
       return data.items
     },
     enabled: !!listId,

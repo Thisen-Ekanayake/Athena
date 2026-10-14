@@ -1,18 +1,21 @@
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
 import { apiClient, type FeedItem, type FeedResponse, type TrendingResponse, type ClusterInfo } from './client'
 
+export type FeedSort = 'score' | 'date' | 'trending' | 'foryou'
+
 export const useFeed = (
-  sort: 'score' | 'date' | 'trending' = 'score', 
+  sort: FeedSort = 'score',
   category: string | null = null,
   dateRange: '24h' | '7d' | '30d' | 'all' = 'all',
   sourceId: string | null = null,
-  limit: number = 20
+  limit: number = 20,
+  unread: boolean = false,
 ) => {
   return useInfiniteQuery<FeedResponse>({
-    queryKey: ['feed', sort, category, dateRange, sourceId, limit],
+    queryKey: ['feed', sort, category, dateRange, sourceId, limit, unread],
     queryFn: async ({ pageParam = 1 }) => {
       const { data } = await apiClient.get<FeedResponse>('/feed', {
-        params: { sort, category, date_range: dateRange !== 'all' ? dateRange : undefined, source_id: sourceId, page: pageParam, limit }
+        params: { sort, category, date_range: dateRange !== 'all' ? dateRange : undefined, source_id: sourceId, page: pageParam, limit, unread: unread || undefined }
       })
       return data
     },

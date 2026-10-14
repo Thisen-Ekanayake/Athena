@@ -68,11 +68,22 @@ def build_topic(slug: str, client: OpenAlexClient | None = None, s2: SemanticSch
 
 
 def take_snapshot(slug: str, reason: str) -> None:
+    """The built map's changelog snapshot, then its papers' citations per year."""
     try:
         with SessionLocal() as session:
             db.take_snapshot(session, db.get_topic(session, slug), reason)
     except Exception as exc:  # the map is built; only its changelog entry is missing
         logger.warning(f"Topic {slug}: no snapshot taken: {exc}")
+    fetch_citation_years(slug)
+
+
+def fetch_citation_years(slug: str) -> None:
+    from athena.evolution.momentum import refresh_topic_years
+    try:
+        with SessionLocal() as session:
+            refresh_topic_years(session, db.get_topic(session, slug))
+    except Exception as exc:  # OpenAlex's allowance or the network: the charts wait for the next refresh
+        logger.warning(f"Topic {slug}: citations per year not fetched: {exc}")
 
 
 def build_search_topic(slug: str, stage_status: str = "building", snapshot: bool = True) -> dict:

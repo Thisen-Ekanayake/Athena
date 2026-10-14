@@ -449,17 +449,9 @@ def read_papers(session: Session, user_id: UUID | None, paper_ids: list[UUID]) -
 
 
 def set_read(session: Session, user_id: UUID, paper_id: UUID, read: bool) -> bool:
-    """Tick or untick a paper for a user. Returns False if the paper is unknown."""
-    if session.get(EvoPaper, paper_id) is None:
-        return False
-    if read:
-        session.execute(insert(EvoReadingProgress).values(user_id=user_id, paper_id=paper_id)
-                        .on_conflict_do_nothing(index_elements=["user_id", "paper_id"]))
-    else:
-        session.execute(delete(EvoReadingProgress).where(EvoReadingProgress.user_id == user_id,
-                                                         EvoReadingProgress.paper_id == paper_id))
-    session.commit()
-    return True
+    """Tick or untick a paper for a user, and the feed item that is the same paper. False if it is unknown."""
+    from athena.database.personal import set_paper_read
+    return set_paper_read(session, user_id, paper_id, read)
 
 
 def reading_path(session: Session, topic: EvoTopic, user_id: UUID | None, n: int = 10) -> dict:
@@ -1127,7 +1119,38 @@ def paper_detail(session: Session, topic: EvoTopic, paper_id: UUID) -> dict | No
         # Phase 3: gaps stated in its own text or by later papers, and later papers whose text matches them.
         "gaps": gaps,
         "loose_matches": list(best.values())[:8],
+        # OpenAlex's citations per year (athena.evolution.momentum); empty until fetched
+        "citations_by_year": _citations_by_year(p),
     }
+
+
+def _citations_by_year(p: EvoPaper) -> list[dict]:
+    from athena.evolution.momentum import by_year, counts_of
+    counts = counts_of(p)
+    return by_year(counts, datetime.now(timezone.utc)) if counts else []
+
+
+def topic_rising(session: Session, topic: EvoTopic, limit: int = 10, now: datetime | None = None) -> list[dict]:
+    """The map's on-topic papers gaining citations fastest: the last twelve months against the twelve before
+    (OpenAlex). Papers the corpus only holds because on-topic ones cite them (background like the Transformer, or
+    neighbouring fields) are left out, as the milestones and the People view leave them out."""
+    from athena.evolution.momentum import by_year, counts_of, rising_entry
+    now = now or datetime.now(timezone.utc)
+    rows = _topic_rows(session, topic.id)
+    weight = TopicConfig.from_dict(topic.config).weights.relevance
+    found = []
+    for tp, p in rows:
+        if weight > 0 and (tp.score_detail or {}).get("relevance", 0) <= 0:
+            continue
+        counts = counts_of(p)
+        if counts and (entry := rising_entry(counts, now)):
+            found.append((entry, tp, p, counts))
+    found.sort(key=lambda f: (-f[0]["ratio"], -f[0]["last_12_months"]))
+    found = found[:limit]
+    overrides = _overrides(session, topic.id)
+    names = method_names(session, {p.id: p.title for _, _, p, _ in found})
+    return [_node(tp, p, overrides.get(p.id), names.get(p.id)) | entry | {"citations_by_year": by_year(counts, now)}
+            for entry, tp, p, counts in found]
 
 
 def set_override(session: Session, topic: EvoTopic, paper_id: UUID, action: str, note: str | None) -> bool:

@@ -5,6 +5,7 @@ import { apiErrorMessage } from '../../api/error'
 import { Button } from '../../ui/Button'
 import { Spinner } from '../../ui/Spinner'
 import { cn } from '../../ui/cn'
+import { useMapScope } from './api'
 import { saveBlob, type GraphExporter } from './graphExport'
 
 type DataExport = { what: 'milestones' | 'reading-path' | 'gaps'; format: 'bib' | 'ris' | 'md' | 'csv' }
@@ -31,12 +32,15 @@ const GROUPS: { title: string; items: { label: string; data: DataExport }[] }[] 
 
 interface ExportMenuProps {
   slug: string
+  /** Names the files; a shared map's ``slug`` is its link's token */
+  filename?: string
   /** The map's exporter while it is drawn; null on the other tabs. */
   exporter: () => GraphExporter | null
 }
 
 /** Downloads: the map as an image, and the milestones, reading path and open problems as files. */
-export function ExportMenu({ slug, exporter }: ExportMenuProps) {
+export function ExportMenu({ slug, filename = slug, exporter }: ExportMenuProps) {
+  const scope = useMapScope()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -73,15 +77,15 @@ export function ExportMenu({ slug, exporter }: ExportMenuProps) {
 
   const download = (d: DataExport) =>
     run(`${d.what}.${d.format}`, async () => {
-      const resp = await apiClient.get<Blob>(`/evolution/topics/${slug}/export`, { params: d, responseType: 'blob' })
-      saveBlob(resp.data, `${slug}-${d.what}.${d.format}`)
+      const resp = await apiClient.get<Blob>(`${scope.base(slug)}/export`, { params: d, responseType: 'blob' })
+      saveBlob(resp.data, `${filename}-${d.what}.${d.format}`)
     })
 
   const image = (format: 'png' | 'svg') =>
     run(format, async () => {
       const ex = exporter()
       if (!ex) throw new Error('Open the lineage map first')
-      saveBlob(await (format === 'png' ? ex.png() : ex.svg()), `${slug}-map.${format}`)
+      saveBlob(await (format === 'png' ? ex.png() : ex.svg()), `${filename}-map.${format}`)
     })
 
   const mapShown = open && exporter() !== null

@@ -7,7 +7,10 @@ import { ItemList } from '../components/items/ItemRow'
 import { searchTopics } from '../features/evolution/api'
 import { FollowButton } from '../features/inbox/FollowButton'
 import { searchPapers } from '../features/search/api'
-import { LitReview, ResearchPaper } from '../features/search/ResearchResults'
+import { ResearchPaper } from '../features/search/ResearchResults'
+import { ReviewView } from '../features/reviews/ReviewView'
+import { apiErrorMessage } from '../api/error'
+import { useStartReview } from '../api/queries/reviews'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Notice } from '../ui/Notice'
@@ -58,26 +61,60 @@ function TopicMatch({ q }: { q: string }) {
   )
 }
 
-/** One place for every search: your library, Semantic Scholar, research maps and the AI literature review. */
+/** Starts a literature review of the query, saying first whether a research map will ground it. */
+function ReviewStarter({ q, onStarted }: { q: string; onStarted: (id: string) => void }) {
+  const { data: match, isLoading } = useQuery({ queryKey: ['evolution', 'search', q], queryFn: () => searchTopics(q), enabled: q.length >= 3, staleTime: 5 * 60 * 1000 })
+  const start = useStartReview()
+  return (
+    <section className="relative grid gap-3 rounded-xl border border-line bg-surface p-4">
+      <span className="ai-ring" aria-hidden="true" />
+      <div className="grid gap-1">
+        <h2 className="flex items-center gap-2 text-[15px] font-semibold text-fg"><Sparkles className="h-4 w-4 text-accent" aria-hidden="true" /> Write a literature review on “{q}”</h2>
+        <p className="text-[13px] text-fg-2">
+          {isLoading ? 'Looking for a research map that covers it…'
+            : match?.found ? <>It will be grounded in the map <b className="text-fg">{match.topic.name}</b>: how the field developed, its main approaches and open problems, citing the papers’ own text. It takes a few minutes and is saved in your Library.</>
+              : <>No research map covers this, so it will be written from search results’ abstracts, with checked citations. Build a map of the topic for a fuller review.</>}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="ai" disabled={start.isPending || isLoading} onClick={() => start.mutate({ query: q }, { onSuccess: (r) => onStarted(r.id) })}>
+          <Sparkles /> {start.isPending ? 'Starting…' : 'Write the review'}
+        </Button>
+        {start.error && (
+          <span className="text-[12.5px] text-bad">
+            {apiErrorMessage(start.error, 'Could not start the review')}{' '}
+            <Link to="/library/reviews" className="underline">Your reviews</Link>
+          </span>
+        )}
+      </div>
+    </section>
+  )
+}
+
+/** One place for every search: your library, Semantic Scholar, research maps and literature reviews. */
 export function SearchPage() {
   const [params, setParams] = useSearchParams()
   const q = params.get('q')?.trim() ?? ''
   const review = params.get('review') === '1'
-  const scope: Scope = (params.get('scope') as Scope | null) ?? (review ? 'everywhere' : 'library')
+  const reviewId = params.get('rid')
+  const scope: Scope = (params.get('scope') as Scope | null) ?? 'library'
 
-  const update = (next: { q?: string; scope?: Scope; review?: boolean }) => {
+  const update = (next: { q?: string; scope?: Scope; review?: boolean; rid?: string | null }) => {
     const p = new URLSearchParams()
     p.set('q', next.q ?? q)
     const s = next.scope ?? scope
     if (s !== 'library') p.set('scope', s)
-    if (next.review ?? review) p.set('review', '1')
+    const sameQuery = (next.q ?? q) === q
+    if (next.review ?? (review && sameQuery)) p.set('review', '1')
+    const rid = next.rid === undefined ? (sameQuery ? reviewId : null) : next.rid
+    if (rid) p.set('rid', rid)
     setParams(p)
   }
 
   const library = useSearch(q, null, scope === 'library' && q.length >= 3)
   const research = useQuery({
-    queryKey: ['research', q, review],
-    queryFn: () => searchPapers(q, undefined, review),
+    queryKey: ['research', q],
+    queryFn: () => searchPapers(q),
     enabled: scope === 'everywhere' && q.length >= 3,
     staleTime: 10 * 60 * 1000,
   })
@@ -86,7 +123,7 @@ export function SearchPage() {
     <div className="mx-auto max-w-[920px]">
       <PageHeader
         title={q ? `“${q}”` : 'Search'}
-        description="Search your library, or reach out to Semantic Scholar and draft a literature review from what comes back."
+        description="Search your library by name or by meaning, reach out to Semantic Scholar, or have a literature review written."
         actions={q.length >= 3 && q.length <= 300 && <FollowButton target={{ kind: 'search', query: q }} />}
       />
       <SearchForm key={q} initial={q} onSearch={(next) => update({ q: next })} />
@@ -100,15 +137,21 @@ export function SearchPage() {
             <Segmented
               label="Where to search"
               value={scope}
-              onChange={(s) => update({ scope: s, review: s === 'everywhere' && review })}
+              onChange={(s) => update({ scope: s })}
               options={[{ value: 'library', label: 'Your library' }, { value: 'everywhere', label: 'Library and Semantic Scholar' }]}
             />
-            {!review && (
-              <Button variant="ai" size="sm" className="ml-auto" onClick={() => update({ scope: 'everywhere', review: true })}>
+            {!review && !reviewId && (
+              <Button variant="ai" size="sm" className="ml-auto" onClick={() => update({ review: true })}>
                 <Sparkles /> Write a literature review
               </Button>
             )}
           </div>
+
+          {reviewId ? (
+            <div className="mb-4"><ReviewView id={reviewId} compact /></div>
+          ) : review ? (
+            <div className="mb-4"><ReviewStarter q={q} onStarted={(rid) => update({ rid, review: false })} /></div>
+          ) : null}
 
           {scope === 'library' ? (
             library.isLoading ? (
@@ -116,7 +159,7 @@ export function SearchPage() {
             ) : library.error ? (
               <Notice tone="error" title="Search failed">Check that the API is running, then try again.</Notice>
             ) : library.data?.items.length ? (
-              <ItemList items={library.data.items} />
+              <ItemList items={library.data.items} collapseHidden={false} />
             ) : (
               <EmptyState icon={Search} title="Nothing in your library matches">
                 Try other words, or search Semantic Scholar as well.
@@ -125,7 +168,6 @@ export function SearchPage() {
             )
           ) : (
             <div className="grid gap-4">
-              {review && <LitReview query={q} review={research.data?.lit_review ?? null} pending={research.isFetching} />}
               {research.isLoading ? (
                 <SkeletonRows count={5} />
               ) : research.error ? (

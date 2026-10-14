@@ -86,6 +86,8 @@ def embed_query(text: str, instruct: str, timeout: float = 10.0):
         resp.raise_for_status()
     except httpx.HTTPError:
         return None
+    from athena.core import usage
+    usage.add("search", embed_model_name(), usage.tokens_of(resp.json().get("usage"))[0], kind="embed")
     return vectors.truncate(np.asarray([resp.json()["data"][0]["embedding"]]))[0]
 
 

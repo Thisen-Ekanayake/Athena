@@ -1,22 +1,25 @@
 """
 Athena Layer 5 — Search Router
 
-GET /api/v1/search   — keyword/semantic search over the existing feed.
-POST /api/v1/search  — research search: local + Semantic Scholar + LLM lit review.
+GET /api/v1/search   — keyword plus meaning search over the existing feed (athena.search.hybrid).
+POST /api/v1/search  — research search: the library, Semantic Scholar and arXiv. Literature reviews are written
+                       by athena.api.routers.reviews.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select, or_
+from sqlalchemy import select
 from sqlalchemy.orm import Session
-from loguru import logger
 
 from athena.api import auth
-from athena.api.deps import get_db, get_redis
+from athena.api.deps import get_db
 from athena.api.config import settings
-from athena.api.routers.feed import _build_feed_item
-from athena.core.models import ContentItem, Source, User
+from athena.api.auth import active_user
+from athena.api.routers.feed import _build_feed_item, _for_user
+from athena.core.models import ContentItem, User
+from athena.search import hybrid
 from athena.search.arxiv_live import search_arxiv
-from athena.search.lit_review import generate_lit_review
 from athena.search.local import embed_query, search_local
 from athena.search.merger import merge_results
 from athena.search.semantic_scholar import search_semantic_scholar
@@ -69,80 +72,20 @@ def search(
     category: str | None = Query(None),
     limit: int = Query(20, ge=1, le=20),
     db: Session = Depends(get_db),
+    user: User = Depends(active_user),
 ):
-    # ── Semantic Search Attempt ─────────────────────────
-    qdrant_results = []
-    semantic_error = False
+    """Keyword plus meaning search over the feed (athena.search.hybrid): exact names first, then the two rankings
+    fused. Each item says how it matched; ``method`` says which sides answered."""
+    def semantic(query: str, n: int, cat: str | None) -> list[dict]:
+        hits = _qdrant_search(embed_query(query), n, cat)
+        return [{"id": UUID(h["id"]), "similarity": h["similarity"]} for h in hits]
 
-    try:
-        # 1. Embed query server-side
-        vector = embed_query(q)
-        # 2. Qdrant ANN search
-        qdrant_results = _qdrant_search(vector, limit, category)
-    except Exception as e:
-        logger.error(f"Semantic search failed (falling back): {e}")
-        semantic_error = True
-
-    # ── Keyword Fallback ────────────────────────────────
-    # Fall back if semantic search failed OR returned zero results
-    if semantic_error or not qdrant_results:
-        logger.info(f"Running keyword fallback for query: {q}")
-        keyword_query = (
-            select(ContentItem)
-            .join(Source, ContentItem.source_id == Source.id, isouter=True)
-            .where(
-                or_(
-                    ContentItem.title.ilike(f"%{q}%"),
-                    ContentItem.summary.ilike(f"%{q}%"),
-                )
-            )
-        )
-        if category:
-            keyword_query = keyword_query.where(ContentItem.category == category)
-
-        items = db.execute(keyword_query.limit(limit)).scalars().all()
-
-        results = [_build_feed_item(item) for item in items]
-        for r in results:
-            r["similarity"] = 0.5  # Neutral score for keyword matches
-
-        return {
-            "query": q,
-            "items": results,
-            "total": len(results),
-            "method": "keyword"
-        }
-
-    # ── Map Qdrant results if successful ────────────────
-
-    # 3. Map Qdrant point IDs to content_item IDs
-    # Qdrant stores embedding_id on the content_item
-    point_ids = [r["id"] for r in qdrant_results]
-    similarity_map = {r["id"]: r["similarity"] for r in qdrant_results}
-
-    # Fetch items by embedding_id
-    items = db.execute(
-        select(ContentItem)
-        .join(Source, ContentItem.source_id == Source.id, isouter=True)
-        .where(ContentItem.embedding_id.in_(point_ids))
-    ).scalars().all()
-
-    # Build response sorted by similarity
-    item_map = {item.embedding_id: item for item in items}
-    sorted_items = []
-    for pid in point_ids:
-        item = item_map.get(pid)
-        if item:
-            item_dict = _build_feed_item(item)
-            item_dict["similarity"] = similarity_map.get(pid, 0.0)
-            sorted_items.append(item_dict)
-
-    return {
-        "query": q,
-        "items": sorted_items,
-        "total": len(sorted_items),
-        "method": "semantic"
-    }
+    results, method = hybrid.search(db, q, limit, category, semantic)
+    found = {item.id: item for item in db.execute(
+        select(ContentItem).where(ContentItem.id.in_([r["id"] for r in results]))).scalars().all()} if results else {}
+    items = [_build_feed_item(found[r["id"]]) | {"similarity": r["similarity"], "match": r["match"]}
+             for r in results if r["id"] in found]
+    return _for_user(db, user, {"query": q, "items": items, "total": len(items), "method": method})
 
 
 # ── Research search (POST /api/v1/search) ────────────────────
@@ -151,7 +94,6 @@ def search(
 class SearchRequest(BaseModel):
     query: str = Field(..., min_length=3, max_length=500)
     limit: int = Field(20, ge=1, le=50)
-    generate_review: bool = True
 
 
 class PaperResult(BaseModel):
@@ -168,16 +110,14 @@ class PaperResult(BaseModel):
 
 class SearchResponse(BaseModel):
     papers: list[PaperResult]
-    lit_review: str | None
     local_count: int
     live_count: int
     query: str
 
 
 @router.post("/search", response_model=SearchResponse)
-def research_search(payload: SearchRequest, user: User = Depends(auth.active_user),
-                    r=Depends(get_redis)) -> SearchResponse:
-    """Research search: combine local Qdrant hits + Semantic Scholar + LLM lit review."""
+def research_search(payload: SearchRequest, user: User = Depends(auth.active_user)) -> SearchResponse:
+    """Research search: the library (keywords plus meaning), Semantic Scholar and arXiv, merged."""
     query = payload.query.strip()
     limit = payload.limit
 
@@ -187,21 +127,8 @@ def research_search(payload: SearchRequest, user: User = Depends(auth.active_use
     live_papers = search_semantic_scholar(query, limit=15) + search_arxiv(query, limit=15)
     merged = merge_results(local_papers, live_papers, max_total=limit)
 
-    lit_review_text: str | None = None
-    if payload.generate_review and merged:
-        auth.use(r, user, "lit_review")
-        try:
-            lit_review_text = generate_lit_review(query, merged)
-        except Exception as exc:
-            logger.error(f"research_search: lit review failed — {exc}")
-            raise HTTPException(
-                status_code=502,
-                detail="Failed to generate literature review",
-            )
-
     return SearchResponse(
         papers=[PaperResult(**p) for p in merged],
-        lit_review=lit_review_text,
         local_count=len(local_papers),
         live_count=len(live_papers),
         query=query,

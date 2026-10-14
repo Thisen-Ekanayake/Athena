@@ -7,9 +7,12 @@ POST /api/v1/auth/login     — start a session (httpOnly cookie)
 POST /api/v1/auth/logout    — end it
 GET  /api/v1/auth/me        — the logged-in account
 POST /api/v1/auth/password  — change your own password (required after a temporary one)
+POST /api/v1/auth/onboarding — mark the setup guide done (or skipped), or bring it back
 
 There is no public sign-up: the admin creates accounts (routers/users.py).
 """
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -42,11 +45,20 @@ class PasswordRequest(BaseModel):
     new_password: str = Field(max_length=200)
 
 
+class OnboardingRequest(BaseModel):
+    done: bool
+
+
+def _iso(dt) -> str | None:
+    return dt.isoformat() if dt else None
+
+
 def user_out(user: User) -> dict:
     return {"id": str(user.id), "email": user.email, "display_name": user.display_name, "role": user.role,
             "is_active": user.is_active, "must_change_password": user.must_change_password,
-            "created_at": user.created_at.isoformat() if user.created_at else None,
-            "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None}
+            "created_at": _iso(user.created_at), "last_login_at": _iso(user.last_login_at),
+            # None until the setup guide is finished or skipped; the app opens the guide until then
+            "onboarded_at": _iso(getattr(user, "onboarded_at", None))}
 
 
 @router.get("/status")
@@ -117,4 +129,12 @@ def change_password(body: PasswordRequest, request: Request, user: User = Depend
     user.must_change_password = False
     db.commit()
     auth.revoke_sessions(db, user.id, keep_token=request.cookies.get(auth.COOKIE))
+    return user_out(user)
+
+
+@router.post("/onboarding")
+def onboarding(body: OnboardingRequest, user: User = Depends(auth.active_user), db: Session = Depends(get_db)):
+    """``done``: the guide is finished or skipped and stays away. Not done: it opens again on the next page."""
+    user.onboarded_at = datetime.now(timezone.utc) if body.done else None
+    db.commit()
     return user_out(user)

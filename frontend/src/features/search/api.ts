@@ -14,27 +14,13 @@ export interface PaperResult {
 
 export interface SearchResponse {
   papers: PaperResult[]
-  lit_review: string | null
   local_count: number
   live_count: number
   query: string
 }
 
-export interface SearchRequest {
-  query: string
-  limit?: number
-  generate_review?: boolean
-}
-
-export async function searchPapers(
-  query: string,
-  limit?: number,
-  generateReview?: boolean,
-): Promise<SearchResponse> {
-  const body: SearchRequest = { query }
-  if (typeof limit === 'number') body.limit = limit
-  if (typeof generateReview === 'boolean') body.generate_review = generateReview
-
-  const { data } = await apiClient.post<SearchResponse>('/search', body)
+/** Research search: your library (keywords plus meaning), Semantic Scholar and arXiv. */
+export async function searchPapers(query: string, limit?: number): Promise<SearchResponse> {
+  const { data } = await apiClient.post<SearchResponse>('/search', typeof limit === 'number' ? { query, limit } : { query })
   return data
 }

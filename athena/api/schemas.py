@@ -42,6 +42,9 @@ class FeedItemResponse(BaseModel):
     cluster: Optional[ClusterInfo] = None
     related_count: int = 0
     milestones_cited: int = 0
+    citation_gain_7d: Optional[int] = None
+    me: Optional[dict] = None  # the user's own state (athena.database.personal.overlay); never cached
+    interest: Optional[float] = None  # "For you" only: the item's interest rank among the candidates, 0-1
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -56,6 +59,7 @@ class PaginationInfo(BaseModel):
 class FeedResponse(BaseModel):
     items: List[FeedItemResponse]
     pagination: PaginationInfo
+    personalised: bool = False  # the For-you order was used (not its fallback to the score)
 
 
 # ── Single item detail ──────────────────────────────────
@@ -201,6 +205,7 @@ class SavedListResponse(BaseModel):
     id: UUID
     name: str
     item_count: int = 0
+    read_count: int = 0  # items in it the user marked read
     created_at: Optional[datetime] = None
     # Populated only when a list is queried in the context of a specific item.
     contains_item: Optional[bool] = None

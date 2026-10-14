@@ -112,6 +112,21 @@ def refresh_gpu_lane() -> dict:
 def snapshot_topic(slug: str, reason: str = "refresh") -> dict:
     from athena.database import evolution as db
     from athena.database.db import SessionLocal
+    from athena.evolution.build import fetch_citation_years
     with SessionLocal() as session:
         topic = db.get_topic(session, slug)
-        return db.take_snapshot(session, topic, reason) if topic is not None else {}
+        result = db.take_snapshot(session, topic, reason) if topic is not None else {}
+    if topic is not None:
+        fetch_citation_years(slug)
+    return result
+
+
+# ── literature reviews (S1); see athena.evolution.review ──────────────
+
+
+@celery_app.task
+def write_review(review_id: str) -> dict:
+    """Write a saved literature review section by section. Model calls only: on the default queue, so a review
+    does not wait behind a map build."""
+    from athena.evolution.review import run
+    return run(review_id)

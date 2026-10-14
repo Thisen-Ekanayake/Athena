@@ -20,6 +20,7 @@ import athena.pipeline.scoring
 import athena.pipeline.summarisation_tasks  # noqa: F401  (registers the summary tasks with every worker)
 import athena.evolution.tasks  # noqa: F401  (registers the evolution queue's tasks)
 import athena.pipeline.watches  # noqa: F401  (registers the watch checks and digests)
+import athena.pipeline.momentum  # noqa: F401  (registers the daily citation momentum)
 from athena.core.logging import setup_redis_logging
 
 # Staging directory for full-text files (configurable via env; defaults to persistent
@@ -69,8 +70,9 @@ def setup_periodic_tasks(sender, **kwargs):
     sender.add_periodic_task(21600.0,
                              athena.pipeline.scoring.refresh_recency_scores.s(),
                              name='refresh recency scores every 6 hours')
-    # Take metric snapshot daily (86400 seconds)
-    sender.add_periodic_task(86400.0, athena.pipeline.scoring.take_metric_snapshot.s(), name='daily metric snapshot')
+    # Citation counts, metric snapshots and 7/30-day gains: checked hourly, done once per UTC day (a 24 h interval
+    # restarts its clock with beat and never fired on machines that restart often)
+    sender.add_periodic_task(3600.0, athena.pipeline.momentum.daily_momentum.s(), name='daily citation momentum')
     # Hourly summaries: every item without one, highest score first
     sender.add_periodic_task(3600.0, enqueue_tier2_summaries.s(), name='hourly tier 2 summaries')
     # Daily trending briefs per category
@@ -86,6 +88,20 @@ def setup_periodic_tasks(sender, **kwargs):
     sender.add_periodic_task(3600.0, athena.pipeline.watches.check_watches.s(), name='check watches every hour')
     sender.add_periodic_task(crontab(hour=athena.pipeline.watches.DIGEST_HOUR_UTC, minute=0),
                              athena.pipeline.watches.send_digests.s(), name='inbox digests')
+    # The month's model spend against its budget: admins hear at 80% and 100%
+    sender.add_periodic_task(3600.0, check_model_budget.s(), name='check the model budget every hour')
+
+
+@celery_app.task
+def check_model_budget():
+    """Tell the admins, once a month each, when model spend passes 80% and then 100% of the monthly budget."""
+    from athena.core import usage
+    from athena.database.db import SessionLocal
+    usage.flush()  # this worker's own background calls count too
+    with SessionLocal() as session:
+        threshold = usage.budget_alerts(session)
+        session.commit()
+    return threshold
 
 
 @celery_app.task

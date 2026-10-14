@@ -170,7 +170,7 @@ def verdict_prompt(idea: str, papers: list[dict], themes: list[dict]) -> str:
             "their [number]:\n" + "\n".join(asks) + "\nUse only the information above.\n" + f"Return {{{keys}}}.")
 
 
-def check_idea(session: Session, idea: str, verdict: bool = True) -> dict:
+def check_idea(session: Session, idea: str, verdict: bool = True, user_id=None) -> dict:
     from athena.core import llm
     from athena.evolution import vectors
     from athena.evolution.search import embed_query
@@ -185,7 +185,8 @@ def check_idea(session: Session, idea: str, verdict: bool = True) -> dict:
     if verdict and (papers or themes):
         try:
             answer, usage = llm.chat_json(verdict_prompt(idea, papers, themes), verdict_schema(bool(themes)),
-                                          "idea_verdict", system=VERDICT_SYSTEM, max_tokens=500)
+                                          "idea_verdict", system=VERDICT_SYSTEM, max_tokens=500,
+                                          feature="idea_check", user_id=user_id)
             result["verdict"] = answer
             result["usage"] = usage
         except Exception as exc:  # the search results still stand without the model's reading of them

@@ -58,13 +58,14 @@ def save_content_items(items: list[ContentItemCreate]) -> list[str]:
 
 
 def update_content_item_metrics(url: str, citation_count: int, extra_data: dict):
+    """Merge enrichment results into an item. Keys the scrapers set (arxiv_id, pdf_url) stay, a failed lookup
+    (None) keeps what an earlier one found, and the citation count never goes down to a missing answer's 0."""
     with SessionLocal() as session:
-        from sqlalchemy import update
-        stmt = update(ContentItem).where(ContentItem.url == url).values(
-            citation_count=citation_count,
-            extra_data=extra_data
-        )
-        session.execute(stmt)
+        item = session.execute(select(ContentItem).where(ContentItem.url == url)).scalar_one_or_none()
+        if item is None:
+            return
+        item.extra_data = {**(item.extra_data or {}), **{k: v for k, v in extra_data.items() if v is not None}}
+        item.citation_count = max(item.citation_count or 0, citation_count or 0)
         session.commit()
 
 
@@ -82,7 +83,7 @@ def get_scoring_config(category: str):
             .where(ScoringConfig.is_active .is_(True))
             .where(ScoringConfig.category == category)
             .order_by(ScoringConfig.version.desc())
-        ).scalar_one_or_none()
+        ).scalars().first()
         return config
 
 

@@ -13,12 +13,13 @@ from pydantic import BaseModel, validator
 from loguru import logger
 from sqlalchemy import select
 
-from athena.core import llm
+from athena.core import llm, usage
 from athena.core.models import PromptVersion, SummaryUsageLog, JobType
 from athena.core.redis_client import get_redis
 
 redis = get_redis()
 SUMMARY_DAILY_BUDGET_USD = float(os.getenv("SUMMARY_DAILY_BUDGET_USD", "5.00"))
+USAGE_FEATURES = {"item_summary": "summary", "cluster_label": "cluster_label", "trending_brief": "trending_brief"}
 
 
 class SummaryOutput(BaseModel):
@@ -63,6 +64,9 @@ def check_budget_before_call(job_type: str, tier: int = 2) -> bool:
     Tier 1 (urgent/trending) is exempt from the 80% threshold.
     Tier 2/3 pauses at 80% of daily budget to reserve capacity for urgent items.
     """
+    if usage.app_over_budget():
+        logger.warning("This month's model budget is used up; summaries paused until next month")
+        return False
     today_spend = redis.get('summary_spend:' + today_date())
     if today_spend is None:
         return True
@@ -106,6 +110,9 @@ def log_usage_and_update_spend(
 ):
     """Logs usage to the DB and increments daily spend in Redis (zero for local models)."""
     cost = llm.cost(input_tokens, output_tokens)
+    if input_tokens or output_tokens:
+        kind = job_type.value if hasattr(job_type, "value") else str(job_type)
+        usage.add(USAGE_FEATURES.get(kind, "summary"), model, input_tokens, output_tokens)
 
     key = 'summary_spend:' + today_date()
     redis.incrbyfloat(key, cost)

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronDown, GitBranch, History, Layers, Newspaper, Quote, Rss, Search } from 'lucide-react'
+import { ChevronDown, GitBranch, Gauge, History, Layers, Newspaper, Quote, Rss, Search } from 'lucide-react'
 import type { InboxEvent, InboxItem, WatchKind } from '../../api/queries/inbox'
 import { cn } from '../../ui/cn'
 import { timeAgo } from '../../components/items/format'
@@ -14,6 +14,7 @@ function KindIcon({ event: e }: { event: InboxEvent }) {
     case 'map_changes': return <History {...props} />
     case 'feed_citations': return <Quote {...props} />
     case 'digest': return <Newspaper {...props} />
+    case 'budget': return <Gauge {...props} />
     case 'source': return <Rss {...props} />
     case 'cluster': return <Layers {...props} />
     default: return <Search {...props} />

@@ -7,7 +7,7 @@ import { Chip } from '../../ui/Chip'
 import { Notice } from '../../ui/Notice'
 import { Spinner } from '../../ui/Spinner'
 import { cn } from '../../ui/cn'
-import { useCreateTopic, useProposal, type TopicProposal } from './api'
+import { useCreateTopic, useProposal, type EvolutionTopic, type TopicProposal } from './api'
 
 interface Draft {
   name: string
@@ -38,8 +38,13 @@ const fromModel = (p: TopicProposal, draft: Draft): Draft => ({
 
 const toggle = (list: string[], value: string) => (list.includes(value) ? list.filter((v) => v !== value) : [...list, value])
 
-/** A search's proposed topic: anchors, keywords and fields to check before the map is built. */
-export function ProposalPanel({ proposal: initial, onCancel }: { proposal: TopicProposal; onCancel: () => void }) {
+/** A search's proposed topic: anchors, keywords and fields to check before the map is built. The map's page opens
+ *  once the build starts, unless ``onBuilt`` takes over (the setup guide stays where it is). */
+export function ProposalPanel({ proposal: initial, onCancel, onBuilt }: {
+  proposal: TopicProposal
+  onCancel: () => void
+  onBuilt?: (topic: EvolutionTopic) => void
+}) {
   const navigate = useNavigate()
   const { data: proposal } = useProposal(initial)
   const create = useCreateTopic()
@@ -81,7 +86,7 @@ export function ProposalPanel({ proposal: initial, onCancel }: { proposal: Topic
         fields: draft.fields,
         proposal_id: proposal.id,
       },
-      { onSuccess: (topic) => navigate(`/evolution/${topic.slug}`) },
+      { onSuccess: (topic) => (onBuilt ? onBuilt(topic) : navigate(`/evolution/${topic.slug}`)) },
     )
   }
 

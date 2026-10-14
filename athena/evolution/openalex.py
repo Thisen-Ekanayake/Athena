@@ -37,6 +37,7 @@ WORK_FIELDS = ",".join([
     "authorships", "primary_location", "best_oa_location", "locations", "open_access", "primary_topic",
     "abstract_inverted_index",
 ])
+CITATION_YEAR_FIELDS = "id,counts_by_year"
 
 
 # OpenAlex's 26 fields (primary_topic.field). Filters take the ID: several names contain commas, which
@@ -235,6 +236,22 @@ class OpenAlexClient:
                                         "select": WORK_FIELDS})
             works += [Work.from_api(raw) for raw in data.get("results", [])]
         return works
+
+    def citation_years(self, ids: list[str]) -> dict[str, dict[int, int]]:
+        """Citations per calendar year (OpenAlex keeps the last ten) for many works by OpenAlex ID, 100 per call.
+
+        Its own small ``select``, so the cached answers map builds read (WORK_FIELDS) are not touched.
+        """
+        out: dict[str, dict[int, int]] = {}
+        unique = list(dict.fromkeys(i for i in ids if i))
+        for start in range(0, len(unique), IDS_PER_FILTER):
+            chunk = unique[start:start + IDS_PER_FILTER]
+            data = self._get("/works", {"filter": "openalex:" + "|".join(chunk), "per-page": IDS_PER_FILTER,
+                                        "select": CITATION_YEAR_FIELDS})
+            for raw in data.get("results", []):
+                out[short_id(raw.get("id"))] = {int(c["year"]): int(c.get("cited_by_count") or 0)
+                                                for c in raw.get("counts_by_year") or [] if c.get("year")}
+        return out
 
     def get_works_by_doi(self, dois: list[str]) -> list[Work]:
         """Many works by DOI, 50 per list call (DOIs are long, so fewer fit in a URL than IDs)."""

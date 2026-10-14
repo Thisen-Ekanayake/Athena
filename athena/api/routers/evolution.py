@@ -23,6 +23,7 @@ GET  /api/v1/evolution/topics/{slug}/reading-path?n=10       — a survey, then 
 PUT|DELETE /api/v1/evolution/papers/{paper_id}/read          — tick or untick a paper as read (per user)
 GET  /api/v1/evolution/topics/{slug}/export?what=&format=    — milestones or the reading path as BibTeX, RIS or
                                                                Markdown; gap themes as CSV
+GET  /api/v1/evolution/topics/{slug}/rising?limit=10         — papers gaining citations fastest (OpenAlex per year)
 GET  /api/v1/evolution/topics/{slug}/people                  — key authors and labs per era, and who introduced
                                                                each milestone
 GET  /api/v1/evolution/items/{item_id}                       — a feed item's place in the maps, and the
@@ -62,9 +63,11 @@ from athena.api.cache import cache_get, cache_invalidate, cache_set
 from athena.api.config import settings
 from athena.api.deps import get_db, get_redis
 from athena.core.models import User
+from athena.core.config_store import set_setting
 from athena.database import evolution as db
+from athena.database import shares
 from athena.database import watches as watch_db
-from athena.core import llm
+from athena.core import llm, usage
 from athena.evolution import ask, export, ideas, notes
 from athena.evolution import propose as proposals
 from athena.evolution.classify import chat_available
@@ -363,6 +366,21 @@ def topic_links(slug: str, session: Session = Depends(get_db), r: redis_lib.Redi
     return payload
 
 
+@router.get("/topics/{slug}/rising")
+def topic_rising(slug: str, limit: int = Query(10, ge=1, le=30), session: Session = Depends(get_db),
+                 r: redis_lib.Redis = Depends(get_redis)):
+    """The map's papers gaining citations fastest (OpenAlex's citations per year)."""
+    topic = _built_topic_or_409(session, slug)
+    key = _cache_key(session, topic, "rising", limit)
+    cached = cache_get(r, key)
+    if cached:
+        return cached
+    payload = {"papers": db.topic_rising(session, topic, limit)}
+    # Citations per year arrive after a build without changing it, so this keeps for minutes, not the hour.
+    cache_set(r, key, payload, settings.CACHE_CLUSTER_DETAIL_TTL)
+    return payload
+
+
 @router.get("/topics/{slug}/people")
 def topic_people(slug: str, session: Session = Depends(get_db), r: redis_lib.Redis = Depends(get_redis)):
     topic = _built_topic_or_409(session, slug)
@@ -454,9 +472,19 @@ def export_topic(
     session: Session = Depends(get_db),
     user: User = Depends(auth.active_user),
 ):
+    _check_export(what, format)
+    return export_file(session, _built_topic_or_409(session, slug), what, format, n, user.id)
+
+
+def _check_export(what: str, format: str) -> None:
     if format not in EXPORT_FORMATS[what]:
         raise HTTPException(status_code=422, detail=f"{what} exports as {', '.join(sorted(EXPORT_FORMATS[what]))}")
-    topic = _built_topic_or_409(session, slug)
+
+
+def export_file(session: Session, topic, what: str, format: str, n: int, user_id: UUID | None = None) -> Response:
+    """A map's milestones, reading path or gap themes as a download; shared links export without a reader."""
+    _check_export(what, format)
+    slug = topic.slug
     built = topic.built_at.date().isoformat() if hasattr(topic.built_at, "date") else None
     if what == "gaps":
         body = export.gaps_csv(db.gap_export_rows(session, topic))
@@ -465,7 +493,7 @@ def export_topic(
         body = export.markdown_milestones(topic.name, papers, built) if format == "md" else (
             export.bibtex(papers) if format == "bib" else export.ris(papers))
     else:
-        path = db.reading_path(session, topic, user.id, n)
+        path = db.reading_path(session, topic, user_id, n)
         entries = ([path["survey"]] if path["survey"] else []) + path["steps"]
         papers = db.export_papers(session, [UUID(e["id"]) for e in entries])
         extra = {e["id"]: {"why": e["why"], "named_method": e["named_method"]} for e in entries}
@@ -507,7 +535,7 @@ def create_idea_check(body: IdeaCheckRequest, session: Session = Depends(get_db)
     """The idea against every built map. Takes a few seconds, longer with the verdict; saved to the account."""
     idea = body.idea.strip()
     try:
-        result = ideas.check_idea(session, idea, verdict=body.verdict)
+        result = ideas.check_idea(session, idea, verdict=body.verdict, user_id=user.id)
     except ideas.IdeaCheckUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     return db.save_idea_check(session, user.id, idea, result)
@@ -553,7 +581,7 @@ async def ask_map(slug: str, body: AskRequest, session: Session = Depends(get_db
     except ask.AskUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     chat = ask.messages(topic.name, body.question, sources, [t.model_dump() for t in body.history])
-    input_tokens = sum(len(m["content"]) for m in chat) // 4  # an estimate; the served model counts its own
+    input_tokens = sum(len(m["content"]) for m in chat) // 4  # an estimate, if the server sends no counts
     model = llm.chat_model("qa")
     public = [s.public() for s in sources]
     topic_id, question, sections = topic.id, body.question, list(body.sections)
@@ -561,11 +589,14 @@ async def ask_map(slug: str, body: AskRequest, session: Session = Depends(get_db
     async def generate():
         yield _sse({"sources": public, "abstract_only": sum(s.abstract_only for s in sources)})
         parts: list[str] = []
+        counted = None
         try:
             stream = await llm.async_chat_client().chat.completions.create(
                 model=model, messages=chat, max_tokens=ANSWER_TOKENS, temperature=0.2, stream=True,
-                extra_body=llm.chat_extra())
+                stream_options={"include_usage": True}, extra_body=llm.chat_extra())
             async for chunk in stream:
+                if getattr(chunk, "usage", None):
+                    counted = chunk.usage  # the last chunk: the served model's own counts
                 delta = chunk.choices[0].delta.content if chunk.choices else None
                 if delta:
                     parts.append(delta)
@@ -574,11 +605,14 @@ async def ask_map(slug: str, body: AskRequest, session: Session = Depends(get_db
             logger.warning(f"Ask {slug}: the answer failed: {exc}")
             yield _sse({"error": f"The model did not answer: {str(exc)[:200]}"})
         answer = "".join(parts)
-        output_tokens = len(answer) // 4
-        auth.add_tokens(r, user, "map_qa", input_tokens + output_tokens)
+        prompt_tokens, output_tokens = usage.tokens_of(counted)
+        prompt_tokens, output_tokens = prompt_tokens or input_tokens, output_tokens or len(answer) // 4
+        auth.add_tokens(r, user, "map_qa", prompt_tokens + output_tokens)
+        if answer or counted:
+            await run_in_threadpool(usage.add, "map_qa", model, prompt_tokens, output_tokens, "chat", user.id)
         if answer:
             question_id = await run_in_threadpool(db.save_map_question, user.id, topic_id, question, answer, public,
-                                                  sections, input_tokens, output_tokens, model)
+                                                  sections, prompt_tokens, output_tokens, model)
             yield _sse({"done": True, "question_id": str(question_id)})
         yield "data: [DONE]\n\n"
 
@@ -660,3 +694,59 @@ def topic_settings(slug: str, body: TopicSettingsRequest, session: Session = Dep
     session.commit()
     current = TopicConfig.from_dict(config)
     return {"slug": slug, "refresh_days": current.refresh_days, "named_method": current.weights.named_method > 0}
+
+
+# ── share links (R2) ───────────────────────────────────────────────────
+
+
+class ShareRequest(BaseModel):
+    expires_days: Literal[7, 30, 90] | None = None
+
+
+class SharingRequest(BaseModel):
+    enabled: bool
+
+
+@router.get("/sharing")
+def sharing_status():
+    """Whether maps can be shared at all, so the page knows to offer it."""
+    return {"enabled": shares.sharing_enabled()}
+
+
+@router.put("/sharing", dependencies=[Depends(auth.require_admin)])
+def set_sharing(body: SharingRequest):
+    """Switch every share link on or off at once; links switched off come back when sharing does."""
+    set_setting(shares.SHARING_KEY, "true" if body.enabled else "false")
+    return {"enabled": body.enabled}
+
+
+@router.get("/shares")
+def all_shares(session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
+    """The active links to every map: the user's own, or everyone's for an admin."""
+    return {"enabled": shares.sharing_enabled(), "shares": shares.list_for(session, user)}
+
+
+@router.get("/topics/{slug}/shares")
+def topic_shares(slug: str, session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
+    topic = _topic_or_404(session, slug)
+    return {"enabled": shares.sharing_enabled(), "shares": shares.list_for(session, user, topic)}
+
+
+@router.post("/topics/{slug}/shares", status_code=201)
+def share_topic(slug: str, body: ShareRequest, session: Session = Depends(get_db),
+                user: User = Depends(auth.active_user)):
+    """A read-only link to the map for people without an account; the page builds the URL from the token."""
+    if not shares.sharing_enabled():
+        raise HTTPException(status_code=403, detail="An admin has switched sharing off")
+    topic = _built_topic_or_409(session, slug)
+    share = shares.create(session, topic, user, body.expires_days)
+    return shares.as_dict(share, user.display_name)
+
+
+@router.delete("/shares/{share_id}", status_code=204)
+def revoke_share(share_id: UUID, session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
+    revoked = shares.revoke(session, share_id, user)
+    if revoked is None:
+        raise HTTPException(status_code=404, detail="No such link")
+    if revoked is False:
+        raise HTTPException(status_code=403, detail="Only the person who made a link, or an admin, can revoke it")
