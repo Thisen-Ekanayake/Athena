@@ -5,6 +5,11 @@ Pure functions over plain dicts, so the API and any later export (saved lists,
 literature reviews) can share them. A paper dict has title, year, authors
 (names), venue, doi, arxiv_id and url; ``why`` and ``named_method`` are used by
 Markdown when present.
+
+Saved lists add three optional keys: ``kind_hint`` "online" for a blog post (BibTeX
+@misc with howpublished, note and urldate; RIS BLOG), its ``publisher`` (the source)
+and ``accessed`` date, and ``note``: the reader's own note, exported as BibTeX
+``annote`` and RIS ``N1`` lines.
 """
 from __future__ import annotations
 
@@ -36,6 +41,8 @@ def _surname(author: str) -> str:
 
 
 def _kind(paper: dict) -> str:
+    if paper.get("kind_hint") == "online":
+        return "online"
     venue = paper.get("venue") or ""
     if not venue or "arxiv" in venue.lower():
         return "misc"
@@ -43,16 +50,25 @@ def _kind(paper: dict) -> str:
 
 
 def cite_keys(papers: list[dict]) -> list[str]:
-    """``ren2015faster``-style keys: first author's surname, year, first long title word; unique in the list."""
+    """``ren2015faster``-style keys: first author's surname (a blog post without one: its source's first word),
+    year, first long title word; unique in the list."""
     keys, seen = [], {}
     for p in papers:
-        surname = re.sub(r"[^a-z]", "", _ascii(_surname((p.get("authors") or ["anon"])[0])).lower()) or "anon"
+        authors = p.get("authors") or []
+        name = _surname(authors[0]) if authors else ((p.get("publisher") or "anon").split() or ["anon"])[0]
+        surname = re.sub(r"[^a-z]", "", _ascii(name).lower()) or "anon"
         words = [w for w in re.findall(r"[a-z]+", _ascii(p.get("title") or "").lower()) if len(w) > 3]
         base = f"{surname}{p.get('year') or ''}{words[0] if words else ''}"
         n = seen.get(base, 0)
         seen[base] = n + 1
         keys.append(base if n == 0 else f"{base}{chr(ord('a') + n - 1)}")
     return keys
+
+
+def _latex_note(text: str) -> str:
+    """A multi-paragraph note as one BibTeX value: escaped, paragraphs joined by \\par."""
+    paragraphs = [" ".join(part.split()) for part in re.split(r"\n\s*\n", text.strip())]
+    return " \\par ".join(latex_escape(part) for part in paragraphs if part)
 
 
 def bibtex(papers: list[dict]) -> str:
@@ -67,19 +83,29 @@ def bibtex(papers: list[dict]) -> str:
             fields.append(("journal", latex_escape(p["venue"])))
         elif kind == "inproceedings":
             fields.append(("booktitle", latex_escape(p["venue"])))
+        elif kind == "online":
+            if p.get("url"):
+                fields.append(("howpublished", "\\url{" + p["url"] + "}"))
+            if p.get("publisher"):
+                fields.append(("note", latex_escape(p["publisher"])))
+            if p.get("accessed"):
+                fields.append(("urldate", str(p["accessed"])))
         if p.get("doi"):
             fields.append(("doi", p["doi"]))
         if p.get("arxiv_id"):
             fields += [("eprint", p["arxiv_id"]), ("archivePrefix", "arXiv")]
         if p.get("url"):
             fields.append(("url", p["url"]))
+        if p.get("note"):
+            fields.append(("annote", _latex_note(p["note"])))
         body = ",\n".join(f"  {name} = {{{value}}}" for name, value in fields if value)
-        entries.append(f"@{kind}{{{key},\n{body}\n}}")
+        # A blog post is @misc: biblatex's @online is not understood by plain BibTeX styles.
+        entries.append(f"@{'misc' if kind == 'online' else kind}{{{key},\n{body}\n}}")
     return "\n\n".join(entries) + "\n"
 
 
 def ris(papers: list[dict]) -> str:
-    types = {"article": "JOUR", "inproceedings": "CONF", "misc": "GEN"}
+    types = {"article": "JOUR", "inproceedings": "CONF", "misc": "GEN", "online": "BLOG"}
     records = []
     for p in papers:
         kind = _kind(p)
@@ -87,14 +113,21 @@ def ris(papers: list[dict]) -> str:
         lines += [f"AU  - {a}" for a in p.get("authors") or [] if a]
         if p.get("year"):
             lines.append(f"PY  - {p['year']}")
-        if p.get("venue") and kind != "misc":
+        if p.get("venue") and kind in ("article", "inproceedings"):
             lines.append(f"{'JO' if kind == 'article' else 'T2'}  - {p['venue']}")
+        if kind == "online" and p.get("publisher"):
+            lines.append(f"PB  - {p['publisher']}")
+        if kind == "online" and p.get("accessed"):
+            lines.append(f"Y2  - {p['accessed']}")
         if p.get("doi"):
             lines.append(f"DO  - {p['doi']}")
         if p.get("url"):
             lines.append(f"UR  - {p['url']}")
         if p.get("arxiv_id"):
             lines.append(f"N1  - arXiv:{p['arxiv_id']}")
+        for paragraph in re.split(r"\n\s*\n", (p.get("note") or "").strip()):
+            if paragraph.strip():
+                lines.append(f"N1  - {' '.join(paragraph.split())}")
         lines.append("ER  - ")
         records.append("\n".join(lines))
     return "\n\n".join(records) + "\n"
