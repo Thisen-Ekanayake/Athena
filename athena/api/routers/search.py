@@ -2,25 +2,24 @@
 Athena Layer 5 — Search Router
 
 GET /api/v1/search   — keyword plus meaning search over the existing feed (athena.search.hybrid).
-POST /api/v1/search  — research search: local + Semantic Scholar + LLM lit review.
+POST /api/v1/search  — research search: the library, Semantic Scholar and arXiv. Literature reviews are written
+                       by athena.api.routers.reviews.
 """
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from loguru import logger
 
 from athena.api import auth
-from athena.api.deps import get_db, get_redis
+from athena.api.deps import get_db
 from athena.api.config import settings
 from athena.api.auth import active_user
 from athena.api.routers.feed import _build_feed_item, _for_user
 from athena.core.models import ContentItem, User
 from athena.search import hybrid
 from athena.search.arxiv_live import search_arxiv
-from athena.search.lit_review import generate_lit_review
 from athena.search.local import embed_query, search_local
 from athena.search.merger import merge_results
 from athena.search.semantic_scholar import search_semantic_scholar
@@ -95,7 +94,6 @@ def search(
 class SearchRequest(BaseModel):
     query: str = Field(..., min_length=3, max_length=500)
     limit: int = Field(20, ge=1, le=50)
-    generate_review: bool = True
 
 
 class PaperResult(BaseModel):
@@ -112,16 +110,14 @@ class PaperResult(BaseModel):
 
 class SearchResponse(BaseModel):
     papers: list[PaperResult]
-    lit_review: str | None
     local_count: int
     live_count: int
     query: str
 
 
 @router.post("/search", response_model=SearchResponse)
-def research_search(payload: SearchRequest, user: User = Depends(auth.active_user),
-                    r=Depends(get_redis)) -> SearchResponse:
-    """Research search: combine local Qdrant hits + Semantic Scholar + LLM lit review."""
+def research_search(payload: SearchRequest, user: User = Depends(auth.active_user)) -> SearchResponse:
+    """Research search: the library (keywords plus meaning), Semantic Scholar and arXiv, merged."""
     query = payload.query.strip()
     limit = payload.limit
 
@@ -131,21 +127,8 @@ def research_search(payload: SearchRequest, user: User = Depends(auth.active_use
     live_papers = search_semantic_scholar(query, limit=15) + search_arxiv(query, limit=15)
     merged = merge_results(local_papers, live_papers, max_total=limit)
 
-    lit_review_text: str | None = None
-    if payload.generate_review and merged:
-        auth.use(r, user, "lit_review")
-        try:
-            lit_review_text = generate_lit_review(query, merged, user_id=user.id)
-        except Exception as exc:
-            logger.error(f"research_search: lit review failed — {exc}")
-            raise HTTPException(
-                status_code=502,
-                detail="Failed to generate literature review",
-            )
-
     return SearchResponse(
         papers=[PaperResult(**p) for p in merged],
-        lit_review=lit_review_text,
         local_count=len(local_papers),
         live_count=len(live_papers),
         query=query,

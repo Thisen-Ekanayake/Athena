@@ -67,8 +67,14 @@ def _filter(qm, ids: list[str], section_types: list[str] | None):
     return qm.Filter(must=must)
 
 
-def retrieve(session: Session, topic, question: str, sections: list[str] | None = None) -> list[Source]:
-    """The passages and abstracts that best answer ``question``, numbered in the order given to the model."""
+def retrieve(session: Session, topic, question: str, sections: list[str] | None = None,
+             paper_ids: list[UUID] | None = None, chunk_limit: int = CHUNK_HITS, per_paper: int = PER_PAPER,
+             with_abstracts: bool = True) -> list[Source]:
+    """The passages and abstracts that best answer ``question``, numbered in the order given to the model.
+
+    ``paper_ids`` keeps the search to those papers of the topic (a literature review asks about one era's
+    milestones at a time); ``with_abstracts`` False returns full-text passages only.
+    """
     from qdrant_client.http import models as qm
 
     from athena.core.models import EvoChunk, EvoPaper, EvoSection
@@ -80,6 +86,9 @@ def retrieve(session: Session, topic, question: str, sections: list[str] | None 
     if vec is None:
         raise AskUnavailable("The embedding model did not answer; start the model server and try again.")
     rows = {p.id: (tp, p) for tp, p in db._topic_rows(session, topic.id)}
+    if paper_ids is not None:
+        wanted = set(paper_ids)
+        rows = {pid: row for pid, row in rows.items() if pid in wanted}
     parsed = [str(pid) for pid, (_, p) in rows.items() if p.full_text_status == "parsed"]
     others = [str(pid) for pid, (_, p) in rows.items() if p.full_text_status != "parsed"]
     types = sorted({t for s in sections or [] for t in SECTIONS.get(s, [])}) or None
@@ -87,18 +96,18 @@ def retrieve(session: Session, topic, question: str, sections: list[str] | None 
 
     chunk_hits = []
     if parsed and qdrant.collection_exists(vectors.COLLECTION):
-        per_paper: dict[str, int] = {}
+        taken: dict[str, int] = {}
         for hit in qdrant.query_points(vectors.COLLECTION, query=vec.tolist(), query_filter=_filter(qm, parsed, types),
-                                       limit=CHUNK_HITS * 4, with_payload=True).points:
+                                       limit=chunk_limit * 4, with_payload=True).points:
             pid = hit.payload["paper_id"]
-            if hit.score < MIN_SCORE or per_paper.get(pid, 0) >= PER_PAPER:
+            if hit.score < MIN_SCORE or taken.get(pid, 0) >= per_paper:
                 continue
-            per_paper[pid] = per_paper.get(pid, 0) + 1
+            taken[pid] = taken.get(pid, 0) + 1
             chunk_hits.append(hit)
-            if len(chunk_hits) == CHUNK_HITS:
+            if len(chunk_hits) == chunk_limit:
                 break
     abstract_hits = []
-    if others and qdrant.collection_exists(vectors.ABSTRACT_COLLECTION):
+    if with_abstracts and others and qdrant.collection_exists(vectors.ABSTRACT_COLLECTION):
         limit = ABSTRACT_HITS if parsed else ABSTRACT_ONLY_HITS
         abstract_hits = [h for h in qdrant.query_points(vectors.ABSTRACT_COLLECTION, query=vec.tolist(),
                                                         query_filter=_filter(qm, others, None), limit=limit).points

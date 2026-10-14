@@ -119,3 +119,14 @@ def snapshot_topic(slug: str, reason: str = "refresh") -> dict:
     if topic is not None:
         fetch_citation_years(slug)
     return result
+
+
+# ── literature reviews (S1); see athena.evolution.review ──────────────
+
+
+@celery_app.task
+def write_review(review_id: str) -> dict:
+    """Write a saved literature review section by section. Model calls only: on the default queue, so a review
+    does not wait behind a map build."""
+    from athena.evolution.review import run
+    return run(review_id)

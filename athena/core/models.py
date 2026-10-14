@@ -996,3 +996,35 @@ class InterestProfile(Base):
     n_negative = Column(Integer, nullable=False, default=0)
     embed_model = Column(String, nullable=True)      # the model that made the vectors; None: rebuild on next use
     updated_at = Column(DateTime(timezone=True), nullable=True)
+
+
+# ── Writing ──────────────────────────────────────────────────────────
+
+
+class LitReview(Base):
+    """A literature review a user asked for (athena.evolution.review).
+
+    ``map`` reviews are grounded in a built map: its eras, milestones, open problems and the papers' own text.
+    ``abstracts`` reviews come from search results when no map matches. Written in the background section by
+    section; ``sections`` and ``progress`` fill in as it goes, and ``sources`` holds the numbered references.
+    """
+    __tablename__ = "lit_reviews"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="SET NULL"), nullable=True)
+    query = Column(String, nullable=True)
+    title = Column(String, nullable=False)
+    mode = Column(String, nullable=False)              # map | abstracts
+    status = Column(String, nullable=False, default="queued")  # queued | running | done | failed
+    progress = Column(JSONB, nullable=False, default={})       # {step, of, label, at}
+    sections = Column(JSONB, nullable=False, default=[])       # [{key, title, level, markdown}]
+    sources = Column(JSONB, nullable=False, default=[])        # [{n, title, year, authors, venue, doi, arxiv_id, url}]
+    markdown = Column(String, nullable=True)
+    error = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    built_at = Column(DateTime(timezone=True), nullable=True)  # the map build it was written from
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    finished_at = Column(DateTime(timezone=True), nullable=True)

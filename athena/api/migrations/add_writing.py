@@ -1,17 +1,19 @@
 """
 Athena — search and writing migration (ROADMAP S1–S3)
 
-Adds full-text search to the feed: a generated ``search_vector`` on content_items (title weighted A, summary B,
-abstract C, English parser) and a GIN index on it, for keyword plus meaning search (athena.search.hybrid). The
-column fills itself for existing rows when it is added. Postgres only: on another database the statements are
-skipped and search keeps its substring fallback. Safe to run more than once; scripts/setup_project.py runs it.
+Creates the literature reviews table (lit_reviews). Adds full-text search to the feed: a generated
+``search_vector`` on content_items (title weighted A, summary B, abstract C, English parser) and a GIN index on
+it, for keyword plus meaning search (athena.search.hybrid). The column fills itself for existing rows when it is
+added. Postgres only: on another database those statements are skipped and search keeps its substring fallback.
+Safe to run more than once; scripts/setup_project.py runs it.
 """
 from loguru import logger
 from sqlalchemy import text
 
+from athena.core.models import LitReview
 from athena.database.db import engine
 
-TABLES = []
+TABLES = [LitReview]
 SEARCH_VECTOR = (
     "setweight(to_tsvector('english', coalesce(title, '')), 'A') || "
     "setweight(to_tsvector('english', coalesce(summary, '')), 'B') || "

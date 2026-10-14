@@ -197,66 +197,37 @@ class TestResearchSearchEndpoint:
 
         with patch("athena.api.routers.search.search_local", return_value=local), \
              patch("athena.api.routers.search.search_semantic_scholar", return_value=live), \
-             patch("athena.api.routers.search.search_arxiv", return_value=[]), \
-             patch("athena.api.routers.search.generate_lit_review", return_value="A review."):
-            resp = client.post(
-                "/api/v1/search",
-                json={"query": "graph neural networks", "limit": 20, "generate_review": True},
-            )
+             patch("athena.api.routers.search.search_arxiv", return_value=[]):
+            resp = client.post("/api/v1/search", json={"query": "graph neural networks", "limit": 20})
 
         assert resp.status_code == 200
         body = resp.json()
         assert body["query"] == "graph neural networks"
         assert body["local_count"] == 1
         assert body["live_count"] == 1
-        assert body["lit_review"] == "A review."
         assert len(body["papers"]) == 2
         assert body["papers"][0]["source"] == "local"
+        assert "lit_review" not in body  # reviews are written by /reviews now
 
-    def test_generate_review_false_skips_llm(self, client):
-        local = [_paper("Paper A", source="local")]
-
-        with patch("athena.api.routers.search.search_local", return_value=local), \
+    def test_an_old_review_flag_is_ignored(self, client):
+        with patch("athena.api.routers.search.search_local", return_value=[_paper("Paper A")]), \
              patch("athena.api.routers.search.search_semantic_scholar", return_value=[]), \
-             patch("athena.api.routers.search.search_arxiv", return_value=[]), \
-             patch("athena.api.routers.search.generate_lit_review") as mock_llm:
-            resp = client.post(
-                "/api/v1/search",
-                json={"query": "topic xyz", "generate_review": False},
-            )
+             patch("athena.api.routers.search.search_arxiv", return_value=[]):
+            resp = client.post("/api/v1/search", json={"query": "topic xyz", "generate_review": True})
+        assert resp.status_code == 200 and len(resp.json()["papers"]) == 1
 
-        assert resp.status_code == 200
-        assert resp.json()["lit_review"] is None
-        mock_llm.assert_not_called()
-
-    def test_no_papers_no_lit_review(self, client):
+    def test_no_papers(self, client):
         with patch("athena.api.routers.search.search_local", return_value=[]), \
              patch("athena.api.routers.search.search_semantic_scholar", return_value=[]), \
-             patch("athena.api.routers.search.search_arxiv", return_value=[]), \
-             patch("athena.api.routers.search.generate_lit_review") as mock_llm:
-            resp = client.post(
-                "/api/v1/search",
-                json={"query": "an obscure topic"},
-            )
+             patch("athena.api.routers.search.search_arxiv", return_value=[]):
+            resp = client.post("/api/v1/search", json={"query": "an obscure topic"})
 
         assert resp.status_code == 200
         body = resp.json()
         assert body["papers"] == []
-        assert body["lit_review"] is None
         assert body["local_count"] == 0
         assert body["live_count"] == 0
-        mock_llm.assert_not_called()
 
     def test_query_too_short_rejected(self, client):
         resp = client.post("/api/v1/search", json={"query": "ab"})
         assert resp.status_code == 422
-
-    def test_lit_review_failure_returns_502(self, client):
-        local = [_paper("Paper A", source="local")]
-        with patch("athena.api.routers.search.search_local", return_value=local), \
-             patch("athena.api.routers.search.search_semantic_scholar", return_value=[]), \
-             patch("athena.api.routers.search.search_arxiv", return_value=[]), \
-             patch("athena.api.routers.search.generate_lit_review", side_effect=RuntimeError("LLM down")):
-            resp = client.post("/api/v1/search", json={"query": "neural search"})
-
-        assert resp.status_code == 502
