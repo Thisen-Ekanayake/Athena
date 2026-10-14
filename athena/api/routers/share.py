@@ -103,6 +103,12 @@ def shared_people(found=Depends(shared), session: Session = Depends(get_db),
     return _public(maps.topic_people(found[1].slug, session, r))
 
 
+@router.get("/{token}/rising")
+def shared_rising(limit: int = Query(10, ge=1, le=30), found=Depends(shared), session: Session = Depends(get_db),
+                  r: redis_lib.Redis = Depends(get_redis)):
+    return maps.topic_rising(found[1].slug, limit, session, r)
+
+
 @router.get("/{token}/changes")
 def shared_changes(found=Depends(shared), session: Session = Depends(get_db)):
     changes = db.topic_changes(session, found[1])

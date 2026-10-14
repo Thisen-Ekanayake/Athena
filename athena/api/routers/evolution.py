@@ -23,6 +23,7 @@ GET  /api/v1/evolution/topics/{slug}/reading-path?n=10       — a survey, then 
 PUT|DELETE /api/v1/evolution/papers/{paper_id}/read          — tick or untick a paper as read (per user)
 GET  /api/v1/evolution/topics/{slug}/export?what=&format=    — milestones or the reading path as BibTeX, RIS or
                                                                Markdown; gap themes as CSV
+GET  /api/v1/evolution/topics/{slug}/rising?limit=10         — papers gaining citations fastest (OpenAlex per year)
 GET  /api/v1/evolution/topics/{slug}/people                  — key authors and labs per era, and who introduced
                                                                each milestone
 GET  /api/v1/evolution/items/{item_id}                       — a feed item's place in the maps, and the
@@ -362,6 +363,21 @@ def topic_links(slug: str, session: Session = Depends(get_db), r: redis_lib.Redi
         return cached
     payload = db.topic_links(session, topic)
     cache_set(r, key, payload, settings.CACHE_CLUSTERS_TTL)
+    return payload
+
+
+@router.get("/topics/{slug}/rising")
+def topic_rising(slug: str, limit: int = Query(10, ge=1, le=30), session: Session = Depends(get_db),
+                 r: redis_lib.Redis = Depends(get_redis)):
+    """The map's papers gaining citations fastest (OpenAlex's citations per year)."""
+    topic = _built_topic_or_409(session, slug)
+    key = _cache_key(session, topic, "rising", limit)
+    cached = cache_get(r, key)
+    if cached:
+        return cached
+    payload = {"papers": db.topic_rising(session, topic, limit)}
+    # Citations per year arrive after a build without changing it, so this keeps for minutes, not the hour.
+    cache_set(r, key, payload, settings.CACHE_CLUSTER_DETAIL_TTL)
     return payload
 
 

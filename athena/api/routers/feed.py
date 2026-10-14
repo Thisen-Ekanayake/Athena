@@ -53,6 +53,8 @@ def _build_feed_item(item: ContentItem, related_count: int = 0) -> dict:
         "related_count": related_count,
         # Milestones of the evolution maps this paper cites (athena.evolution.feedlink)
         "milestones_cited": len(((item.extra_data or {}).get("evolution") or {}).get("cites") or []),
+        # Citations gained this week (athena.pipeline.momentum); papers only, None until known
+        "citation_gain_7d": item.citation_gain_7d,
     }
 
 

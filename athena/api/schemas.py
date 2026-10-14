@@ -42,6 +42,7 @@ class FeedItemResponse(BaseModel):
     cluster: Optional[ClusterInfo] = None
     related_count: int = 0
     milestones_cited: int = 0
+    citation_gain_7d: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
