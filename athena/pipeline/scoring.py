@@ -6,6 +6,7 @@ Consumes items from the Redis scoring queue (emitted after Layer 2 embedding).
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
+from uuid import UUID
 
 import numpy as np
 from celery import shared_task
@@ -434,35 +435,33 @@ def score_new_item(item_id: str):
 
 
 def enqueue_summary_tier(item_id: str, score: float, is_trending: bool):
-    """Emits the item to the correct Celery queue based on Layer 3 score."""
-    from athena.pipeline.summarisation_tasks import summarise_item_worker
+    """Emits the item to the correct Celery queue based on Layer 3 score.
 
-    if is_trending or score >= 0.75:
+    An item whose summary is already complete is left alone: rescoring (every six hours for recency) must not
+    send finished summaries back to the queue.
+    """
+    from athena.pipeline.summarisation_tasks import summarise_item_worker
+    from athena.core.models import SummaryStatus
+
+    item_uuid = UUID(str(item_id))
+    with SessionLocal() as session:
+        status = session.execute(select(ContentItem.summary_status).where(ContentItem.id == item_uuid)).scalar()
+        if status == SummaryStatus.COMPLETE:
+            return
+        if is_trending or score >= 0.75:
+            tier, new_status = "summary_urgent", None
+        elif score >= 0.40:
+            tier, new_status = "pending (Tier 2 batch)", SummaryStatus.PENDING
+        else:
+            tier, new_status = "lazy", SummaryStatus.LAZY
+        if new_status is not None:
+            session.execute(update(ContentItem).where(ContentItem.id == item_uuid).values(summary_status=new_status))
+            session.commit()
+
+    if new_status is None:
         # Tier 1 - Urgent
         summarise_item_worker.apply_async(args=[item_id], queue='summary_urgent')
-        logger.info(f"Item {item_id} enqueued to summary_urgent")
-    elif score >= 0.40:
-        # Tier 2 - handled by hourly batch, just set to pending
-        with SessionLocal() as session:
-            from athena.core.models import ContentItem, SummaryStatus
-            session.execute(
-                update(ContentItem).where(ContentItem.id == item_id).values(
-                    summary_status=SummaryStatus.PENDING
-                )
-            )
-            session.commit()
-        logger.info(f"Item {item_id} marked as pending for Tier 2 batch")
-    else:
-        # Tier 3 - Lazy
-        with SessionLocal() as session:
-            from athena.core.models import ContentItem, SummaryStatus
-            session.execute(
-                update(ContentItem).where(ContentItem.id == item_id).values(
-                    summary_status=SummaryStatus.LAZY
-                )
-            )
-            session.commit()
-        logger.info(f"Item {item_id} marked as lazy summarisation")
+    logger.info(f"Item {item_id} enqueued to {tier}")
 
 
 def populate_default_scoring_config():

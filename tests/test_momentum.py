@@ -133,6 +133,25 @@ def test_full_corpus_runs_stream_every_item_id(Session, monkeypatch):
     assert set(scoring._iter_item_ids(select(ContentItem.id))) == ids  # it raised AttributeError before
 
 
+def test_rescoring_leaves_finished_summaries_alone(Session, monkeypatch):
+    from athena.core.models import SummaryStatus
+    from athena.pipeline import summarisation_tasks
+    monkeypatch.setattr(scoring, "SessionLocal", Session)
+    queued = []
+    monkeypatch.setattr(summarisation_tasks.summarise_item_worker, "apply_async", lambda **kw: queued.append(kw))
+    with Session() as s:
+        source = add_source(s)
+        done = add_item(s, source, arxiv="done", summary="Already written", summary_status=SummaryStatus.COMPLETE).id
+        todo = add_item(s, source, arxiv="todo").id
+    for item_id in (done, todo):
+        scoring.enqueue_summary_tier(str(item_id), 0.9, False)
+        scoring.enqueue_summary_tier(str(item_id), 0.1, False)
+    with Session() as s:
+        assert s.get(ContentItem, done).summary_status == SummaryStatus.COMPLETE
+        assert s.get(ContentItem, todo).summary_status == SummaryStatus.LAZY
+    assert [q["args"] for q in queued] == [[str(todo)]]
+
+
 def test_no_engagement_data_means_no_engagement_velocity():
     assert scoring.engagement_raw([]) == 0.0
     assert compute_velocity_score(0, scoring.engagement_raw([]), 0, 0.0) == 0.0
