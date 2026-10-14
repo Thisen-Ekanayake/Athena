@@ -82,7 +82,7 @@ def _get_weights(category: str, session) -> Dict[str, Any]:
             .where(ScoringConfig.is_active .is_(True))
             .where(ScoringConfig.category == category)
             .order_by(ScoringConfig.version.desc())
-        ).scalar_one_or_none()
+        ).scalars().first()
 
         if config:
             return {
@@ -103,19 +103,39 @@ def _get_weights(category: str, session) -> Dict[str, Any]:
     return default
 
 
-def _get_prev_snapshot(item_id, session) -> tuple:
-    """Get previous metric snapshot from ~7 days ago for velocity computation."""
+def engagement_raw(signals: list) -> float:
+    """The mean of an item's normalised engagement signals, or 0 without any: what metric snapshots store."""
+    return sum(signals) / len(signals) if signals else 0.0
+
+
+def _get_prev_snapshot(item_id, session) -> tuple | None:
+    """(citations, raw engagement) from the latest metric snapshot at least 7 days old, or None without one."""
     seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
     prev = session.execute(
         select(MetricSnapshot)
         .where(MetricSnapshot.item_id == item_id)
         .where(MetricSnapshot.snapshot_date <= seven_days_ago)
         .order_by(MetricSnapshot.snapshot_date.desc())
+        .limit(1)
     ).scalar_one_or_none()
 
     if prev:
         return prev.citation_count, prev.engagement_raw
-    return 0, 0.0
+    return None
+
+
+def _week_ago_metrics(item, session, eng_now: float) -> tuple:
+    """What an item had a week ago. Without a snapshot from then, an item younger than a week had nothing, and
+    for an older one there is nothing to compare with, so it counts as unchanged (not as gaining everything)."""
+    prev = _get_prev_snapshot(item.id, session)
+    if prev is not None:
+        return prev
+    published = item.published_at
+    if published is not None and published.tzinfo is None:
+        published = published.replace(tzinfo=timezone.utc)
+    if published is not None and datetime.now(timezone.utc) - published < timedelta(days=7):
+        return 0, 0.0
+    return item.citation_count or 0, eng_now
 
 
 def score_item(item_id: str, session=None) -> Optional[float]:
@@ -153,6 +173,7 @@ def score_item(item_id: str, session=None) -> Optional[float]:
         # 2. Engagement
         source_url = source.url if source else ""
         engagement = compute_engagement_score(metadata, source_url)
+        engagement_signals = _extract_engagement_signals(metadata, source_url)
 
         # 3. Sentiment (uses the embedding model — may return 0.5 if unavailable)
         sentiment = compute_sentiment_score(metadata, _embed)
@@ -161,10 +182,12 @@ def score_item(item_id: str, session=None) -> Optional[float]:
         half_life = weights.get("half_life_days", 30)
         recency = compute_recency_score(item.published_at, half_life)
 
-        # 5. Velocity (from metric snapshots)
-        prev_citations, prev_engagement = _get_prev_snapshot(item.id, session)
+        # 5. Velocity (from metric snapshots). Compared like with like: the raw engagement mean that snapshots
+        # store, so an item without engagement data has none to gain (the 0.5 neutral score is not a reading).
+        eng_now = engagement_raw(engagement_signals)
+        prev_citations, prev_engagement = _week_ago_metrics(item, session, eng_now)
         velocity = compute_velocity_score(
-            item.citation_count or 0, engagement,
+            item.citation_count or 0, eng_now,
             prev_citations, prev_engagement,
         )
 
@@ -180,7 +203,6 @@ def score_item(item_id: str, session=None) -> Optional[float]:
         )
 
         # 8. Trending check
-        engagement_signals = _extract_engagement_signals(metadata, source_url)
         is_trending = check_trending_criteria(
             velocity, item.published_at, len(engagement_signals)
         )
@@ -419,8 +441,7 @@ def take_metric_snapshot():
                 source_url = source.url if source else ""
                 source_url_cache[src_id] = source_url
 
-            eng_signals = _extract_engagement_signals(metadata, source_url)
-            eng_raw = sum(eng_signals) / len(eng_signals) if eng_signals else 0.0
+            eng_raw = engagement_raw(_extract_engagement_signals(metadata, source_url))
 
             snapshot = MetricSnapshot(
                 item_id=item.id,
