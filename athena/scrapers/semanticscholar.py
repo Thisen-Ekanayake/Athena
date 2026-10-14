@@ -1,40 +1,37 @@
-import httpx
+import asyncio
 from typing import Dict, Any, Optional
+
 from loguru import logger
+
+COUNT_FIELDS = "paperId,externalIds,citationCount,referenceCount"
+PATIENCE = 120.0  # seconds one lookup may wait out rate limits; the daily momentum refresh catches what it misses
 
 
 class SemanticScholarEnricher:
-    BASE_URL = "https://api.semanticscholar.org/graph/v1"
-
-    def __init__(self):
-        from athena.core.config_store import get_setting
-        self.api_key = get_setting("SEMANTIC_SCHOLAR_API_KEY")
-        self.headers = {"x-api-key": self.api_key} if self.api_key else {}
+    """Citation counts for a new arXiv paper, through the shared Semantic Scholar client (its turn and retries)."""
 
     async def fetch_paper_metrics(self, arxiv_id: str) -> Optional[Dict[str, Any]]:
         """
-        Fetch citation count and influence score matching an arXiv ID.
-        Rate limited to 1 request / second globally via Celery.
+        Fetch the citation and reference counts of an arXiv paper, or None when it is unknown or the lookup fails.
         """
-        url = f"{self.BASE_URL}/paper/ARXIV:{arxiv_id}"
-        # We request fields: citationCount, influenceMetrics (if available) - influence score isn't a direct field anymore,  # noqa: E501
-        # so we fetch citationCount, and referenceCount as basic metrics.
-        params = {"fields": "citationCount,referenceCount,influentialCitationCount"}
+        return await asyncio.to_thread(self._fetch, arxiv_id)
 
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(url, headers=self.headers, params=params, timeout=10.0)
-                if response.status_code == 404:
-                    logger.debug(f"Semantic Scholar: Paper not found for arXiv:{arxiv_id}")
-                    return None
-                response.raise_for_status()
-                data = response.json()
-
-                return {
-                    "citation_count": data.get("citationCount", 0),
-                    "influential_citation_count": data.get("influentialCitationCount", 0),
-                    "reference_count": data.get("referenceCount", 0)
-                }
-            except Exception as e:
-                logger.error(f"Semantic Scholar Enrichment Error for {arxiv_id}: {e}")
-                return None
+    @staticmethod
+    def _fetch(arxiv_id: str) -> Optional[Dict[str, Any]]:
+        from athena.evolution.semantic_scholar import SemanticScholarClient
+        key = f"ARXIV:{arxiv_id}"
+        try:
+            client = SemanticScholarClient(cache_dir="", patience=PATIENCE)
+            with client.http:
+                paper = client.get_papers([key], fields=COUNT_FIELDS).get(key)
+        except Exception as e:
+            logger.error(f"Semantic Scholar Enrichment Error for {arxiv_id}: {e}")
+            return None
+        if paper is None:
+            logger.debug(f"Semantic Scholar: Paper not found for arXiv:{arxiv_id}")
+            return None
+        return {
+            "paper_id": paper.paper_id,
+            "citation_count": paper.citation_count,
+            "reference_count": paper.reference_count,
+        }

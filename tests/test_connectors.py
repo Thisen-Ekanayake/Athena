@@ -160,46 +160,53 @@ class TestPapersWithCodeEnricher:
 
 
 class TestSemanticScholarEnricher:
-    """Contract tests for SemanticScholarEnricher."""
+    """Contract tests for SemanticScholarEnricher (through the shared Semantic Scholar client)."""
+
+    @staticmethod
+    def _client(handler):
+        import httpx
+        from athena.evolution.semantic_scholar import SemanticScholarClient
+
+        def make(**kwargs):
+            http = httpx.Client(base_url="https://api.semanticscholar.org/graph/v1",
+                                transport=httpx.MockTransport(handler))
+            return SemanticScholarClient(api_key="k", http=http, min_interval=0, **kwargs)
+        return patch("athena.evolution.semantic_scholar.SemanticScholarClient", side_effect=make)
 
     @pytest.mark.asyncio
     async def test_fetch_paper_metrics_returns_citation_count(self):
+        import httpx
         from athena.scrapers.semanticscholar import SemanticScholarEnricher
-        enricher = SemanticScholarEnricher()
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
-            "citationCount": 42,
-            "referenceCount": 10,
-            "influentialCitationCount": 3
-        }
-        mock_resp.raise_for_status = MagicMock()
+        def handler(request):
+            assert request.url.path.endswith("/paper/batch")
+            return httpx.Response(200, json=[{"paperId": "s2-1", "title": "A paper", "citationCount": 42,
+                                              "referenceCount": 10}])
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client_cls.return_value.__aenter__.return_value = mock_client
-            mock_client.get = AsyncMock(return_value=mock_resp)
+        with self._client(handler):
+            result = await SemanticScholarEnricher().fetch_paper_metrics("2301.00001")
 
-            result = await enricher.fetch_paper_metrics("2301.00001")
-
-        assert result["citation_count"] == 42
+        assert result == {"paper_id": "s2-1", "citation_count": 42, "reference_count": 10}
 
     @pytest.mark.asyncio
     async def test_returns_none_on_404(self):
+        import httpx
         from athena.scrapers.semanticscholar import SemanticScholarEnricher
-        enricher = SemanticScholarEnricher()
 
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
-        mock_resp.raise_for_status = MagicMock()
+        with self._client(lambda request: httpx.Response(200, json=[None])):
+            result = await SemanticScholarEnricher().fetch_paper_metrics("nonexistent-id")
 
-        with patch("httpx.AsyncClient") as mock_client_cls:
-            mock_client = AsyncMock()
-            mock_client_cls.return_value.__aenter__.return_value = mock_client
-            mock_client.get = AsyncMock(return_value=mock_resp)
+        assert result is None
 
-            result = await enricher.fetch_paper_metrics("nonexistent-id")
+    @pytest.mark.asyncio
+    async def test_returns_none_when_the_lookup_fails(self):
+        import httpx
+        from athena.scrapers import semanticscholar
+        from athena.scrapers.semanticscholar import SemanticScholarEnricher
+
+        with patch.object(semanticscholar, "PATIENCE", 0), \
+                self._client(lambda request: httpx.Response(429, json={})):
+            result = await SemanticScholarEnricher().fetch_paper_metrics("2301.00001")
 
         assert result is None
 
