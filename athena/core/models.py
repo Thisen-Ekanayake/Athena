@@ -72,7 +72,7 @@ class ContentItem(Base):
     url = Column(String, unique=True, nullable=False)
     published_at = Column(DateTime(timezone=True), nullable=False)
     fetched_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    authors = Column(ARRAY(String), default=[])
+    authors = Column(ARRAY(String).with_variant(JSON(), "sqlite"), default=[])  # JSON in the SQLite tests
     abstract = Column(String, nullable=True)
     full_text_path = Column(String, nullable=True)
     citation_count = Column(Integer, default=0)
