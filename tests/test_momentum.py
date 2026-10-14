@@ -17,8 +17,8 @@ from sqlalchemy.pool import StaticPool
 from athena.api.deps import get_db, get_redis
 from athena.api.main import app
 from athena.core.models import (
-    AppSetting, ContentCategory, ContentItem, EvoMilestoneOverride, EvoPaper, EvoTopic, EvoTopicPaper, ItemRead,
-    MetricSnapshot, Source, SourceCategory, SourceType, UserHighlight, UserNote,
+    AppSetting, ContentCategory, ContentItem, EvoMilestoneOverride, EvoPaper, EvoTopic, EvoTopicPaper, ItemFeedback,
+    ItemRead, MetricSnapshot, Source, SourceCategory, SourceType, UserHighlight, UserNote,
 )
 from athena.database import evolution as evo_db
 from athena.database import operations
@@ -40,7 +40,7 @@ def _as_json(type_, compiler, **kw):  # Postgres types; SQLite stores them as JS
 def Session(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     for model in (Source, ContentItem, MetricSnapshot, AppSetting, EvoTopic, EvoPaper, EvoTopicPaper,
-                  EvoMilestoneOverride, ItemRead, UserNote, UserHighlight):
+                  EvoMilestoneOverride, ItemRead, UserNote, UserHighlight, ItemFeedback):
         model.__table__.create(engine)
     factory = sessionmaker(bind=engine)
     settings: dict[str, str] = {}

@@ -42,18 +42,22 @@ CHUNK_SIZE = 500
 # Default scoring config weights per category
 # ──────────────────────────────────────────────────────────
 
+# The five signal weights sum to 1. "preference" is not part of the score: it is the share a user's interests
+# get in their "For you" order (athena.pipeline.interests).
+BASE_SIGNALS = ("citation", "engagement", "sentiment", "recency", "authority")
+DEFAULT_PREFERENCE = 0.30
 DEFAULT_WEIGHTS = {
     "paper": {
         "citation": 0.30, "engagement": 0.15, "sentiment": 0.15,
-        "recency": 0.20, "authority": 0.20, "half_life_days": 60,
+        "recency": 0.20, "authority": 0.20, "half_life_days": 60, "preference": DEFAULT_PREFERENCE,
     },
     "company_blog": {
         "citation": 0.10, "engagement": 0.25, "sentiment": 0.20,
-        "recency": 0.30, "authority": 0.15, "half_life_days": 14,
+        "recency": 0.30, "authority": 0.15, "half_life_days": 14, "preference": DEFAULT_PREFERENCE,
     },
     "community_blog": {
         "citation": 0.10, "engagement": 0.30, "sentiment": 0.20,
-        "recency": 0.25, "authority": 0.15, "half_life_days": 21,
+        "recency": 0.25, "authority": 0.15, "half_life_days": 21, "preference": DEFAULT_PREFERENCE,
     },
 }
 
@@ -92,7 +96,9 @@ def _get_weights(category: str, session) -> Dict[str, Any]:
                 "recency": config.weight_recency,
                 "authority": config.weight_authority,
                 "half_life_days": config.half_life_days,
+                "preference": DEFAULT_PREFERENCE if config.weight_preference is None else config.weight_preference,
                 "version": config.version,
+                "saved": True,
             }
     except Exception as e:
         logger.warning(f"Failed to load scoring config for {category}: {e}")
@@ -477,6 +483,7 @@ def populate_default_scoring_config():
                 weight_sentiment=weights["sentiment"],
                 weight_recency=weights["recency"],
                 weight_authority=weights["authority"],
+                weight_preference=weights["preference"],
                 half_life_days=weights["half_life_days"],
                 is_active=True,
                 notes="Default config",

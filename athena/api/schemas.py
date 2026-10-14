@@ -44,6 +44,7 @@ class FeedItemResponse(BaseModel):
     milestones_cited: int = 0
     citation_gain_7d: Optional[int] = None
     me: Optional[dict] = None  # the user's own state (athena.database.personal.overlay); never cached
+    interest: Optional[float] = None  # "For you" only: the item's interest rank among the candidates, 0-1
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -58,6 +59,7 @@ class PaginationInfo(BaseModel):
 class FeedResponse(BaseModel):
     items: List[FeedItemResponse]
     pagination: PaginationInfo
+    personalised: bool = False  # the For-you order was used (not its fallback to the score)
 
 
 # ── Single item detail ──────────────────────────────────

@@ -13,8 +13,9 @@ from sqlalchemy.pool import StaticPool
 from athena.api.deps import get_db, get_redis
 from athena.api.main import app
 from athena.core.models import (
-    Cluster, ContentCategory, ContentItem, EvoPaper, EvoReadingProgress, EvoTopic, EvoTopicPaper, ItemLink, ItemRead,
-    SavedList, SavedListItem, Source, SourceCategory, SourceType, User, UserHighlight, UserNote, UserSession,
+    Cluster, ContentCategory, ContentItem, EvoPaper, EvoReadingProgress, EvoTopic, EvoTopicPaper, InterestProfile,
+    ItemFeedback, ItemLink, ItemRead, SavedList, SavedListItem, Source, SourceCategory, SourceType, User,
+    UserHighlight, UserNote, UserSession,
 )
 from athena.database.personal import anchor
 from tests.fakes import FakeRedis
@@ -29,7 +30,8 @@ ABSTRACT = "We study low-rank adapters. Low-rank adapters cut memory. We show ad
 def env():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     for model in (User, UserSession, SavedList, SavedListItem, Source, Cluster, ContentItem, ItemLink, EvoTopic,
-                  EvoPaper, EvoTopicPaper, EvoReadingProgress, ItemRead, UserNote, UserHighlight):
+                  EvoPaper, EvoTopicPaper, EvoReadingProgress, ItemRead, UserNote, UserHighlight, ItemFeedback,
+                  InterestProfile):
         model.__table__.create(engine)
     Session = sessionmaker(bind=engine)
 

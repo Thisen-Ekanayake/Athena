@@ -188,6 +188,8 @@ class ScoringConfig(Base):
     weight_sentiment = Column(Float, default=0.15)
     weight_recency = Column(Float, default=0.20)
     weight_authority = Column(Float, default=0.20)
+    # The "For you" order's share for a user's interests (athena.pipeline.interests); the five above sum to 1
+    weight_preference = Column(Float, default=0.30)
     half_life_days = Column(Integer, default=30)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
@@ -966,3 +968,31 @@ class UserHighlight(Base):
     comment = Column(String, nullable=True)
     context = Column(JSONB, nullable=False, default={})  # passages: the map, section and chunk they came from
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ItemFeedback(Base):
+    """A user's reaction to a feed item: up (more like this), down (less), or hide (not interested: also left out
+    of their feed). One per item; a new reaction replaces the old one."""
+    __tablename__ = "item_feedback"
+    __table_args__ = (Index("ix_item_feedback_user_reaction", "user_id", "reaction"),)
+
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id", ondelete="CASCADE"), primary_key=True)
+    reaction = Column(String, nullable=False)        # up | down | hide
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class InterestProfile(Base):
+    """What a user's reactions and saves say they like, as two vectors in the feed's embedding space: the mean of
+    the items they liked or saved, and of those they marked down or hid (athena.pipeline.interests). Rebuilt
+    whenever those change, and when the feed's embedding model does. No row: nothing learned yet, and on."""
+    __tablename__ = "interest_profiles"
+
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    enabled = Column(Boolean, nullable=False, default=True)   # "Personalise my feed"
+    positive = Column(ARRAY(Float), nullable=True)
+    negative = Column(ARRAY(Float), nullable=True)
+    n_positive = Column(Integer, nullable=False, default=0)
+    n_negative = Column(Integer, nullable=False, default=0)
+    embed_model = Column(String, nullable=True)      # the model that made the vectors; None: rebuild on next use
+    updated_at = Column(DateTime(timezone=True), nullable=True)

@@ -7,18 +7,21 @@ GET /api/v1/items/{id}/related        — nearest-neighbour items
 """
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
+from loguru import logger
 from sqlalchemy import select, desc
 from sqlalchemy.orm import Session
 import redis as redis_lib
 
+from athena.api.auth import active_user
 from athena.api.deps import get_db, get_redis
 from athena.api.cache import cache_get, cache_set
 from athena.api.config import settings
 from athena.api.routers.feed import _build_feed_item
 from athena.core.models import (
     ContentItem, ContentScore, ItemLink, Source, Cluster,
-    SummaryStatus,
+    SummaryStatus, User,
 )
+from athena.pipeline import interests
 
 router = APIRouter(prefix="/api/v1", tags=["Items"])
 
@@ -89,10 +92,13 @@ def get_item(
 def get_score_breakdown(
     item_id: str,
     db: Session = Depends(get_db),
+    r: redis_lib.Redis = Depends(get_redis),
+    user: User = Depends(active_user),
 ):
     """
     Returns the full per-signal score breakdown for the
-    score tooltip on hover.
+    score tooltip on hover. With a learned profile it adds ``your_interests``: how close the item is to what the
+    user liked (a rank in their feed, 0-1) and its weight in their For-you order.
     """
     try:
         item_uuid = UUID(item_id)
@@ -139,39 +145,48 @@ def get_score_breakdown(
             return "Low"
         return "Minimal"
 
+    signals = {
+        "citation_impact": {
+            "score": round(score_record.citation_score, 4),
+            "label": _label(score_record.citation_score),
+            "weight": weights.get("citation", 0.30),
+        },
+        "engagement": {
+            "score": round(score_record.engagement_score, 4),
+            "label": _label(score_record.engagement_score),
+            "weight": weights.get("engagement", 0.15),
+        },
+        "community_sentiment": {
+            "score": round(score_record.sentiment_score, 4),
+            "label": _label(score_record.sentiment_score),
+            "weight": weights.get("sentiment", 0.15),
+        },
+        "recency_velocity": {
+            "score": round(score_record.recency_score, 4),
+            "label": _label(score_record.recency_score),
+            "weight": weights.get("recency", 0.20),
+        },
+        "source_authority": {
+            "score": round(score_record.authority_score, 4),
+            "label": _label(score_record.authority_score),
+            "weight": weights.get("authority", 0.20),
+        },
+    }
+    try:
+        mine = interests.interest_of(db, r, user.id, item)
+    except Exception as exc:  # no profile store or no Qdrant: the shared breakdown still answers
+        logger.debug(f"Score breakdown: no interest score for {item.id}: {exc}")
+        mine = None
+    if mine is not None:
+        signals["your_interests"] = mine | {"label": _label(mine["score"])}
+
     return {
         "item_id": str(item.id),
         "title": item.title,
         "composite_score": round(score_record.composite_score, 4),
         "is_trending": item.is_trending or False,
         "category_rank": item.category_rank,
-        "signals": {
-            "citation_impact": {
-                "score": round(score_record.citation_score, 4),
-                "label": _label(score_record.citation_score),
-                "weight": weights.get("citation", 0.30),
-            },
-            "engagement": {
-                "score": round(score_record.engagement_score, 4),
-                "label": _label(score_record.engagement_score),
-                "weight": weights.get("engagement", 0.15),
-            },
-            "community_sentiment": {
-                "score": round(score_record.sentiment_score, 4),
-                "label": _label(score_record.sentiment_score),
-                "weight": weights.get("sentiment", 0.15),
-            },
-            "recency_velocity": {
-                "score": round(score_record.recency_score, 4),
-                "label": _label(score_record.recency_score),
-                "weight": weights.get("recency", 0.20),
-            },
-            "source_authority": {
-                "score": round(score_record.authority_score, 4),
-                "label": _label(score_record.authority_score),
-                "weight": weights.get("authority", 0.20),
-            },
-        },
+        "signals": signals,
         "computed_at": (
             score_record.computed_at.isoformat()
             if score_record.computed_at else None

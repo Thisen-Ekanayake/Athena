@@ -21,14 +21,15 @@ from sqlalchemy import select, func, delete
 from sqlalchemy.orm import Session
 
 from athena.api.auth import active_user
-from athena.api.deps import get_db
+from athena.api.deps import get_db, get_redis
 from athena.api.schemas import (
     SavedListResponse, SavedListCreateRequest, SavedListUpdateRequest,
     AddItemToListRequest,
 )
-from athena.api.routers.feed import _build_feed_item
+from athena.api.routers.feed import _build_feed_item, _for_user
 from athena.core.models import SavedList, SavedListItem, ContentItem, User
 from athena.database import personal
+from athena.pipeline import interests
 
 router = APIRouter(prefix="/api/v1", tags=["Saved Lists"])
 
@@ -168,6 +169,7 @@ def rename_list(
 def delete_list(
     list_id: str,
     db: Session = Depends(get_db),
+    r=Depends(get_redis),
     user: User = Depends(active_user),
 ):
     """Delete a list and all of its memberships."""
@@ -175,6 +177,7 @@ def delete_list(
     saved_list = _get_list_or_404(db, list_uuid, user)
     db.delete(saved_list)
     db.commit()
+    interests.touch(db, user.id, r)  # saved items count as liked
 
 
 @router.get("/lists/{list_id}/items")
@@ -198,7 +201,7 @@ def get_list_items(
         query = query.where(personal.unread_filter(user.id))
     rows = db.execute(query).scalars().all()
 
-    return {"items": personal.overlay(db, user.id, [_build_feed_item(item) for item in rows])}
+    return _for_user(db, user, {"items": [_build_feed_item(item) for item in rows]})
 
 
 @router.post("/lists/{list_id}/items", status_code=201)
@@ -206,6 +209,7 @@ def add_item_to_list(
     list_id: str,
     request: AddItemToListRequest,
     db: Session = Depends(get_db),
+    r=Depends(get_redis),
     user: User = Depends(active_user),
 ):
     """Add a content item to a list (idempotent)."""
@@ -227,6 +231,7 @@ def add_item_to_list(
     if not existing:
         db.add(SavedListItem(list_id=list_uuid, item_id=request.item_id))
         db.commit()
+        interests.touch(db, user.id, r)  # saved items count as liked
 
     return {"list_id": str(list_uuid), "item_id": str(request.item_id), "added": True}
 
@@ -236,6 +241,7 @@ def remove_item_from_list(
     list_id: str,
     item_id: str,
     db: Session = Depends(get_db),
+    r=Depends(get_redis),
     user: User = Depends(active_user),
 ):
     """Remove a content item from a list."""
@@ -250,3 +256,4 @@ def remove_item_from_list(
         )
     )
     db.commit()
+    interests.touch(db, user.id, r)  # saved items count as liked

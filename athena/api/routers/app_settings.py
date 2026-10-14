@@ -3,10 +3,11 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from loguru import logger
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from athena.api.deps import get_db
+from athena.api.deps import get_db, get_redis
 from athena.core import llm
 from athena.core.config_store import get_setting
 from athena.core.models import AppSetting
@@ -185,3 +186,83 @@ def test_models():
         return {"model": llm.embed_model(), "dimensions": int(llm.embed(["ready"], timeout=120).shape[1])}
 
     return {"chat": _timed(chat), "embed": _timed(embed)}
+
+
+# ── Scoring weights ─────────────────────────────────────
+
+
+class CategoryWeights(BaseModel):
+    citation: float = Field(..., ge=0, le=1)
+    engagement: float = Field(..., ge=0, le=1)
+    sentiment: float = Field(..., ge=0, le=1)
+    recency: float = Field(..., ge=0, le=1)
+    authority: float = Field(..., ge=0, le=1)
+    preference: float = Field(..., ge=0, le=0.8)
+    half_life_days: int = Field(..., ge=1, le=365)
+
+
+class ScoringUpdate(BaseModel):
+    categories: dict[str, CategoryWeights]
+
+
+def _scoring(db: Session) -> dict:
+    from athena.pipeline.scoring import BASE_SIGNALS, DEFAULT_WEIGHTS, _get_weights
+    out = {}
+    for category in DEFAULT_WEIGHTS:
+        weights = _get_weights(category, db)
+        out[category] = {k: weights[k] for k in (*BASE_SIGNALS, "preference", "half_life_days")} | {
+            "version": weights.get("version") if weights.get("saved") else None,
+            "source": "saved" if weights.get("saved") else "default"}
+    return {"categories": out, "defaults": DEFAULT_WEIGHTS}
+
+
+@router.get("/scoring")
+def get_scoring(db: Session = Depends(get_db)):
+    """Each category's signal weights, half-life and For-you preference weight; defaults until first saved."""
+    return _scoring(db)
+
+
+@router.put("/scoring")
+def update_scoring(body: ScoringUpdate, db: Session = Depends(get_db), r=Depends(get_redis)):
+    """Save new weights as a new ScoringConfig version per changed category. A change to the signal weights or the
+    half-life rescores every item; a change to the preference weight only re-orders For-you feeds."""
+    from sqlalchemy import func, select, update
+
+    from athena.core.models import ContentCategory, ScoringConfig
+    from athena.pipeline import interests
+    from athena.pipeline.scoring import BASE_SIGNALS, DEFAULT_WEIGHTS, _get_weights, score_all_items
+    unknown = set(body.categories) - set(DEFAULT_WEIGHTS)
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown categories: {', '.join(sorted(unknown))}")
+    for category, w in body.categories.items():
+        total = sum(getattr(w, k) for k in BASE_SIGNALS)
+        if abs(total - 1) > 0.001:
+            raise HTTPException(status_code=422, detail=f"The {category} signal weights add up to {total:.3f}, not 1")
+    rescore = reorder = False
+    version = db.execute(select(func.max(ScoringConfig.version))).scalar() or 0
+    for category, w in body.categories.items():
+        current = _get_weights(category, db)
+        new = w.model_dump()
+        if all(abs(float(current[k]) - float(new[k])) < 1e-9 for k in new):
+            continue
+        rescore |= any(abs(float(current[k]) - float(new[k])) >= 1e-9 for k in (*BASE_SIGNALS, "half_life_days"))
+        reorder |= abs(float(current["preference"]) - new["preference"]) >= 1e-9
+        version += 1
+        cat = ContentCategory(category)
+        db.execute(update(ScoringConfig).where(ScoringConfig.category == cat, ScoringConfig.is_active.is_(True))
+                   .values(is_active=False))
+        db.add(ScoringConfig(
+            version=version, category=cat, weight_citation=w.citation, weight_engagement=w.engagement,
+            weight_sentiment=w.sentiment, weight_recency=w.recency, weight_authority=w.authority,
+            weight_preference=w.preference, half_life_days=w.half_life_days, is_active=True,
+            notes="Settings → Scoring"))
+    db.commit()
+    if reorder:
+        interests.bump(r)
+    if rescore:
+        try:
+            score_all_items.delay()
+        except Exception as exc:  # no broker: the weights are saved; the 6-hourly refresh applies them
+            logger.warning(f"Scoring: rescore not queued: {exc}")
+            rescore = False
+    return _scoring(db) | {"rescoring": rescore}
