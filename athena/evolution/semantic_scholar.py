@@ -9,9 +9,15 @@ sentences in which one paper cites another ("contexts").
 
 The free API allows one request per second with a key (request one at
 semanticscholar.org/product/api#api-key-form) and shares a small pool
-between all keyless callers, so 429s are retried with backoff. Responses
-are cached on disk per paper, so a rebuild only asks for papers it has not
-seen.
+between all keyless callers. The limit is the key's, not a process's, so
+every process takes its turn from one slot kept in Redis. 429s still come
+(also when the service is busy), so they are retried with backoff.
+Responses are cached on disk per paper, so a rebuild only asks for papers
+it has not seen.
+
+Every Semantic Scholar call in Athena goes through this client: map builds,
+full text, method names, feed links, citation momentum, the enricher at
+ingest and live search.
 """
 from __future__ import annotations
 
@@ -23,7 +29,7 @@ from pathlib import Path
 
 import httpx
 from loguru import logger
-from tenacity import retry, retry_if_exception, stop_after_attempt, stop_after_delay, wait_exponential
+from tenacity import Retrying, retry_if_exception, stop_after_attempt, stop_after_delay, wait_exponential
 
 from athena.core.config_store import get_setting
 
@@ -31,8 +37,20 @@ BASE_URL = "https://api.semanticscholar.org/graph/v1"
 BATCH_SIZE = 200          # the API takes 500, but nested reference lists push responses toward its 10 MB cap
 CONTEXT_PAGE = 1000
 CACHE_TTL_SECONDS = 30 * 24 * 3600
-MIN_INTERVAL_KEY = 1.05   # seconds between requests: keys are limited to one per second
+MIN_INTERVAL_KEY = 1.1    # seconds between requests: keys are limited to one per second
 MIN_INTERVAL_NO_KEY = 3.0
+PATIENCE = 900            # seconds a request may spend waiting out rate limits
+SLOT_KEY = "s2:next_slot"
+# Reserves the next request slot for every process at once: returns how many milliseconds to wait. Uses the
+# Redis server's clock, so processes whose clocks differ still agree.
+_SLOT_SCRIPT = """
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+local at = math.max(now, tonumber(redis.call('GET', KEYS[1]) or '0'))
+local gap = tonumber(ARGV[1])
+redis.call('SET', KEYS[1], at + gap, 'PX', at + gap - now + 60000)
+return at - now
+"""
 _REF_FIELDS = ["paperId", "externalIds", "title", "year"]
 PAPER_FIELDS = ",".join(["paperId", "externalIds", "title", "year", "citationCount", "referenceCount"]
                         + [f"references.{f}" for f in _REF_FIELDS])
@@ -43,6 +61,7 @@ CITATION_PAGE = 1000  # the citations endpoint's largest page
 CITATION_OFFSET_MAX = 9000  # offset + limit may not pass 10,000
 CITATION_DATE_FIELDS = "publicationDate"
 SEARCH_FIELDS = "paperId,externalIds,title,year,citationCount,abstract,venue,publicationTypes"
+RELEVANCE_FIELDS = "paperId,title,abstract,year,authors,citationCount,url"
 
 
 class SemanticScholarAuthError(RuntimeError):
@@ -119,7 +138,7 @@ def _is_transient(exc: BaseException) -> bool:
 
 class SemanticScholarClient:
     def __init__(self, api_key: str | None = None, cache_dir: str | None = None, http: httpx.Client | None = None,
-                 min_interval: float | None = None, keyless_ok: bool = True):
+                 min_interval: float | None = None, keyless_ok: bool = True, patience: float = PATIENCE):
         self.api_key = api_key if api_key is not None else get_setting("SEMANTIC_SCHOLAR_API_KEY")
         # False: no key, or a rejected one, raises SemanticScholarAuthError instead of using the slow shared pool.
         self.keyless_ok = keyless_ok
@@ -133,9 +152,13 @@ class SemanticScholarClient:
         if min_interval is None:
             min_interval = MIN_INTERVAL_KEY if self.api_key else MIN_INTERVAL_NO_KEY
         self.min_interval = min_interval
+        # How long one request may wait out rate limits: a person waiting on live search gets seconds, not minutes.
+        self.patience = patience
+        self._shared_slots = True  # off after Redis fails once; then this process paces itself
         self._last_request = 0.0
         self.requests = 0
         self.cache_hits = 0
+        self.rate_limited = 0
 
     # ── public API ──────────────────────────────────────────────────
 
@@ -191,6 +214,11 @@ class SemanticScholarClient:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps({"fetched_at": time.time(), "data": rows, "more": bool(token)}))
         return [S2Paper.from_api(r) for r in rows[:limit]]
+
+    def search(self, query: str, limit: int = 15, fields: str = RELEVANCE_FIELDS) -> list[dict]:
+        """The papers most relevant to ``query``, as the API returns them. Not cached: live search wants today's."""
+        data = self._request("GET", "/paper/search", {"query": query, "fields": fields, "limit": limit}) or {}
+        return data.get("data") or []
 
     def reference_contexts(self, paper_id: str) -> list[S2Context]:
         """Every reference of ``paper_id`` with the sentences that cite it."""
@@ -292,19 +320,39 @@ class SemanticScholarClient:
             return self._request(method, path, params, body)
 
     # The keyless pool is shared by everyone and can refuse for minutes at a time, so rate limits are
-    # waited out for up to 15 minutes rather than a fixed number of attempts.
-    @retry(retry=retry_if_exception(_is_transient), wait=wait_exponential(multiplier=2, min=4, max=90),
-           stop=stop_after_attempt(40) | stop_after_delay(900), reraise=True)
+    # waited out for up to ``patience`` seconds (15 minutes by default) rather than a fixed number of attempts.
     def _send(self, method: str, path: str, params: dict, body: dict | None):
-        wait = self.min_interval - (time.monotonic() - self._last_request)
-        if wait > 0:
-            time.sleep(wait)
-        self._last_request = time.monotonic()
+        retrying = Retrying(retry=retry_if_exception(_is_transient),
+                            wait=wait_exponential(multiplier=2, min=min(4, max(1, self.patience / 5)), max=90),
+                            stop=stop_after_attempt(40) | stop_after_delay(self.patience), reraise=True)
+        return retrying(self._send_once, method, path, params, body)
+
+    def _send_once(self, method: str, path: str, params: dict, body: dict | None):
+        self._pace()
         resp = self.http.request(method, path, params=params, json=body)
         if resp.status_code == 404:
             return None
         if resp.status_code == 429:
+            self.rate_limited += 1
             logger.debug(f"Semantic Scholar rate limit on {path}; backing off")
         resp.raise_for_status()
         self.requests += 1
         return resp.json()
+
+    def _pace(self) -> None:
+        """Wait for this request's turn: the next slot shared by every process, else this process's own."""
+        if self.min_interval <= 0:
+            return
+        wait = None
+        if self._shared_slots:
+            try:
+                from athena.core.redis_client import get_redis
+                wait = get_redis().eval(_SLOT_SCRIPT, 1, SLOT_KEY, int(self.min_interval * 1000)) / 1000
+            except Exception as exc:  # no Redis (a script, a test): pace this process alone
+                logger.debug(f"Semantic Scholar: no shared request slots ({exc}); pacing this process only")
+                self._shared_slots = False
+        if wait is None:
+            wait = self.min_interval - (time.monotonic() - self._last_request)
+        if wait > 0:
+            time.sleep(wait)
+        self._last_request = time.monotonic()
