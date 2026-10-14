@@ -415,48 +415,9 @@ def refresh_recency_scores():
 
 @shared_task
 def take_metric_snapshot():
-    """Daily snapshot: capture current citation_count + engagement for velocity computation."""
-    logger.info("Taking daily metric snapshot...")
-    now = datetime.now(timezone.utc)
-
-    total = 0
-    with SessionLocal() as session:
-        result = session.execute(
-            select(ContentItem)
-        ).execution_options(yield_per=CHUNK_SIZE)
-
-        source_url_cache: Dict[Any, str] = {}
-
-        for item in result.scalars():
-            metadata = item.extra_data or {}
-            # Cache source URLs per-run to avoid one SELECT per item when many items
-            # share the same source.
-            src_id = item.source_id
-            if src_id in source_url_cache:
-                source_url = source_url_cache[src_id]
-            else:
-                source = session.execute(
-                    select(Source).where(Source.id == src_id)
-                ).scalar_one_or_none()
-                source_url = source.url if source else ""
-                source_url_cache[src_id] = source_url
-
-            eng_raw = engagement_raw(_extract_engagement_signals(metadata, source_url))
-
-            snapshot = MetricSnapshot(
-                item_id=item.id,
-                citation_count=item.citation_count or 0,
-                engagement_raw=eng_raw,
-                snapshot_date=now,
-            )
-            session.add(snapshot)
-            total += 1
-
-            if total % CHUNK_SIZE == 0:
-                session.commit()
-
-        session.commit()
-        logger.info(f"Metric snapshot complete. {total} snapshots saved.")
+    """Kept for messages queued before athena.pipeline.momentum took over: runs the day's momentum work."""
+    from athena.pipeline.momentum import daily_momentum
+    return daily_momentum()
 
 
 @shared_task

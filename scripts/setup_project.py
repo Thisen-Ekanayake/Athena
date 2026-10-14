@@ -9,6 +9,7 @@ from athena.api.migrations.add_users import run_migration as add_users  # noqa: 
 from athena.api.migrations.add_evolution_tools import run_migration as add_evolution_tools  # noqa: E402
 from athena.api.migrations.add_inbox_watches import run_migration as add_inbox_watches  # noqa: E402
 from athena.api.migrations.add_release import run_migration as add_release  # noqa: E402
+from athena.api.migrations.add_reading import run_migration as add_reading  # noqa: E402
 from scripts.seed_prompts import seed_prompts  # noqa: E402
 from athena.database.operations import upsert_source  # noqa: E402
 from athena.core.schemas import SourceCreate  # noqa: E402
@@ -22,6 +23,7 @@ def setup():
     add_evolution_tools()  # reading paths, idea checks, map questions, snapshots, cross-map links
     add_inbox_watches()  # follows, what they caught, inbox settings; existing users follow the built maps once
     add_release()  # usage log, map share links, the setup guide's flag (existing accounts skip the guide)
+    add_reading()  # citation momentum
     seed_prompts()  # summaries and cluster labels need their prompt templates; does nothing once seeded
 
     print("Seeding Initial Sources...")

@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import uuid4
 from sqlalchemy import (
     Column, String, DateTime, Integer, Float, Boolean, ARRAY,
-    Enum as SQLEnum, ForeignKey, UniqueConstraint, func,
+    Enum as SQLEnum, ForeignKey, Index, UniqueConstraint, func,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import declarative_base, relationship
@@ -83,6 +83,9 @@ class ContentItem(Base):
     scored_at = Column(DateTime(timezone=True), nullable=True)
     is_trending = Column(Boolean, default=False)
     category_rank = Column(Integer, nullable=True)
+    # Citations gained over the last 7 and 30 days, from metric snapshots (athena.pipeline.momentum); papers only
+    citation_gain_7d = Column(Integer, nullable=True)
+    citation_gain_30d = Column(Integer, nullable=True)
     embedding_id = Column(String, nullable=True)
     embedding_model = Column(String, nullable=True)  # the EMBED_MODEL that made the vector
     embedded_at = Column(DateTime(timezone=True), nullable=True)
@@ -192,14 +195,20 @@ class ScoringConfig(Base):
 
 
 class MetricSnapshot(Base):
-    """Daily snapshot of citation_count + engagement per item for velocity computation."""
+    """An item's citation count and raw engagement on one day, for velocity and the momentum charts.
+
+    ``daily`` rows are taken once a day (athena.pipeline.momentum); ``rebuilt`` rows are a paper's past, rebuilt
+    once from the dates of the papers citing it, one row per day the count changed.
+    """
     __tablename__ = "metric_snapshots"
+    __table_args__ = (Index("ix_metric_snapshots_item_date", "item_id", "snapshot_date"),)
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
     citation_count = Column(Integer, default=0)
     engagement_raw = Column(Float, default=0.0)
     snapshot_date = Column(DateTime(timezone=True), default=datetime.utcnow)
+    source = Column(String, nullable=False, default="daily", server_default="daily")  # daily | rebuilt
 
     content_item = relationship("ContentItem", backref="metric_snapshots")
 

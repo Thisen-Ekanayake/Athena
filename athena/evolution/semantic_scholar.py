@@ -40,6 +40,8 @@ CANDIDATE_FIELDS = PAPER_FIELDS + ",abstract,venue,publicationTypes"
 CONTEXT_FIELDS = ",".join(["contexts", "intents", "isInfluential", *_REF_FIELDS])
 CITATION_CONTEXT_FIELDS = "contexts,paperId"
 CITATION_PAGE = 1000  # the citations endpoint's largest page
+CITATION_OFFSET_MAX = 9000  # offset + limit may not pass 10,000
+CITATION_DATE_FIELDS = "publicationDate"
 SEARCH_FIELDS = "paperId,externalIds,title,year,citationCount,abstract,venue,publicationTypes"
 
 
@@ -226,6 +228,27 @@ class SemanticScholarClient:
             rows = (data or {}).get("data") or []
             self._cache_write("citations", key, CITATION_CONTEXT_FIELDS, rows)
         return [((r.get("citingPaper") or {}).get("paperId") or "", r.get("contexts") or []) for r in rows]
+
+    def citation_dates(self, paper_id: str, max_age: float | None = None) -> list[str | None]:
+        """The publication date ('YYYY-MM-DD') of each paper citing ``paper_id``, None where it has none.
+
+        Pages through every citing paper the endpoint serves (it stops at 10,000), for citation-momentum history.
+        """
+        cached = self._cache_read("citation_dates", paper_id, CITATION_DATE_FIELDS, max_age)
+        if cached is not None:
+            return cached["data"]
+        dates, offset = [], 0
+        while offset < CITATION_OFFSET_MAX:
+            data = self._request("GET", f"/paper/{paper_id}/citations",
+                                 {"fields": CITATION_DATE_FIELDS, "limit": CITATION_PAGE, "offset": offset})
+            if not data:
+                break
+            dates += [(r.get("citingPaper") or {}).get("publicationDate") for r in data.get("data") or []]
+            if data.get("next") is None:
+                break
+            offset = data["next"]
+        self._cache_write("citation_dates", paper_id, CITATION_DATE_FIELDS, dates)
+        return dates
 
     # ── transport ───────────────────────────────────────────────────
 
