@@ -298,7 +298,7 @@ function SourcesSection() {
 const KEYS: { key: string; label: string; hint: string }[] = [
   { key: 'LLM_API_KEY', label: 'Chat model', hint: 'Only for a hosted API such as OpenAI. The local model server needs no key.' },
   { key: 'EMBED_API_KEY', label: 'Embedding model', hint: 'Only when embeddings come from a different hosted API than chat.' },
-  { key: 'SEMANTIC_SCHOLAR_API_KEY', label: 'Semantic Scholar', hint: 'Adds citation counts and live paper search. Optional: without it, requests are slower and rate-limited.' },
+  { key: 'SEMANTIC_SCHOLAR_API_KEY', label: 'Semantic Scholar', hint: 'References and citing sentences for maps, citation counts and live paper search. A key allows about one request a second, shared by the whole app; without one, requests wait on a slow public pool and search-built maps skip Semantic Scholar.' },
 ]
 
 function KeyRow({ keyName, label, hint }: { keyName: string; label: string; hint: string }) {
@@ -321,7 +321,7 @@ function KeyRow({ keyName, label, hint }: { keyName: string; label: string; hint
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid gap-1">
           <p className="flex items-center gap-2 text-[14px] font-medium text-fg">
-            {label} {info?.is_set ? <Chip tone="good">Set</Chip> : <Chip>Not set</Chip>}
+            {label} {info?.source === 'environment' ? <Chip tone="good">From .env</Chip> : info?.is_set ? <Chip tone="good">Set</Chip> : <Chip>Not set</Chip>}
           </p>
           <p className="text-[12.5px] text-fg-3">{hint}</p>
           {info?.is_set && !editing && (
@@ -334,7 +334,7 @@ function KeyRow({ keyName, label, hint }: { keyName: string; label: string; hint
           )}
         </div>
         <div className="flex gap-1.5">
-          {info?.is_set && !editing && (
+          {info?.source === 'database' && !editing && (
             <Button variant="ghost" size="icon" onClick={() => deleteKey.mutate(keyName)} disabled={deleteKey.isPending} aria-label={`Remove the ${label} key`}><Trash2 /></Button>
           )}
           <Button variant="secondary" size="sm" onClick={() => { setEditing((v) => !v); setValue('') }}>

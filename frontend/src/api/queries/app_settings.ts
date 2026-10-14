@@ -6,6 +6,8 @@ export interface ApiKeyInfo {
   masked_value: string | null
   is_set: boolean
   updated_at: string | null
+  /** Where the value in use comes from: a saved value overrides the environment file */
+  source: 'database' | 'environment' | null
 }
 
 export const useApiKeys = () => {

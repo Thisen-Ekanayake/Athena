@@ -1,3 +1,4 @@
+import os
 import time
 from datetime import datetime
 from typing import Optional
@@ -45,6 +46,8 @@ class ApiKeyResponse(BaseModel):
     masked_value: Optional[str]
     is_set: bool
     updated_at: Optional[str]
+    # Where the value in use comes from: a saved value overrides the environment file, as in get_setting.
+    source: Optional[str] = None  # database | environment
 
 
 class ApiKeyUpdate(BaseModel):
@@ -56,12 +59,16 @@ def get_api_keys(db: Session = Depends(get_db)):
     results = []
     for key in sorted(ALLOWED_KEYS):
         row = db.get(AppSetting, key)
-        results.append(ApiKeyResponse(
-            key=key,
-            masked_value=_mask(row.value) if row and row.value else None,
-            is_set=bool(row and row.value),
-            updated_at=row.updated_at.isoformat() if row and row.updated_at else None,
-        ))
+        if row and row.value:
+            results.append(ApiKeyResponse(
+                key=key, masked_value=_mask(row.value), is_set=True, source="database",
+                updated_at=row.updated_at.isoformat() if row.updated_at else None,
+            ))
+        elif env := os.getenv(key, "").strip():
+            results.append(ApiKeyResponse(key=key, masked_value=_mask(env), is_set=True, updated_at=None,
+                                          source="environment"))
+        else:
+            results.append(ApiKeyResponse(key=key, masked_value=None, is_set=False, updated_at=None))
     return results
 
 
@@ -85,6 +92,7 @@ def set_api_key(key: str, body: ApiKeyUpdate, db: Session = Depends(get_db)):
         masked_value=_mask(row.value),
         is_set=True,
         updated_at=row.updated_at.isoformat() if row.updated_at else None,
+        source="database",
     )
 
 

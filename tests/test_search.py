@@ -90,37 +90,22 @@ def _ss_payload(papers: list[dict]) -> dict:
     return {"data": papers}
 
 
-class _FakeResponse:
-    def __init__(self, json_data: dict, status_code: int = 200):
-        self._json = json_data
-        self.status_code = status_code
+def _live(*responses: httpx.Response | Exception):
+    """Patch live search's Semantic Scholar client to answer from ``responses``, in turn."""
+    from athena.evolution.semantic_scholar import SemanticScholarClient
+    answers = iter(responses)
 
-    def json(self):
-        return self._json
+    def handler(request: httpx.Request) -> httpx.Response:
+        answer = next(answers)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
 
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise httpx.HTTPStatusError(
-                "boom",
-                request=httpx.Request("GET", "https://api.semanticscholar.org"),
-                response=httpx.Response(self.status_code),
-            )
+    def make(**kwargs):
+        http = httpx.Client(base_url="https://api.semanticscholar.org/graph/v1", transport=httpx.MockTransport(handler))
+        return SemanticScholarClient(api_key="k", http=http, min_interval=0, **kwargs)
 
-
-class _FakeClient:
-    def __init__(self, response: _FakeResponse | Exception):
-        self._response = response
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return False
-
-    def get(self, url, params=None, headers=None):
-        if isinstance(self._response, Exception):
-            raise self._response
-        return self._response
+    return patch.object(semantic_scholar, "SemanticScholarClient", side_effect=make)
 
 
 class TestSemanticScholar:
@@ -152,9 +137,7 @@ class TestSemanticScholar:
                 "citationCount": 0,
             },
         ])
-        fake_client = _FakeClient(_FakeResponse(payload))
-
-        with patch.object(semantic_scholar.httpx, "Client", return_value=fake_client):
+        with _live(httpx.Response(200, json=payload)):
             results = semantic_scholar.search_semantic_scholar("transformers", limit=10)
 
         assert len(results) == 1
@@ -164,16 +147,21 @@ class TestSemanticScholar:
         assert results[0]["citation_count"] == 12
 
     def test_http_error_returns_empty_list(self):
-        fake_client = _FakeClient(httpx.ConnectError("nope"))
-        with patch.object(semantic_scholar.httpx, "Client", return_value=fake_client):
+        with patch.object(semantic_scholar, "PATIENCE", 0), _live(httpx.ConnectError("nope")):
             results = semantic_scholar.search_semantic_scholar("anything")
         assert results == []
 
     def test_non_200_response_returns_empty_list(self):
-        fake_client = _FakeClient(_FakeResponse({}, status_code=500))
-        with patch.object(semantic_scholar.httpx, "Client", return_value=fake_client):
+        with patch.object(semantic_scholar, "PATIENCE", 0), _live(httpx.Response(500, json={})):
             results = semantic_scholar.search_semantic_scholar("anything")
         assert results == []
+
+    def test_a_rate_limit_is_waited_out(self):
+        payload = _ss_payload([{"paperId": "p1", "title": "LoRA", "abstract": "Low-rank adapters.", "authors": []}])
+        with patch.object(semantic_scholar, "PATIENCE", 5), \
+                _live(httpx.Response(429, json={}), httpx.Response(200, json=payload)):
+            results = semantic_scholar.search_semantic_scholar("lora")
+        assert [r["id"] for r in results] == ["p1"]
 
     def test_empty_query_returns_empty_list(self):
         assert semantic_scholar.search_semantic_scholar("") == []

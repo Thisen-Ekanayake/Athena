@@ -1,22 +1,17 @@
-"""Live paper search against the Semantic Scholar Graph API."""
+"""Live paper search against the Semantic Scholar Graph API.
+
+It goes through the shared client (``athena.evolution.semantic_scholar``), so it takes its turn with map builds and
+the workers and retries a rate limit, but gives up after about ten seconds: someone is waiting for the results.
+"""
 from __future__ import annotations
 
 import httpx
 from loguru import logger
 
-from athena.core.config_store import get_setting
+from athena.evolution.semantic_scholar import SemanticScholarAuthError, SemanticScholarClient
 
-SEMANTIC_SCHOLAR_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
-FIELDS = "title,abstract,year,authors,citationCount,url"
+PATIENCE = 10.0  # seconds a search may spend waiting out rate limits
 DEFAULT_TIMEOUT = 15.0
-
-
-def _build_headers() -> dict[str, str]:
-    headers = {"Accept": "application/json"}
-    api_key = get_setting("SEMANTIC_SCHOLAR_API_KEY")
-    if api_key:
-        headers["x-api-key"] = api_key
-    return headers
 
 
 def _normalise_paper(raw: dict) -> dict | None:
@@ -53,24 +48,18 @@ def search_semantic_scholar(query: str, limit: int = 15) -> list[dict]:
     if not query or not query.strip():
         return []
 
-    params = {"query": query, "fields": FIELDS, "limit": limit}
     try:
-        with httpx.Client(timeout=DEFAULT_TIMEOUT) as client:
-            resp = client.get(
-                SEMANTIC_SCHOLAR_URL,
-                params=params,
-                headers=_build_headers(),
-            )
-            resp.raise_for_status()
-            data = resp.json()
-    except httpx.HTTPError as exc:
+        client = SemanticScholarClient(cache_dir="", patience=PATIENCE)
+        client.http.timeout = httpx.Timeout(DEFAULT_TIMEOUT)
+        with client.http:
+            raw_papers = client.search(query, limit=limit)
+    except (httpx.HTTPError, SemanticScholarAuthError) as exc:
         logger.warning(f"semantic_scholar: HTTP error — {exc}")
         return []
     except ValueError as exc:
         logger.warning(f"semantic_scholar: invalid JSON — {exc}")
         return []
 
-    raw_papers = data.get("data") or []
     papers: list[dict] = []
     for raw in raw_papers:
         if not isinstance(raw, dict):

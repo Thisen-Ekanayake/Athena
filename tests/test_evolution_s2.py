@@ -119,6 +119,68 @@ class TestClient:
         assert client.get_papers(["ARXIV:1"])["ARXIV:1"].title == "QLoRA"
         assert client.api_key == ""
 
+    def test_a_rate_limit_is_retried(self):
+        answers = iter([httpx.Response(429, json={}), httpx.Response(200, json=[s2_raw("p1", "QLoRA")])])
+        http = httpx.Client(base_url="https://api.semanticscholar.org/graph/v1",
+                            transport=httpx.MockTransport(lambda r: next(answers)))
+        client = SemanticScholarClient(api_key="k", cache_dir="", http=http, min_interval=0, patience=5)
+        assert client.get_papers(["ARXIV:1"])["ARXIV:1"].title == "QLoRA"
+        assert (client.requests, client.rate_limited) == (1, 1)
+
+    def test_retries_stop_after_patience(self):
+        seen = []
+
+        def handler(request):
+            seen.append(request)
+            return httpx.Response(429, json={})
+
+        http = httpx.Client(base_url="https://api.semanticscholar.org/graph/v1", transport=httpx.MockTransport(handler))
+        client = SemanticScholarClient(api_key="k", cache_dir="", http=http, min_interval=0, patience=0)
+        with pytest.raises(httpx.HTTPStatusError):
+            client.search("lora")
+        assert len(seen) == 1 and client.rate_limited == 1
+
+    def test_search_returns_the_api_rows(self):
+        def handler(request):
+            assert request.url.path.endswith("/paper/search")
+            assert request.url.params["query"] == "lora" and request.url.params["limit"] == "3"
+            return httpx.Response(200, json={"total": 1, "data": [{"paperId": "p1", "title": "LoRA"}]})
+
+        http = httpx.Client(base_url="https://api.semanticscholar.org/graph/v1", transport=httpx.MockTransport(handler))
+        client = SemanticScholarClient(api_key="k", cache_dir="", http=http, min_interval=0)
+        assert client.search("lora", limit=3) == [{"paperId": "p1", "title": "LoRA"}]
+
+    def test_requests_take_turns_through_redis(self, monkeypatch):
+        calls, slept = [], []
+
+        class Redis:
+            def eval(self, script, n, key, gap_ms):
+                calls.append((key, gap_ms))
+                return 250  # another process holds the next quarter second
+
+        monkeypatch.setattr("athena.core.redis_client.get_redis", lambda: Redis())
+        monkeypatch.setattr("athena.evolution.semantic_scholar.time.sleep", slept.append)
+        client = SemanticScholarClient(api_key="k", cache_dir="", http=httpx.Client(), min_interval=1.1)
+        client._pace()
+        assert calls == [("s2:next_slot", 1100)] and slept == [0.25]
+
+    def test_without_redis_each_process_paces_itself(self, monkeypatch):
+        def broken():
+            raise ConnectionError("no redis")
+
+        slept = []
+        monkeypatch.setattr("athena.core.redis_client.get_redis", broken)
+        monkeypatch.setattr("athena.evolution.semantic_scholar.time.sleep", slept.append)
+        client = SemanticScholarClient(api_key="k", cache_dir="", http=httpx.Client(), min_interval=1.1)
+        client._pace()
+        client._pace()
+        assert not client._shared_slots
+        assert len(slept) == 1 and 1.0 < slept[0] <= 1.1  # the second request waits for the first's interval
+
+    def test_no_interval_skips_pacing(self, monkeypatch):
+        monkeypatch.setattr("athena.core.redis_client.get_redis", lambda: pytest.fail("Redis was asked"))
+        SemanticScholarClient(api_key="k", cache_dir="", http=httpx.Client(), min_interval=0)._pace()
+
     def test_403_without_a_key_raises(self):
         http = httpx.Client(base_url="https://api.semanticscholar.org/graph/v1",
                             transport=httpx.MockTransport(lambda r: httpx.Response(403, json={"message": "Forbidden"})))
