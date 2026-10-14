@@ -22,6 +22,7 @@ import type { GraphExporter } from './graphExport'
 import { NewInMaps } from './NewInMaps'
 import { ProposalPanel } from './ProposalPanel'
 import { ShareMenu } from './ShareMenu'
+import { WriteReviewButton } from '../reviews/WriteReviewButton'
 import { TimelineStrip } from './TimelineStrip'
 import {
   createProposal,
@@ -362,6 +363,7 @@ export function TopicView({ slug }: { slug: string }) {
               {!readOnly && current.id && <FollowButton target={{ kind: 'map', topic_id: current.id }} />}
               {!readOnly && <ShareMenu slug={slug} name={topic.name} />}
               <ExportMenu slug={slug} filename={topic.slug} exporter={() => exporter.current} />
+              {!readOnly && topic.built_at && <WriteReviewButton slug={slug} />}
               {!readOnly && current.origin === 'search' && <SearchTopicActions topic={current} />}
             </span>
           }

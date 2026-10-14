@@ -6,6 +6,7 @@ import { apiErrorMessage } from '../api/error'
 import { DownloadMenu } from '../components/DownloadMenu'
 import { ItemList } from '../components/items/ItemRow'
 import { NotesTab, ReadTab } from '../features/reading/LibraryTabs'
+import { ReviewsTab } from '../features/reviews/ReviewsTab'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Notice } from '../ui/Notice'
@@ -30,6 +31,7 @@ const TABS = [
   { id: 'lists', label: 'Lists' },
   { id: 'notes', label: 'Notes and highlights' },
   { id: 'read', label: 'Read' },
+  { id: 'reviews', label: 'Reviews' },
 ] as const
 type Tab = (typeof TABS)[number]['id']
 
@@ -39,7 +41,7 @@ export function LibraryPage() {
   const active: Tab = TABS.some((t) => t.id === tab) ? (tab as Tab) : 'lists'
   return (
     <div className="mx-auto max-w-[1100px]">
-      <PageHeader title="Library" description="Your reading lists, your notes and highlights, and what you have read. Only you see them." />
+      <PageHeader title="Library" description="Your reading lists, your notes and highlights, what you have read, and your literature reviews. Only you see them." />
       <nav className="mb-5 flex gap-1 border-b border-line" aria-label="Library sections">
         {TABS.map((t) => (
           <NavLink key={t.id} to={t.id === 'lists' ? '/library' : `/library/${t.id}`} end
@@ -52,6 +54,7 @@ export function LibraryPage() {
       {active === 'lists' && <ListsTab />}
       {active === 'notes' && <NotesTab />}
       {active === 'read' && <ReadTab />}
+      {active === 'reviews' && <ReviewsTab />}
     </div>
   )
 }

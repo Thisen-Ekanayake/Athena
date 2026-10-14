@@ -1,7 +1,5 @@
 import { useState } from 'react'
-import { BookOpen, Check, ChevronDown, Copy, ExternalLink, Globe, Sparkles } from 'lucide-react'
-import { Oracle } from '../astrolabe/Oracle'
-import { Button } from '../../ui/Button'
+import { BookOpen, ChevronDown, ExternalLink, Globe } from 'lucide-react'
 import { Chip } from '../../ui/Chip'
 import { cn } from '../../ui/cn'
 import type { PaperResult } from './api'
@@ -47,49 +45,5 @@ export function ResearchPaper({ paper }: { paper: PaperResult }) {
         </>
       )}
     </article>
-  )
-}
-
-/** The AI-written literature review. The oracle and the moving border show while it is being written. */
-export function LitReview({ query, review, pending }: { query: string; review: string | null; pending: boolean }) {
-  const [copied, setCopied] = useState(false)
-  const copy = async () => {
-    if (!review) return
-    try {
-      await navigator.clipboard.writeText(review)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      // Clipboard unavailable; the text can still be selected.
-    }
-  }
-
-  return (
-    <section className="relative rounded-xl border border-line bg-surface">
-      <span className="ai-ring" data-active={pending} aria-hidden="true" />
-      <header className="flex items-center gap-3 px-4 pt-4">
-        <Oracle mode={pending ? 'thinking' : 'done'} size={52} />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-[15px] font-semibold text-fg">Literature review</h2>
-          <p className="truncate text-[12.5px] text-fg-3" aria-live="polite">
-            {pending ? <span className="font-myth text-[14px] text-fg-2">Consulting the oracle…</span> : <>On “{query}”, written by AI from the papers below</>}
-          </p>
-        </div>
-        {review && (
-          <Button variant="secondary" size="sm" onClick={copy}>
-            {copied ? <><Check /> Copied</> : <><Copy /> Copy</>}
-          </Button>
-        )}
-      </header>
-      <div className="px-4 pt-3 pb-4">
-        {pending ? (
-          <p className="text-[13.5px] text-fg-3">Reading the papers and writing the review. This can take a minute.</p>
-        ) : review ? (
-          <div className="max-w-[72ch] text-[14px] leading-relaxed whitespace-pre-wrap text-fg-2">{review}</div>
-        ) : (
-          <p className="flex items-center gap-1.5 text-[13.5px] text-fg-3"><Sparkles className="h-3.5 w-3.5" /> No review was written for this search.</p>
-        )}
-      </div>
-    </section>
   )
 }

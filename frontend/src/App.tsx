@@ -6,6 +6,7 @@ import { ClustersPage } from './pages/ClustersPage'
 import { FeedPage } from './pages/FeedPage'
 import { HomePage } from './pages/HomePage'
 import { PaperPage } from './pages/PaperPage'
+import { ReviewPage } from './pages/ReviewPage'
 import { ChangePasswordPage, LoginPage, RequireAuth, SetupPage } from './pages/AuthPages'
 import { InboxPage } from './pages/InboxPage'
 import { LibraryPage } from './pages/LibraryPage'
@@ -62,6 +63,7 @@ function App() {
           <Route path="library/:tab" element={<LibraryPage />} />
           {/* Saved lists became the Library's first tab. */}
           <Route path="saved" element={<Navigate to="/library" replace />} />
+          <Route path="reviews/:id" element={<ReviewPage />} />
           <Route path="inbox" element={<InboxPage />} />
           <Route path="search" element={<SearchPage />} />
           {/* Research search and the literature review now live on the search page. */}
