@@ -42,12 +42,18 @@ SECTION_TOKENS = 700
 OVERVIEW_TOKENS = 450
 ABSTRACTS_TOKENS = 1300
 ABSTRACT_PAPERS = 15
+LIBRARY_PAPERS = 8           # of those, at most this many from the library, so the live sources get a say
+MIN_ABSTRACT_PAPERS = 5      # fewer and the review would be about whatever happened to match
 STALE_MINUTES = 15           # a running review with no progress for this long has lost its worker
 
+# The second sentence came from the first live review: the 9B called Lester et al.'s prompt tuning "Prefix-tuning",
+# because its abstract mentions prefix tuning, while citing Lester.
 SYSTEM = ("You write sections of a literature review for researchers who are new to a field. Use only the numbered "
           "sources you are given. Cite every claim with the number of its source in square brackets, like [3] or "
-          "[2, 5]. Never cite a number that is not listed, and never invent papers, results or figures. Write plain, "
-          "precise prose without headings, unless the task asks for them.")
+          "[2, 5]. Never cite a number that is not listed, and never invent papers, results or figures. Call each "
+          "paper by the name or title in its source's label, and credit a method only to the source that introduces "
+          "it, not to one that merely mentions it. Write plain, precise prose without headings, unless the task asks "
+          "for them.")
 STATUS_WORDS = {"persisting": "persisting: papers keep raising it", "new": "new: raised only recently",
                 "addressed": "addressed: later papers take it on", "quiet": "quiet: no longer raised"}
 CITATION = re.compile(r"\[(\d+(?:\s*[,–-]\s*\d+)*)\]")
@@ -387,8 +393,10 @@ def write_abstracts_review(query: str, papers: list[dict], chat: Chat, save: Cal
                       authors=list(p.get("authors") or []), url=p.get("url"))
         numbered.append((registry.number(paper), paper, p["abstract"][:ABSTRACT_CHARS]))
     save({"progress": {"step": 1, "of": 1, "label": "Writing from the abstracts"}})
-    if not numbered:
-        raise ValueError("No papers with abstracts matched the query")
+    if len(numbered) < MIN_ABSTRACT_PAPERS:
+        raise ValueError(f"Only {len(numbered)} papers with abstracts matched the query (Semantic Scholar may be "
+                         "rate-limiting). Try again in a few minutes, use a broader query, or build a map of the "
+                         "topic.")
     text, *_ = chat(abstracts_messages(query, numbered), ABSTRACTS_TOKENS)
     body, removed = check_citations(re.sub(r"<think>.*?</think>", "", text or "", flags=re.S).strip(),
                                     {n for n, _, _ in numbered})
@@ -427,13 +435,17 @@ def model_chat(user_id, model_used: dict) -> Chat:
 
 
 def search_papers(query: str) -> list[dict]:
-    """The research search's papers: the library, Semantic Scholar and arXiv, merged."""
+    """Papers with abstracts for an abstracts review: up to LIBRARY_PAPERS from the library, then Semantic Scholar
+    and arXiv. Only papers with an abstract count: the library's best matches are often blog posts without one, and
+    letting them fill the list (as the research search's merge does) left a review with two sources."""
     from athena.search.arxiv_live import search_arxiv
     from athena.search.local import search_local
     from athena.search.merger import merge_results
     from athena.search.semantic_scholar import search_semantic_scholar
-    return merge_results(search_local(query, limit=20),
-                         search_semantic_scholar(query, limit=15) + search_arxiv(query, limit=15), max_total=20)
+    library = [p for p in search_local(query, limit=20) if p.get("abstract")][:LIBRARY_PAPERS]
+    live = [p for p in search_semantic_scholar(query, limit=15) + search_arxiv(query, limit=15)
+            if p.get("abstract")]
+    return merge_results(library, live, max_total=ABSTRACT_PAPERS)
 
 
 def run(review_id, chat: Chat | None = None, retrieve=None, papers=None) -> dict:

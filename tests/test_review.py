@@ -134,7 +134,8 @@ def test_a_map_review_end_to_end_with_a_fake_model(fake_map):
 def test_an_abstracts_review_cites_only_its_results():
     papers = [{"id": "s2-1", "title": "Graph RAG", "abstract": "Graphs help retrieval.", "year": 2024,
                "authors": ["A"], "url": "https://x"},
-              {"id": "s2-2", "title": "No abstract", "abstract": None}]
+              {"id": "s2-2", "title": "No abstract", "abstract": None}] + \
+        [{"id": f"s2-{i}", "title": f"Paper {i}", "abstract": "Text.", "year": 2024} for i in range(3, 7)]
 
     def chat(messages, max_tokens):
         assert "abstracts only" in messages[-1]["content"]
@@ -142,7 +143,9 @@ def test_an_abstracts_review_cites_only_its_results():
 
     result = review.write_abstracts_review("graph rag", papers, chat, lambda f: None)
     assert result.removed == 1 and len(result.sources) == 1
-    assert "### Overview" in result.markdown and "from the abstracts of 1 search results" in result.markdown
+    assert "### Overview" in result.markdown and "from the abstracts of 5 search results" in result.markdown
+    with pytest.raises(ValueError, match="Only 1 papers"):
+        review.write_abstracts_review("graph rag", papers[:2], chat, lambda f: None)
 
 
 # ── routes ───────────────────────────────────────────────────────────
@@ -255,13 +258,13 @@ def test_the_worker_runs_a_saved_review_and_records_failure(monkeypatch):
         s.add_all([ok, bad])
         s.commit()
         ok_id, bad_id = ok.id, bad.id
-    papers = [{"id": "1", "title": "Graph RAG", "abstract": "Graphs help.", "year": 2024}]
+    papers = [{"id": str(i), "title": f"Graph RAG {i}", "abstract": "Graphs help.", "year": 2024} for i in range(5)]
     assert review.run(ok_id, chat=lambda m, t: ("Graphs help [1].", 5, 5), papers=papers) == {
         "status": "done", "citations_removed": 0}
     assert review.run(bad_id, chat=lambda m, t: ("", 0, 0))["status"] == "failed"   # no map
     with Session() as s:
         done, failed = s.get(LitReview, ok_id), s.get(LitReview, bad_id)
-        assert done.status == "done" and done.sources[0]["title"] == "Graph RAG" and done.finished_at
+        assert done.status == "done" and done.sources[0]["title"] == "Graph RAG 0" and done.finished_at
         assert failed.status == "failed" and "map" in failed.error
     assert review.run(ok_id)["status"] == "done"   # a finished review is not written again
     with patch.object(review, "write_abstracts_review") as never:
