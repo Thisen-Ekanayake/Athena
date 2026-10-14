@@ -1,120 +1,142 @@
+<div align="center">
+
+<img src="frontend/public/favicon.svg" alt="Athena" width="76" />
+
 # Athena
 
-> AI research intelligence — aggregate, score, cluster, summarise, and semantically search content from across the AI landscape.
+**See how a research field grew, what is new in it, and what is still unsolved.**
+
+Athena collects AI papers and posts, ranks and summarises them, and builds research maps for any topic:
+the milestones, the reading order and the open problems, all on your own GPU or any OpenAI-compatible API.
+
+[![CI](https://img.shields.io/github/actions/workflow/status/Thisen-Ekanayake/Athena/ci.yml?branch=main&label=CI&logo=github)](https://github.com/Thisen-Ekanayake/Athena/actions/workflows/ci.yml)
+[![CD](https://img.shields.io/github/actions/workflow/status/Thisen-Ekanayake/Athena/cd.yml?branch=main&label=images&logo=docker&logoColor=white)](https://github.com/Thisen-Ekanayake/Athena/actions/workflows/cd.yml)
+[![License: MIT](https://img.shields.io/github/license/Thisen-Ekanayake/Athena?color=yellow)](LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/Thisen-Ekanayake/Athena)](https://github.com/Thisen-Ekanayake/Athena/commits/main)
+[![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-fe5196?logo=conventionalcommits&logoColor=white)](https://www.conventionalcommits.org)
 
 ![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
-![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Celery](https://img.shields.io/badge/Celery-37814A?logo=celery&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)
+![Qdrant](https://img.shields.io/badge/Qdrant-DC244C?logo=qdrant&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![llama.cpp](https://img.shields.io/badge/llama.cpp-local%20models-000000)
 
-Athena ingests papers and posts from ArXiv, Semantic Scholar, Papers With Code, RSS feeds, Substack, LessWrong and Playwright-scraped sites, enriches them through a Celery pipeline (embed → score → cluster → summarise), and serves ranked, semantically searchable results — with AI summaries, Q&A, topic clusters, and saved lists — to a React UI.
+<img src="docs/screenshots/home.webp" alt="Athena home page" width="100%" />
 
-![Architecture](diagrams/system_architecture.png)
+</div>
 
-## Architecture
+## Features
 
-Data flows through five layers:
+**Research maps**: type any topic and Athena builds its map from OpenAlex, Semantic Scholar and the papers' full text.
 
-```
-Scrapers → PostgreSQL → Celery workers (embed · score · cluster · summarise) → Qdrant → FastAPI → React UI
-```
+- **Lineage map**: a topic's papers on a timeline. Select one to trace what it built on and what built on it.
+- **Milestones and reading path**: learn a field in 5 to 20 papers, survey first, with a note on why each one matters.
+- **Open problems**: limitations papers state about themselves or each other, grouped into themes marked persisting, new, fix claimed or quiet.
+- **Ask a map**: answers from the papers' full text, citing paper and section.
+- **Check an idea**: paste an idea or abstract to see the closest prior work, the gaps it touches and what would be new.
+- **Kept up to date**: maps refresh on a schedule, with a changelog, follows and an in-app inbox. Export to PNG, SVG, BibTeX, RIS, Markdown or CSV, or share a read-only link.
 
-- **Scrapers** normalise raw content into PostgreSQL.
-- **Celery workers** embed (Qwen3-Embedding-8B → Qdrant), score (6 weighted signals), cluster (UMAP + HDBSCAN), and summarise (Qwen3.5-9B).
-- **Models** run locally behind one OpenAI-compatible llama-server router (`config/llama-router.ini`); switching to OpenAI or another provider is a settings change.
-- **FastAPI** serves the ranked feed, semantic search, clusters, Q&A, sources, and saved lists.
-- **Frontend** — React 19 + TypeScript + Vite (Zustand, TanStack Query).
+**Feed and reading**
+
+- Ingests ArXiv, Semantic Scholar, Papers With Code, RSS, Substack, LessWrong and scraped lab blogs.
+- Ranks items on citations, engagement, sentiment, recency and source authority, with a personal **For you** order learned from your reactions and saves.
+- Citation momentum (Rising fast), topic clusters, AI summaries and Q&A on any paper.
+- Reading lists, read marks, notes and highlights.
+
+**Search and writing**
+
+- Hybrid search (Postgres full text + vectors) over your library, with live Semantic Scholar results.
+- Literature reviews grounded in a map or in search results; export reviews and reading lists.
+
+**Ready for a team**
+
+- Accounts with admin and user roles; the admin creates accounts (no public sign-up).
+- Per-user daily limits, a monthly budget and token caps, with usage tracked per feature.
+- Runs fully local (Qwen3.5-9B + Qwen3-Embedding-8B on an 8 GB GPU), or point it at any OpenAI-compatible API from Settings.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/map.webp" alt="Lineage map" /><br /><sub><b>Lineage map</b>: a paper's thread, citations per year and milestone score</sub></td>
+    <td width="50%"><img src="docs/screenshots/path.webp" alt="Reading path" /><br /><sub><b>Reading path</b>: learn diffusion models in 10 papers</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/gaps.webp" alt="Open problems" /><br /><sub><b>Open problems</b>: stated limitations grouped into themes</sub></td>
+    <td><img src="docs/screenshots/ideas.webp" alt="Idea check" /><br /><sub><b>Check an idea</b>: closest prior work and what would be new</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/feed.webp" alt="Feed with paper panel" /><br /><sub><b>Feed</b>: ranked items, with summary, momentum, notes and Q&A</sub></td>
+    <td><img src="docs/screenshots/search.webp" alt="Search" /><br /><sub><b>Search</b>: exact matches first, then by meaning</sub></td>
+  </tr>
+</table>
 
 ## Quick start
 
-**Prerequisites:** Docker, a `.env` file (copy `.env.example`), and for the AI features [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` with the two GGUF models in `models/` (see `config/llama-router.ini`). The router needs about 7 GB of GPU memory; it holds one model at a time and swaps them on demand.
-
-Athena ships two launchers:
-
-### `./run_docker.sh` — full stack in Docker
-
-Runs everything (Postgres, Redis, Qdrant, GROBID, API, the crawl, summary and research-evolution workers, frontend) via Docker Compose. Best for a production-like run. The model server is not containerised: it needs the GPU, so start it on the host (see Configuration).
+**Prerequisites:** Docker, and for the AI features [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` with the two GGUF models in `models/` (see `config/llama-router.ini`; about 7 GB of GPU memory). Any OpenAI-compatible API works instead.
 
 ```bash
 cp .env.example .env
-./run_docker.sh               # start with pre-built GHCR images
-./run_docker.sh --build       # build images locally instead
-./run_docker.sh --logs        # follow worker logs after starting
-./run_docker.sh --down        # stop & remove the stack
+
+# Full stack in Docker (pre-built images from GHCR; --build to build locally, --down to stop)
+./run_docker.sh
+
+# Or native dev: infra in Docker, API / workers / frontend / model server on the host, with hot reload
+pip install -r requirements.txt && playwright install chromium
+./run_native.sh                # --stop to stop
 ```
 
-### `./run_native.sh` — native dev
+Open http://localhost:5173 and create the admin account. There is no public sign-up: the admin adds people in **Settings → Users**. The API and its docs are at http://localhost:8000/docs.
 
-Runs infra (Postgres, Redis, Qdrant) in Docker and the API, Celery worker, and frontend as local host processes — best for development (hot reload, fast iteration).
-
-```bash
-pip install -r requirements.txt && playwright install chromium   # one-time
-cp .env.example .env
-./run_native.sh               # start infra + app processes
-./run_native.sh --stop        # stop everything
-```
-
-Needs `python3`, `uvicorn`, `celery`, `npm` on `PATH`; logs land in `${TMPDIR:-/tmp}/athena-local/`.
-
-Once up — Frontend http://localhost:5173 · API http://localhost:8000 (`/docs`).
-
-The first visit asks you to create the admin account. There is no public sign-up: the admin adds people in Settings → Users and passes on a temporary password, which they replace at their first login. Users can read everything, keep their own saved lists, ask questions and build research maps within a daily allowance (`LIMIT_*_PER_DAY`); admins also manage sources, models, users and maps.
-
-| Service | Port |
-|---|---|
-| Frontend (Vite) | 5173 |
-| FastAPI | 8000 |
-| PostgreSQL | 5432 |
-| Redis | 6379 |
-| Qdrant | 6333 |
-
-## Configuration
-
-All configuration is via environment variables (`athena/api/config.py`, Pydantic settings). Copy `.env.example` → `.env`. `DATABASE_URL`, `REDIS_URL`, and `QDRANT_URL` default to the Compose service addresses. Model endpoints (`LLM_*`, `EMBED_*`, see `athena/core/llm.py`) default to the local router and can also be changed in Settings → Models and keys.
-
-The model server is started by `./run_native.sh`, or by hand from the repo root:
+With Docker, start the model server on the host (it needs the GPU); the containers reach it at `host.docker.internal:8080`:
 
 ```bash
 llama-server --models-preset config/llama-router.ini --models-max 1 --port 8080
 ```
 
-With Docker, the containers reach it on the host at `host.docker.internal:8080`. The `summary` and `evolution` services take one job at a time, because the model server answers one request at a time.
+## Configuration
+
+Everything is set through environment variables (`.env`, read by `athena/api/config.py`). The important ones:
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL`, `REDIS_URL`, `QDRANT_URL` | Services; default to the Compose addresses |
+| `LLM_*`, `EMBED_*` | Chat and embedding endpoints (also editable in **Settings → Models and keys**) |
+| `SEMANTIC_SCHOLAR_API_KEY` | Optional; higher rate limits for maps, momentum and search |
+| `LIMIT_*_PER_DAY`, `MONTHLY_BUDGET_USD`, `USER_MONTHLY_TOKENS` | Per-user allowances and spending caps |
+| `DOCS_USERNAME`, `DOCS_PASSWORD` | Optional Basic Auth on `/docs` |
+
+See `.env.example` for the full list.
+
+## Architecture
+
+Two Celery pipelines, one for the feed and one for the research maps, write to PostgreSQL and Qdrant. FastAPI serves both to the React app, and the workers and the API share one OpenAI-compatible model server.
+
+<img src="diagrams/architecture.svg" alt="Athena architecture: sources, the feed and research-map pipelines, storage, the API and the model server" width="100%" />
+
+| Path | What it holds |
+|---|---|
+| `athena/scrapers/` | Source collectors (ArXiv, RSS, Substack, Playwright, …) |
+| `athena/pipeline/` | Celery workers: embedding, scoring, clustering, summaries, momentum |
+| `athena/evolution/` | Research maps: topic search, citation graph, milestones, gaps, full text, reviews |
+| `athena/api/` | FastAPI app, routers and auth |
+| `frontend/` | React 19 + TypeScript + Vite (TanStack Query, Zustand, three.js) |
+| `docker/` | Dockerfiles and Compose files; images publish to GHCR on push to `main` |
 
 ## Development
 
 ```bash
-# Backend tests (SQLite — no live services required)
-DATABASE_URL="sqlite:///test.db" REDIS_URL="redis://localhost:6379/0" \
-  QDRANT_URL="http://localhost:6333" \
-  pytest tests/test_scoring.py tests/test_preprocessing.py tests/test_connectors.py -v
-
-# Lint (max line length 120)
+DATABASE_URL="sqlite:///test.db" pytest tests/test_scoring.py tests/test_preprocessing.py tests/test_connectors.py -v
 flake8 . --max-line-length=120 --exclude=".venv,venv,frontend/node_modules"
-
-# Frontend
-cd frontend && npm install && npm run dev
-```
-
-CI (`ci.yml`) runs flake8 + pytest on every push to `main`/`develop`; CD (`cd.yml`) builds and publishes the API, worker, and frontend images to GHCR on push to `main`.
-
-## Project layout
-
-```
-athena/
-  scrapers/    source collectors (ArXiv, RSS, Substack, Playwright, …)
-  database/    SQLAlchemy engine + all SQL operations
-  pipeline/    Celery workers — embedding, scoring, clustering, summarisation
-  api/         FastAPI app + routers
-  core/        models & schemas
-frontend/      React 19 + TypeScript + Vite
-docker/        Dockerfiles + compose files
-scripts/       setup, crawl, backfill, maintenance
+cd frontend && npm run lint && npm run build
 ```
 
 ## Contributing
 
-Branch from `main` → [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`) → open a PR against `main`. CI must pass.
+Branch from `main`, use [Conventional Commits](https://www.conventionalcommits.org/), and open a PR against `main`; CI must pass. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
