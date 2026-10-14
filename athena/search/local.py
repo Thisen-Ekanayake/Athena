@@ -15,6 +15,7 @@ from sqlalchemy import select
 from athena.core import llm
 from athena.core.models import ContentItem
 from athena.database.db import SessionLocal
+from athena.search import hybrid
 from athena.pipeline.embedding_worker import (
     COLLECTION_NAME,
     QDRANT_URL,
@@ -54,47 +55,27 @@ def _item_to_dict(item: ContentItem, score: float) -> dict:
 
 
 def search_local(query: str, limit: int = 20) -> list[dict]:
-    """Run a semantic search against ingested content.
+    """Keyword plus meaning search against ingested content (athena.search.hybrid).
 
-    Returns up to ``limit`` papers ordered by cosine similarity. On any
-    failure (model server or Qdrant down, etc.) returns an empty list
-    so the caller can still serve live results.
+    Returns up to ``limit`` items, exact title matches first. With the model server or Qdrant down it answers
+    from keywords alone, and on any other failure it returns an empty list so the caller can still serve live
+    results.
     """
     if not query or not query.strip():
         return []
 
-    try:
-        vector = embed_query(query)
-    except Exception as exc:
-        logger.warning(f"search_local: embedding failed — {exc}")
-        return []
+    def semantic(q: str, n: int, category: str | None) -> list[dict]:
+        hits = _qdrant_search(embed_query(q), limit=n)
+        return [{"id": UUID(hit_id), "similarity": score} for hit_id, score in hits]
 
     try:
-        hits = _qdrant_search(vector, limit=limit)
+        with SessionLocal() as db:
+            results, _ = hybrid.search(db, query, limit, None, semantic)
+            rows = {row.id: row for row in db.execute(
+                select(ContentItem).where(ContentItem.id.in_([r["id"] for r in results]))).scalars()} \
+                if results else {}
+            return [_item_to_dict(rows[r["id"]], r["similarity"] if r["similarity"] is not None else 0.0)
+                    for r in results if r["id"] in rows]
     except Exception as exc:
-        logger.warning(f"search_local: Qdrant query failed — {exc}")
+        logger.warning(f"search_local: search failed — {exc}")
         return []
-
-    if not hits:
-        return []
-
-    id_values: list = []
-    for hit_id, _ in hits:
-        try:
-            id_values.append(UUID(hit_id))
-        except (ValueError, TypeError):
-            id_values.append(hit_id)
-
-    with SessionLocal() as db:
-        rows = db.execute(
-            select(ContentItem).where(ContentItem.id.in_(id_values))
-        ).scalars().all()
-
-    by_id = {str(row.id): row for row in rows}
-    results: list[dict] = []
-    for hit_id, score in hits:
-        row = by_id.get(hit_id)
-        if row is None:
-            continue
-        results.append(_item_to_dict(row, score))
-    return results
