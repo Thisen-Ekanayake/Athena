@@ -1,0 +1,185 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1680 850" width="1680" height="850" font-family="Inter, 'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" role="img" aria-labelledby="t">
+<title id="t">Athena system architecture: sources feed two Celery pipelines (the feed and the research maps), which write to PostgreSQL, Qdrant and Redis; FastAPI serves them to the React app; workers and the API call one OpenAI-compatible model server.</title>
+<defs>
+<marker id="a-gray" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#767168"/></marker>
+<marker id="a-gray-s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#767168"/></marker>
+<marker id="a-gold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d6ae5f"/></marker>
+<marker id="a-gold-s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d6ae5f"/></marker>
+<marker id="a-indigo" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8e8ef6"/></marker>
+<marker id="a-indigo-s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8e8ef6"/></marker>
+</defs>
+<rect x="0.5" y="0.5" width="1679" height="849" rx="18" fill="#0c0d10" stroke="#25262c" stroke-width="1"/>
+<text x="32" y="58" font-size="11.5" fill="#767168" font-weight="600" text-anchor="start" letter-spacing="1.4">SOURCES</text>
+<text x="322" y="58" font-size="11.5" fill="#767168" font-weight="600" text-anchor="start" letter-spacing="1.4">CELERY WORKERS · BEAT SCHEDULE</text>
+<text x="1072" y="58" font-size="11.5" fill="#767168" font-weight="600" text-anchor="start" letter-spacing="1.4">STORAGE</text>
+<text x="1382" y="58" font-size="11.5" fill="#767168" font-weight="600" text-anchor="start" letter-spacing="1.4">SERVE</text>
+<rect x="320" y="80" width="700" height="260" rx="14" fill="#131418" stroke="#25262c" stroke-width="1"/>
+<circle cx="346" cy="110" r="4.5" fill="#8e8ef6"/>
+<text x="360" y="115" font-size="16" fill="#edeae4" font-weight="600" text-anchor="start">Feed pipeline</text>
+<text x="1000" y="115" font-size="12" fill="#767168" font-weight="400" text-anchor="end">worker + summary workers</text>
+<rect x="340" y="142" width="120" height="60" rx="9" fill="#212228" stroke="#8e8ef6" stroke-width="0.8"/>
+<text x="400.0" y="169" font-size="13" fill="#edeae4" font-weight="600" text-anchor="middle">Crawl</text>
+<text x="400.0" y="188" font-size="11.5" fill="#767168" font-weight="400" text-anchor="middle">every 6 h</text>
+<rect x="475" y="142" width="120" height="60" rx="9" fill="#212228" stroke="#8e8ef6" stroke-width="0.8"/>
+<text x="535.0" y="169" font-size="13" fill="#edeae4" font-weight="600" text-anchor="middle">Embed</text>
+<text x="535.0" y="188" font-size="11.5" fill="#767168" font-weight="400" text-anchor="middle">every minute</text>
+<line x1="461" y1="172" x2="474" y2="172" stroke="#8e8ef6" stroke-width="1.4" marker-end="url(#a-indigo)"/>
+<rect x="610" y="142" width="120" height="60" rx="9" fill="#212228" stroke="#8e8ef6" stroke-width="0.8"/>
+<text x="670.0" y="169" font-size="13" fill="#edeae4" font-weight="600" text-anchor="middle">Score</text>
+<text x="670.0" y="188" font-size="11.5" fill="#767168" font-weight="400" text-anchor="middle">5 signals</text>
+<line x1="596" y1="172" x2="609" y2="172" stroke="#8e8ef6" stroke-width="1.4" marker-end="url(#a-indigo)"/>
+<rect x="745" y="142" width="120" height="60" rx="9" fill="#212228" stroke="#8e8ef6" stroke-width="0.8"/>
+<text x="805.0" y="169" font-size="13" fill="#edeae4" font-weight="600" text-anchor="middle">Cluster</text>
+<text x="805.0" y="188" font-size="11.5" fill="#767168" font-weight="400" text-anchor="middle">UMAP · HDBSCAN</text>
+<line x1="731" y1="172" x2="744" y2="172" stroke="#8e8ef6" stroke-width="1.4" marker-end="url(#a-indigo)"/>
+<rect x="880" y="142" width="120" height="60" rx="9" fill="#212228" stroke="#8e8ef6" stroke-width="0.8"/>
+<text x="940.0" y="169" font-size="13" fill="#edeae4" font-weight="600" text-anchor="middle">Summarise</text>
+<text x="940.0" y="188" font-size="11.5" fill="#767168" font-weight="400" text-anchor="middle">hourly, best first</text>
+<line x1="866" y1="172" x2="879" y2="172" stroke="#8e8ef6" stroke-width="1.4" marker-end="url(#a-indigo)"/>
+<text x="342" y="242" font-size="10.5" fill="#767168" font-weight="600" text-anchor="start" letter-spacing="1.2">ALSO ON THE SCHEDULE</text>
+<rect x="340" y="254" width="210" height="56" rx="9" fill="#1a1b20" stroke="#25262c" stroke-width="1"/>
+<text x="354" y="278" font-size="13" fill="#edeae4" font-weight="600" text-anchor="start">Citation momentum</text>
+<text x="354" y="297" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">daily · Semantic Scholar</text>
+<rect x="565" y="254" width="210" height="56" rx="9" fill="#1a1b20" stroke="#25262c" stroke-width="1"/>
+<text x="579" y="278" font-size="13" fill="#edeae4" font-weight="600" text-anchor="start">Follows and digests</text>
+<text x="579" y="297" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">hourly · in-app inbox</text>
+<rect x="790" y="254" width="210" height="56" rx="9" fill="#1a1b20" stroke="#25262c" stroke-width="1"/>
+<text x="804" y="278" font-size="13" fill="#edeae4" font-weight="600" text-anchor="start">Feed ↔ map links</text>
+<text x="804" y="297" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">every 6 h</text>
+<rect x="320" y="370" width="700" height="260" rx="14" fill="#131418" stroke="#25262c" stroke-width="1"/>
+<circle cx="346" cy="400" r="4.5" fill="#d6ae5f"/>
+<text x="360" y="405" font-size="16" fill="#edeae4" font-weight="600" text-anchor="start">Research maps</text>
+<text x="1000" y="405" font-size="12" fill="#767168" font-weight="400" text-anchor="end">evolution worker · one job at a time</text>
+<rect x="340" y="432" width="120" height="60" rx="9" fill="#212228" stroke="#d6ae5f" stroke-width="0.8"/>
+<text x="400.0" y="459" font-size="13" fill="#edeae4" font-weight="600" text-anchor="middle">Propose</text>
+<text x="400.0" y="478" font-size="11.5" fill="#767168" font-weight="400" text-anchor="middle">from any query</text>
+<rect x="475" y="432" width="120" height="60" rx="9" fill="#212228" stroke="#d6ae5f" stroke-width="0.8"/>
+<text x="535.0" y="459" font-size="13" fill="#edeae4" font-weight="600" text-anchor="middle">Corpus</text>
+<text x="535.0" y="478" font-size="11.5" fill="#767168" font-weight="400" text-anchor="middle">citation graph</text>
+<line x1="461" y1="462" x2="474" y2="462" stroke="#d6ae5f" stroke-width="1.4" marker-end="url(#a-gold)"/>
+<rect x="610" y="432" width="120" height="60" rx="9" fill="#212228" stroke="#d6ae5f" stroke-width="0.8"/>
+<text x="670.0" y="459" font-size="13" fill="#edeae4" font-weight="600" text-anchor="middle">Full text</text>
+<text x="670.0" y="478" font-size="11.5" fill="#767168" font-weight="400" text-anchor="middle">GROBID sections</text>
+<line x1="596" y1="462" x2="609" y2="462" stroke="#d6ae5f" stroke-width="1.4" marker-end="url(#a-gold)"/>
+<rect x="745" y="432" width="120" height="60" rx="9" fill="#212228" stroke="#d6ae5f" stroke-width="0.8"/>
+<text x="805.0" y="459" font-size="13" fill="#edeae4" font-weight="600" text-anchor="middle">Milestones</text>
+<text x="805.0" y="478" font-size="11.5" fill="#767168" font-weight="400" text-anchor="middle">reading path</text>
+<line x1="731" y1="462" x2="744" y2="462" stroke="#d6ae5f" stroke-width="1.4" marker-end="url(#a-gold)"/>
+<rect x="880" y="432" width="120" height="60" rx="9" fill="#212228" stroke="#d6ae5f" stroke-width="0.8"/>
+<text x="940.0" y="459" font-size="13" fill="#edeae4" font-weight="600" text-anchor="middle">Open problems</text>
+<text x="940.0" y="478" font-size="11.5" fill="#767168" font-weight="400" text-anchor="middle">gap themes</text>
+<line x1="866" y1="462" x2="879" y2="462" stroke="#d6ae5f" stroke-width="1.4" marker-end="url(#a-gold)"/>
+<text x="342" y="532" font-size="10.5" fill="#767168" font-weight="600" text-anchor="start" letter-spacing="1.2">ALSO IN EVERY MAP</text>
+<rect x="340" y="544" width="210" height="56" rx="9" fill="#1a1b20" stroke="#25262c" stroke-width="1"/>
+<text x="354" y="568" font-size="13" fill="#edeae4" font-weight="600" text-anchor="start">Strict links</text>
+<text x="354" y="587" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">evidence from citing text</text>
+<rect x="565" y="544" width="210" height="56" rx="9" fill="#1a1b20" stroke="#25262c" stroke-width="1"/>
+<text x="579" y="568" font-size="13" fill="#edeae4" font-weight="600" text-anchor="start">People and methods</text>
+<text x="579" y="587" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">authors · named methods</text>
+<rect x="790" y="544" width="210" height="56" rx="9" fill="#1a1b20" stroke="#25262c" stroke-width="1"/>
+<text x="804" y="568" font-size="13" fill="#edeae4" font-weight="600" text-anchor="start">Nightly refresh</text>
+<text x="804" y="587" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">changelog → inbox</text>
+<rect x="30" y="80" width="245" height="260" rx="14" fill="#131418" stroke="#25262c" stroke-width="1"/>
+<text x="50" y="115" font-size="16" fill="#edeae4" font-weight="600" text-anchor="start">Feed sources</text>
+<circle cx="54" cy="146" r="2.5" fill="#8e8ef6"/>
+<text x="66" y="150" font-size="13" fill="#a8a297" font-weight="400" text-anchor="start">ArXiv</text>
+<circle cx="54" cy="176" r="2.5" fill="#8e8ef6"/>
+<text x="66" y="180" font-size="13" fill="#a8a297" font-weight="400" text-anchor="start">Semantic Scholar</text>
+<circle cx="54" cy="206" r="2.5" fill="#8e8ef6"/>
+<text x="66" y="210" font-size="13" fill="#a8a297" font-weight="400" text-anchor="start">Papers With Code</text>
+<circle cx="54" cy="236" r="2.5" fill="#8e8ef6"/>
+<text x="66" y="240" font-size="13" fill="#a8a297" font-weight="400" text-anchor="start">RSS feeds</text>
+<circle cx="54" cy="266" r="2.5" fill="#8e8ef6"/>
+<text x="66" y="270" font-size="13" fill="#a8a297" font-weight="400" text-anchor="start">Substack · LessWrong</text>
+<circle cx="54" cy="296" r="2.5" fill="#8e8ef6"/>
+<text x="66" y="300" font-size="13" fill="#a8a297" font-weight="400" text-anchor="start">Lab blogs (Playwright)</text>
+<rect x="30" y="370" width="245" height="260" rx="14" fill="#131418" stroke="#25262c" stroke-width="1"/>
+<text x="50" y="405" font-size="16" fill="#edeae4" font-weight="600" text-anchor="start">Map sources</text>
+<circle cx="54" cy="438" r="2.5" fill="#d6ae5f"/>
+<text x="66" y="442" font-size="13" fill="#a8a297" font-weight="400" text-anchor="start">OpenAlex</text>
+<text x="66" y="461" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">topics · works · citations by year</text>
+<circle cx="54" cy="494" r="2.5" fill="#d6ae5f"/>
+<text x="66" y="498" font-size="13" fill="#a8a297" font-weight="400" text-anchor="start">Semantic Scholar</text>
+<text x="66" y="517" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">references · citing sentences</text>
+<circle cx="54" cy="550" r="2.5" fill="#d6ae5f"/>
+<text x="66" y="554" font-size="13" fill="#a8a297" font-weight="400" text-anchor="start">Open-access PDFs</text>
+<text x="66" y="573" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">parsed by GROBID</text>
+<line x1="277" y1="172" x2="317" y2="172" stroke="#8e8ef6" stroke-width="1.5" marker-end="url(#a-indigo)"/>
+<line x1="277" y1="462" x2="317" y2="462" stroke="#d6ae5f" stroke-width="1.5" marker-end="url(#a-gold)"/>
+<rect x="1070" y="80" width="260" height="550" rx="14" fill="#131418" stroke="#25262c" stroke-width="1"/>
+<path d="M1088,109 L1088,255 A112.0,11 0 0 0 1312,255 L1312,109" fill="#1a1b20" stroke="#35363d"/>
+<ellipse cx="1200.0" cy="109" rx="112.0" ry="11" fill="#212228" stroke="#35363d"/>
+<text x="1106" y="144" font-size="15" fill="#edeae4" font-weight="600" text-anchor="start">PostgreSQL</text>
+<text x="1106" y="163" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">source of truth</text>
+<text x="1106" y="188" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">items · scores · clusters</text>
+<text x="1106" y="207" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">maps · gaps · reading paths</text>
+<text x="1106" y="226" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">users · lists · notes · inbox</text>
+<text x="1106" y="245" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">usage · full-text search</text>
+<path d="M1088,291 L1088,437 A112.0,11 0 0 0 1312,437 L1312,291" fill="#1a1b20" stroke="#35363d"/>
+<ellipse cx="1200.0" cy="291" rx="112.0" ry="11" fill="#212228" stroke="#35363d"/>
+<text x="1106" y="326" font-size="15" fill="#edeae4" font-weight="600" text-anchor="start">Qdrant</text>
+<text x="1106" y="345" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">1024-d vectors</text>
+<text x="1106" y="370" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">feed items</text>
+<text x="1106" y="389" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">paper abstracts</text>
+<text x="1106" y="408" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">gap statements</text>
+<text x="1106" y="427" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">full-text chunks</text>
+<path d="M1088,473 L1088,601 A112.0,11 0 0 0 1312,601 L1312,473" fill="#1a1b20" stroke="#35363d"/>
+<ellipse cx="1200.0" cy="473" rx="112.0" ry="11" fill="#212228" stroke="#35363d"/>
+<text x="1106" y="508" font-size="15" fill="#edeae4" font-weight="600" text-anchor="start">Redis</text>
+<text x="1106" y="527" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">queues · limits · cache</text>
+<text x="1106" y="552" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">Celery broker</text>
+<text x="1106" y="571" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">per-user daily limits</text>
+<text x="1106" y="590" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">Semantic Scholar turn-taking</text>
+<line x1="1022" y1="172" x2="1067" y2="172" stroke="#8e8ef6" stroke-width="1.5" marker-end="url(#a-indigo)"/>
+<line x1="1022" y1="462" x2="1067" y2="462" stroke="#d6ae5f" stroke-width="1.5" marker-end="url(#a-gold)"/>
+<rect x="1380" y="80" width="270" height="380" rx="14" fill="#131418" stroke="#25262c" stroke-width="1"/>
+<text x="1400" y="115" font-size="16" fill="#edeae4" font-weight="600" text-anchor="start">FastAPI</text>
+<text x="1400" y="136" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">/api/v1 · session cookie · roles</text>
+<rect x="1394" y="156" width="242" height="30" rx="7" fill="#1a1b20" stroke="#25262c" stroke-width="1"/>
+<text x="1406" y="176" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">Feed · For you · trending</text>
+<rect x="1394" y="194" width="242" height="30" rx="7" fill="#1a1b20" stroke="#25262c" stroke-width="1"/>
+<text x="1406" y="214" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">Hybrid search · Semantic Scholar</text>
+<rect x="1394" y="232" width="242" height="30" rx="7" fill="#1a1b20" stroke="#25262c" stroke-width="1"/>
+<text x="1406" y="252" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">Maps · ask a map · idea check</text>
+<rect x="1394" y="270" width="242" height="30" rx="7" fill="#1a1b20" stroke="#25262c" stroke-width="1"/>
+<text x="1406" y="290" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">Paper Q&amp;A · literature reviews</text>
+<rect x="1394" y="308" width="242" height="30" rx="7" fill="#1a1b20" stroke="#25262c" stroke-width="1"/>
+<text x="1406" y="328" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">Library · notes · export</text>
+<rect x="1394" y="346" width="242" height="30" rx="7" fill="#1a1b20" stroke="#25262c" stroke-width="1"/>
+<text x="1406" y="366" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">Inbox · share links</text>
+<rect x="1394" y="384" width="242" height="30" rx="7" fill="#1a1b20" stroke="#25262c" stroke-width="1"/>
+<text x="1406" y="404" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">Accounts · daily limits · budget</text>
+<rect x="1380" y="500" width="270" height="130" rx="14" fill="#131418" stroke="#25262c" stroke-width="1"/>
+<text x="1400" y="535" font-size="16" fill="#edeae4" font-weight="600" text-anchor="start">React app</text>
+<text x="1400" y="562" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">React 19 · TypeScript · Vite</text>
+<text x="1400" y="583" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">TanStack Query · Zustand</text>
+<text x="1400" y="604" font-size="12.5" fill="#a8a297" font-weight="400" text-anchor="start">three.js · lineage maps</text>
+<line x1="1333" y1="172" x2="1377" y2="172" stroke="#767168" stroke-width="1.5" marker-end="url(#a-gray)" marker-start="url(#a-gray-s)"/>
+<line x1="1515.0" y1="463" x2="1515.0" y2="497" stroke="#767168" stroke-width="1.5" marker-end="url(#a-gray)" marker-start="url(#a-gray-s)"/>
+<text x="1525.0" y="485" font-size="10.5" fill="#767168" font-weight="400" text-anchor="start">JSON over HTTP</text>
+<rect x="320" y="680" width="1330" height="96" rx="14" fill="#131418" stroke="#35363d" stroke-width="1" stroke-dasharray="5 4"/>
+<text x="342" y="720" font-size="16" fill="#edeae4" font-weight="600" text-anchor="start">Model server</text>
+<text x="342" y="742" font-size="12" fill="#767168" font-weight="400" text-anchor="start">llama-server router · one model on an 8 GB GPU</text>
+<rect x="680" y="698" width="225" height="60" rx="9" fill="#1a1b20" stroke="#35363d" stroke-width="1"/>
+<text x="696" y="723" font-size="13" fill="#edeae4" font-weight="600" text-anchor="start">Qwen3.5-9B</text>
+<text x="696" y="742" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">chat · summaries · labels</text>
+<rect x="920" y="698" width="225" height="60" rx="9" fill="#1a1b20" stroke="#35363d" stroke-width="1"/>
+<text x="936" y="723" font-size="13" fill="#edeae4" font-weight="600" text-anchor="start">Qwen3-Embedding-8B</text>
+<text x="936" y="742" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">embeddings</text>
+<rect x="1160" y="698" width="225" height="60" rx="9" fill="#1a1b20" stroke="#35363d" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="1176" y="723" font-size="13" fill="#edeae4" font-weight="600" text-anchor="start">Any OpenAI-compatible API</text>
+<text x="1176" y="742" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">swap in Settings</text>
+<text x="1628" y="723" font-size="12" fill="#a8a297" font-weight="400" text-anchor="end">Every call counted</text>
+<text x="1628" y="742" font-size="12" fill="#a8a297" font-weight="400" text-anchor="end">per user and feature</text>
+<line x1="500" y1="633" x2="500" y2="677" stroke="#767168" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#a-gray)"/>
+<text x="512" y="660" font-size="10.5" fill="#767168" font-weight="400" text-anchor="start">chat + embeddings</text>
+<path d="M1378,420 H1355 V677" fill="none" stroke="#767168" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#a-gray)"/>
+<line x1="320" y1="824" x2="354" y2="824" stroke="#767168" stroke-width="1.5" marker-end="url(#a-gray)"/>
+<text x="364" y="828" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">data</text>
+<line x1="410" y1="824" x2="444" y2="824" stroke="#767168" stroke-width="1.5" stroke-dasharray="4 4" marker-end="url(#a-gray)"/>
+<text x="454" y="828" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">model calls</text>
+<circle cx="552" cy="824" r="4" fill="#8e8ef6"/>
+<text x="562" y="828" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">feed</text>
+<circle cx="610" cy="824" r="4" fill="#d6ae5f"/>
+<text x="620" y="828" font-size="11.5" fill="#767168" font-weight="400" text-anchor="start">research maps</text>
+</svg>
