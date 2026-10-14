@@ -93,9 +93,9 @@ def _map_for(session: Session, body: ReviewRequest) -> EvoTopic | None:
 @router.post("/reviews", status_code=202)
 def start_review(body: ReviewRequest, session: Session = Depends(get_db), r: redis_lib.Redis = Depends(get_redis),
                  user: User = Depends(auth.active_user)):
+    topic = _map_for(session, body)
     if reviews.active(session, user.id) is not None:
         raise HTTPException(status_code=409, detail="A review of yours is still being written; wait for it to finish")
-    topic = _map_for(session, body)
     auth.use(r, user, "lit_review")
     review = LitReview(user_id=user.id, topic_id=topic.id if topic else None, query=body.query,
                        title=f"{topic.name if topic else body.query}: a literature review",
