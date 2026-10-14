@@ -7,6 +7,7 @@ import { Spinner } from '../../ui/Spinner'
 import { cn } from '../../ui/cn'
 import { Highlightable } from '../reading/Highlightable'
 import { NotesSection } from '../reading/NotesSection'
+import { YearBars } from '../momentum/YearBars'
 import { useMapScope, usePaperDetail, useSetMilestone, type EvolutionNode, type LooseMatch, type PaperGap, type StrictLink } from './api'
 
 interface PaperPanelProps {
@@ -134,6 +135,13 @@ export function PaperPanel({ slug, paperId, onSelect, onClose }: PaperPanelProps
         <section className="flex flex-col gap-2">
           <h4 className="text-[11px] font-medium tracking-[0.08em] text-fg-3 uppercase">Your notes</h4>
           <NotesSection key={paper.id} kind="paper" id={paper.id} me={me.data} />
+        </section>
+      )}
+
+      {!!paper.citations_by_year?.length && (
+        <section className="flex flex-col gap-2">
+          <h4 className="text-[11px] font-medium tracking-[0.08em] text-fg-3 uppercase">Citations per year · OpenAlex</h4>
+          <YearBars years={paper.citations_by_year} label={`Citations of ${paper.title} per year, from OpenAlex`} />
         </section>
       )}
 

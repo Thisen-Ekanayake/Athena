@@ -134,6 +134,32 @@ export interface EvolutionPaperDetail extends EvolutionNode {
   full_text: { status?: 'parsed' | 'failed' | 's2_contexts'; sections?: number; contexts?: number; error?: string }
   gaps: PaperGap[]
   loose_matches: LooseMatch[]
+  /** OpenAlex's citations per calendar year, oldest first; empty until fetched */
+  citations_by_year?: YearCount[]
+}
+
+export interface YearCount {
+  year: number
+  citations: number
+  /** The current year, still running */
+  partial: boolean
+}
+
+export interface RisingPaper extends EvolutionNode {
+  last_12_months: number
+  previous_12_months: number
+  ratio: number
+  citations_by_year: YearCount[]
+}
+
+/** The map's papers gaining citations fastest (last twelve months against the twelve before). */
+export const useTopicRising = (slug: string, limit = 10) => {
+  const scope = useMapScope()
+  return useQuery({
+    queryKey: [scope.key, 'rising', slug, limit],
+    queryFn: async () => (await apiClient.get<{ papers: RisingPaper[] }>(`${scope.base(slug)}/rising`, { params: { limit } })).data.papers,
+    staleTime: 10 * 60 * 1000,
+  })
 }
 
 export interface PaperGap {

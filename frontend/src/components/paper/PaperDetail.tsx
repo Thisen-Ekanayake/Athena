@@ -16,6 +16,7 @@ import { NotesSection } from '../../features/reading/NotesSection'
 import { CATEGORY_LABELS, timeAgo } from '../items/format'
 import { ReactionButtons, ReadToggle } from '../items/ItemActions'
 import { ScoreBadge } from '../items/ScoreBadge'
+import { CitationMomentum } from '../../features/momentum/CitationMomentum'
 import { AskPaper } from './AskPaper'
 import { PlaceInEvolution } from './PlaceInEvolution'
 import { ScoreBreakdown } from './ScoreBreakdown'
@@ -128,6 +129,12 @@ export function PaperDetail({ itemId, initial, layout }: { itemId: string; initi
           </div>
         )}
       </Section>
+
+      {item.category === 'paper' && (
+        <Section title="Citations">
+          <CitationMomentum itemId={item.id} title={item.title} />
+        </Section>
+      )}
 
       <Section title="Your notes">
         {me.data ? <NotesSection key={item.id} kind="item" id={item.id} me={me.data} /> : <Spinner />}

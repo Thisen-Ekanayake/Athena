@@ -7,6 +7,7 @@ import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
 import { Notice } from '../../ui/Notice'
 import { Spinner } from '../../ui/Spinner'
+import { RisingInMap } from './RisingInMap'
 import {
   useMapScope,
   useReadFullText,
@@ -46,6 +47,7 @@ export function ChangesView({ slug, busy, onSelect }: ChangesViewProps) {
           {data.refresh_days > 0 ? `This map is refreshed every ${data.refresh_days} days: new papers, new full text and new gaps.` : 'This map is not refreshed on a schedule.'}
         </p>
       )}
+      <RisingInMap slug={slug} onSelect={onSelect} />
       {data.snapshots.length === 0 ? (
         <Notice title="No changes recorded yet">The first build or refresh records the map’s state; later ones list what changed.</Notice>
       ) : (

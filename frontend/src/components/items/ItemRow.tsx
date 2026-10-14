@@ -1,4 +1,4 @@
-import { Flame, GitBranch, Heart, NotebookPen } from 'lucide-react'
+import { Flame, GitBranch, Heart, NotebookPen, TrendingUp } from 'lucide-react'
 import type { FeedItem } from '../../api/client'
 import { usePanelStore } from '../../store/panelStore'
 import { Chip } from '../../ui/Chip'
@@ -43,6 +43,11 @@ export function ItemRow({ item, showSummary = true, collapseHidden = true }: { i
           {!!item.milestones_cited && (
             <span title="Cites milestones of your evolution maps; open it to see which">
               <Chip><GitBranch aria-hidden="true" />Cites {item.milestones_cited} {item.milestones_cited === 1 ? 'milestone' : 'milestones'}</Chip>
+            </span>
+          )}
+          {!!item.citation_gain_7d && item.citation_gain_7d > 0 && (
+            <span title="Citations gained in the last 7 days (Semantic Scholar)">
+              <Chip><TrendingUp aria-hidden="true" />+{item.citation_gain_7d} {item.citation_gain_7d === 1 ? 'cite' : 'cites'} this week</Chip>
             </span>
           )}
           {item.interest != null && item.interest >= MATCH && (
