@@ -37,8 +37,9 @@ def test_fuse_puts_exact_titles_first_then_ranks_by_both_lists():
 
 
 def test_title_pattern_is_for_short_queries_and_escapes_punctuation():
-    assert hybrid.title_pattern("RT-DETR") == r"\mRT\-DETR\M"
-    assert hybrid.title_pattern("low rank  adaptation") == r"\mlow\s+rank\s+adaptation\M"
+    assert hybrid.title_pattern("RT-DETR") == r"\mRT[\s\-]+DETR\M"
+    assert hybrid.title_pattern("low rank  adaptation") == r"\mlow[\s\-]+rank[\s\-]+adaptation\M"
+    assert hybrid.title_pattern("GPT-4o (mini)") == r"\mGPT[\s\-]+4o[\s\-]+\(mini\)\M"
     assert hybrid.title_pattern("how do retrieval augmented models handle code") is None
 
 

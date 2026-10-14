@@ -52,11 +52,14 @@ def _category(category: str | None):
 
 
 def title_pattern(query: str) -> str | None:
-    """A Postgres regex for the query as a whole word or phrase in a title, or None for a long query."""
-    words = query.split()
-    if not words or len(words) > EXACT_MAX_WORDS:
+    """A Postgres regex for the query as a whole word or phrase in a title, or None for a long query. Hyphens and
+    spaces between words match each other ("retrieval-augmented generation", "Retrieval Augmented Generation")."""
+    if len(query.split()) > EXACT_MAX_WORDS:
         return None
-    return r"\m" + r"\s+".join(re.escape(w) for w in words) + r"\M"
+    words = [w for w in re.split(r"[\s\-]+", query.strip()) if w]
+    if not words:
+        return None
+    return r"\m" + r"[\s\-]+".join(re.escape(w) for w in words) + r"\M"
 
 
 def keyword_statement(query: str, limit: int, category: str | None, postgres: bool):
