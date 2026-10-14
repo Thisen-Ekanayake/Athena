@@ -347,13 +347,17 @@ def add_topic(s):
     s.execute(EvoTopic.__table__.insert().values(id=topic_id, slug="peft", name="PEFT", status="ready", aliases=None,
                                                  seeds=None, config=None, built_at=NOW))
     papers = []
-    for i, extra in enumerate([{"counts_by_year": {"2025": 10, "2026": 90}}, {"counts_by_year": {"2026": 20}},
-                               {"counts_by_year": {"2024": 500, "2025": 400, "2026": 100}}, {}]):
+    # The last one is background the corpus holds only because on-topic papers cite it: never "rising" here.
+    for i, (extra, relevance) in enumerate([({"counts_by_year": {"2025": 10, "2026": 90}}, 0.1),
+                                            ({"counts_by_year": {"2026": 20}}, 0.1),
+                                            ({"counts_by_year": {"2024": 500, "2025": 400, "2026": 100}}, 0.1),
+                                            ({}, 0.1),
+                                            ({"counts_by_year": {"2025": 10, "2026": 900}}, 0.0)]):
         pid = uuid4()
         s.execute(EvoPaper.__table__.insert().values(id=pid, openalex_id=f"W{i}", title=f"Paper {i}", year=2024,
                                                      authors=None, authorships=None, merged_ids=None, extra=extra))
         s.execute(EvoTopicPaper.__table__.insert().values(id=uuid4(), topic_id=topic_id, paper_id=pid,
-                                                          score_detail=None))
+                                                          score_detail={"relevance": relevance}))
         papers.append(pid)
     s.commit()
     return s.get(EvoTopic, topic_id), papers
@@ -382,8 +386,8 @@ def test_refresh_topic_years_fetches_only_what_is_due(Session):
                                             "counts_fetched_at": (NOW - timedelta(days=3)).isoformat()}
         s.commit()
         client = FakeOpenAlex()
-        assert map_momentum.refresh_topic_years(s, topic, client, now=NOW) == 3
-        assert sorted(client.asked[0]) == ["W0", "W2", "W3"]
+        assert map_momentum.refresh_topic_years(s, topic, client, now=NOW) == 4
+        assert sorted(client.asked[0]) == ["W0", "W2", "W3", "W4"]
         assert s.get(EvoPaper, papers[0]).extra["counts_by_year"] == {"2026": 95}
         missing = s.get(EvoPaper, papers[2]).extra  # OpenAlex didn't answer: keeps its counts, waits a month
         assert missing["counts_by_year"] == {"2024": 500, "2025": 400, "2026": 100}
