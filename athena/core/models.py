@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 from sqlalchemy import (
-    Column, String, DateTime, Integer, Float, Boolean, ARRAY,
+    Column, String, DateTime, Integer, Float, Boolean, ARRAY, JSON,
     Enum as SQLEnum, ForeignKey, Index, UniqueConstraint, func,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
@@ -990,8 +990,8 @@ class InterestProfile(Base):
 
     user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     enabled = Column(Boolean, nullable=False, default=True)   # "Personalise my feed"
-    positive = Column(ARRAY(Float), nullable=True)
-    negative = Column(ARRAY(Float), nullable=True)
+    positive = Column(ARRAY(Float).with_variant(JSON(), "sqlite"), nullable=True)  # JSON in the SQLite tests
+    negative = Column(ARRAY(Float).with_variant(JSON(), "sqlite"), nullable=True)
     n_positive = Column(Integer, nullable=False, default=0)
     n_negative = Column(Integer, nullable=False, default=0)
     embed_model = Column(String, nullable=True)      # the model that made the vectors; None: rebuild on next use

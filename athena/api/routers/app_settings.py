@@ -230,7 +230,7 @@ def update_scoring(body: ScoringUpdate, db: Session = Depends(get_db), r=Depends
 
     from athena.core.models import ContentCategory, ScoringConfig
     from athena.pipeline import interests
-    from athena.pipeline.scoring import BASE_SIGNALS, DEFAULT_WEIGHTS, _get_weights, score_all_items
+    from athena.pipeline.scoring import BASE_SIGNALS, DEFAULT_WEIGHTS, _get_weights
     unknown = set(body.categories) - set(DEFAULT_WEIGHTS)
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unknown categories: {', '.join(sorted(unknown))}")
@@ -261,8 +261,13 @@ def update_scoring(body: ScoringUpdate, db: Session = Depends(get_db), r=Depends
         interests.bump(r)
     if rescore:
         try:
-            score_all_items.delay()
+            _queue_rescore()
         except Exception as exc:  # no broker: the weights are saved; the 6-hourly refresh applies them
             logger.warning(f"Scoring: rescore not queued: {exc}")
             rescore = False
     return _scoring(db) | {"rescoring": rescore}
+
+
+def _queue_rescore() -> None:
+    from athena.pipeline.scoring import score_all_items
+    score_all_items.delay()
