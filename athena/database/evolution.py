@@ -1127,7 +1127,33 @@ def paper_detail(session: Session, topic: EvoTopic, paper_id: UUID) -> dict | No
         # Phase 3: gaps stated in its own text or by later papers, and later papers whose text matches them.
         "gaps": gaps,
         "loose_matches": list(best.values())[:8],
+        # OpenAlex's citations per year (athena.evolution.momentum); empty until fetched
+        "citations_by_year": _citations_by_year(p),
     }
+
+
+def _citations_by_year(p: EvoPaper) -> list[dict]:
+    from athena.evolution.momentum import by_year, counts_of
+    counts = counts_of(p)
+    return by_year(counts, datetime.now(timezone.utc)) if counts else []
+
+
+def topic_rising(session: Session, topic: EvoTopic, limit: int = 10, now: datetime | None = None) -> list[dict]:
+    """The map's papers gaining citations fastest: last twelve months against the twelve before (OpenAlex)."""
+    from athena.evolution.momentum import by_year, counts_of, rising_entry
+    now = now or datetime.now(timezone.utc)
+    rows = _topic_rows(session, topic.id)
+    found = []
+    for tp, p in rows:
+        counts = counts_of(p)
+        if counts and (entry := rising_entry(counts, now)):
+            found.append((entry, tp, p, counts))
+    found.sort(key=lambda f: (-f[0]["ratio"], -f[0]["last_12_months"]))
+    found = found[:limit]
+    overrides = _overrides(session, topic.id)
+    names = method_names(session, {p.id: p.title for _, _, p, _ in found})
+    return [_node(tp, p, overrides.get(p.id), names.get(p.id)) | entry | {"citations_by_year": by_year(counts, now)}
+            for entry, tp, p, counts in found]
 
 
 def set_override(session: Session, topic: EvoTopic, paper_id: UUID, action: str, note: str | None) -> bool:
