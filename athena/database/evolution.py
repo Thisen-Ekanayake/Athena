@@ -1201,17 +1201,32 @@ def tier2_ids(session: Session, topic: EvoTopic, successors: int) -> set[UUID]:
     return picked
 
 
+# Errors from parsing a paper's own PDF: trying again gives the same answer.
+_PARSE_ERRORS = ("TEI:", "no body text")
+
+
+def needs_full_text(paper: EvoPaper) -> bool:
+    """Whether a Tier 2 paper should be fetched again.
+
+    Never tried; or tried without a PDF and an arXiv ID has turned up since (a rebuild can bring one from
+    Semantic Scholar; a download that timed out is retried too). A paper that failed with neither a PDF nor a
+    Semantic Scholar ID (every paper of a map built without a key) is tried again once a rebuild gives it one.
+    """
+    last = (paper.extra or {}).get("full_text")
+    if paper.full_text_status in ("available", "unavailable"):
+        return last is None or paper.arxiv_id is not None
+    if paper.full_text_status == "failed" and last and last.get("status") == "failed":
+        error = str(last.get("error") or "")
+        return not error.startswith(_PARSE_ERRORS) and bool(paper.s2_paper_id or paper.arxiv_id)
+    return False
+
+
 def tier2_papers(session: Session, ids: set[UUID], reparse: bool = False) -> list["Tier2Paper"]:
     """The papers in ``ids`` still needing full text (all of them with ``reparse``), with their known refs."""
     from athena.evolution.fulltext import Tier2Paper  # fulltext needs igraph, which the API image lacks
-    query = select(EvoPaper).where(EvoPaper.id.in_(ids))
+    papers = list(session.execute(select(EvoPaper).where(EvoPaper.id.in_(ids))).scalars())
     if not reparse:
-        # Never tried, or tried without a PDF and an arXiv ID has turned up since (a rebuild can
-        # bring one from Semantic Scholar; a download that timed out is retried too).
-        query = query.where(EvoPaper.full_text_status.in_(["available", "unavailable"]),
-                            or_(EvoPaper.extra.is_(None), ~EvoPaper.extra.has_key("full_text"),
-                                EvoPaper.arxiv_id.isnot(None)))
-    papers = list(session.execute(query).scalars())
+        papers = [p for p in papers if needs_full_text(p)]
     refs: dict[UUID, list[UUID]] = defaultdict(list)
     for citing, cited in session.execute(select(EvoCitation.citing_id, EvoCitation.cited_id)
                                          .where(EvoCitation.citing_id.in_([p.id for p in papers]))):
@@ -1285,6 +1300,9 @@ def save_full_text(result: "FullTextResult") -> list[UUID]:
         paper = session.get(EvoPaper, result.paper_id)
         if result.status in ("parsed", "failed"):
             paper.full_text_status = result.status
+        elif result.status == "s2_contexts" and paper.full_text_status == "failed":
+            # It failed before for want of a Semantic Scholar ID: it has citing sentences now, not a broken PDF.
+            paper.full_text_status = "available" if (paper.arxiv_id or paper.oa_pdf_url) else "unavailable"
         detail = result.detail | {"status": result.status, "at": now.isoformat()}
         paper.extra = {**(paper.extra or {}), "full_text": detail}
         session.commit()

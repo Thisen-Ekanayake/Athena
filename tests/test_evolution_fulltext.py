@@ -271,3 +271,34 @@ def test_theme_labels_are_short_or_refused():
     clf = Classifier(base_url="http://llm", model="m", http=httpx.Client(transport=httpx.MockTransport(handler)))
     assert clf.theme_label("PEFT", ["Full fine-tuning is costly."]) == "High cost of full fine-tuning"
     assert clf.theme_label("PEFT", ["Full fine-tuning is costly."]) is None
+
+
+class TestNeedsFullText:
+    """Which Tier 2 papers a full-text run picks again (athena.database.evolution.needs_full_text)."""
+
+    @staticmethod
+    def paper(status, last=None, arxiv_id=None, s2_paper_id=None):
+        from athena.core.models import EvoPaper
+        return EvoPaper(full_text_status=status, arxiv_id=arxiv_id, s2_paper_id=s2_paper_id,
+                        extra={"full_text": last} if last else {})
+
+    def test_never_tried_or_with_an_arxiv_id(self):
+        from athena.database.evolution import needs_full_text
+        assert needs_full_text(self.paper("unavailable"))
+        assert needs_full_text(self.paper("available", {"status": "s2_contexts"}, arxiv_id="2106.09685"))
+        assert not needs_full_text(self.paper("unavailable", {"status": "s2_contexts"}))
+        assert not needs_full_text(self.paper("parsed", {"status": "parsed"}, arxiv_id="2106.09685"))
+
+    def test_a_paper_that_failed_without_an_s2_id_is_tried_once_it_has_one(self):
+        from athena.database.evolution import needs_full_text
+        no_pdf = {"status": "failed", "error": "no open PDF"}
+        assert not needs_full_text(self.paper("failed", no_pdf))
+        assert needs_full_text(self.paper("failed", no_pdf, s2_paper_id="abc"))
+        assert needs_full_text(self.paper("failed", {"status": "failed", "error": "oa: HTTP 404; s2: HTTPStatusError"},
+                                          s2_paper_id="abc"))
+
+    def test_a_pdf_that_could_not_be_parsed_is_not_tried_again(self):
+        from athena.database.evolution import needs_full_text
+        for error in ("TEI: XMLSyntaxError", "no body text"):
+            assert not needs_full_text(self.paper("failed", {"status": "failed", "error": error},
+                                                  arxiv_id="2106.09685", s2_paper_id="abc"))
