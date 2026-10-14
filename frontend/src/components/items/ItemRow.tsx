@@ -1,4 +1,4 @@
-import { Flame, GitBranch, Heart, NotebookPen, TrendingUp } from 'lucide-react'
+import { Flame, GitBranch, Heart, NotebookPen, ThumbsDown, ThumbsUp, TrendingUp } from 'lucide-react'
 import type { FeedItem } from '../../api/client'
 import { usePanelStore } from '../../store/panelStore'
 import { Chip } from '../../ui/Chip'
@@ -8,8 +8,8 @@ import { HiddenRow, MoreMenu, ReactionButtons, ReadToggle } from './ItemActions'
 import { SaveMenu } from './SaveMenu'
 import { ScoreBadge } from './ScoreBadge'
 
-/** A For-you item this close to what the user liked gets a quiet hint. */
-const MATCH = 0.85
+/** A For-you item this close to what the user liked gets a quiet hint (unless they reacted to it themselves). */
+const MATCH = 0.9
 
 /**
  * One feed item as a list row. Clicking it opens the paper side panel. ``collapseHidden``: an item marked "not
@@ -24,7 +24,7 @@ export function ItemRow({ item, showSummary = true, collapseHidden = true }: { i
   if (collapseHidden && me?.reaction === 'hide') return <HiddenRow itemId={item.id} title={item.title} />
 
   return (
-    <article className={cn('group relative flex gap-3 px-4 py-3.5 transition-colors hover:bg-surface-2/60', isOpen && 'bg-surface-2')}>
+    <article className={cn('group relative flex gap-3 px-4 py-3.5 transition-colors hover:bg-surface-2/60 max-md:flex-wrap max-md:gap-y-1', isOpen && 'bg-surface-2')}>
       <div className="min-w-0 flex-1">
         <h3 className={cn('text-[14px] font-medium leading-snug', read ? 'text-fg-2' : 'text-fg')}>
           {/* The title button stretches over the whole row; the action buttons sit above it. */}
@@ -50,13 +50,16 @@ export function ItemRow({ item, showSummary = true, collapseHidden = true }: { i
               <Chip><TrendingUp aria-hidden="true" />+{item.citation_gain_7d} {item.citation_gain_7d === 1 ? 'cite' : 'cites'} this week</Chip>
             </span>
           )}
-          {item.interest != null && item.interest >= MATCH && (
-            <span title="Close to what you liked and saved"><Chip><Heart aria-hidden="true" />Matches your interests</Chip></span>
+          {me?.reaction === 'up' && <span title="You liked this"><ThumbsUp className="h-3.5 w-3.5 text-accent" aria-label="You liked this" /></span>}
+          {me?.reaction === 'down' && <span title="You asked for less like this"><ThumbsDown className="h-3.5 w-3.5" aria-label="You asked for less like this" /></span>}
+          {!me?.reaction && item.interest != null && item.interest >= MATCH && (
+            <span title="Close to what you liked and saved"><Heart className="h-3.5 w-3.5 text-accent" aria-label="Close to what you liked and saved" /></span>
           )}
           {me?.annotated && <span title="You wrote notes or highlights on this"><NotebookPen className="h-3.5 w-3.5" aria-label="Has your notes" /></span>}
         </div>
       </div>
-      <div className="relative z-10 flex shrink-0 items-start gap-0.5">
+      {/* Narrow screens have no hover: the actions are always shown, on their own line under the item. */}
+      <div className="relative z-10 flex shrink-0 items-start gap-0.5 max-md:w-full max-md:justify-end">
         <div className="flex gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
           <ReadToggle itemId={item.id} read={read} />
           <ReactionButtons itemId={item.id} reaction={me?.reaction} />

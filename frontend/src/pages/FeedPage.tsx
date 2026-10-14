@@ -93,7 +93,11 @@ export function FeedPage() {
         description={sourceId ? 'Everything fetched from this source, ranked.' : 'Everything new from your sources, ranked by relevance.'}
         actions={
           <>
-            {total !== undefined && <span className="font-mono text-[12px] text-fg-3 tabular-nums">{total.toLocaleString()} items</span>}
+            {total !== undefined && (
+              <span className="font-mono text-[12px] text-fg-3 tabular-nums" title={data?.pages[0]?.personalised ? 'For you ranks the best-scored items and the ones nearest your likes' : undefined}>
+                {total.toLocaleString()} {data?.pages[0]?.personalised ? 'ranked for you' : 'items'}
+              </span>
+            )}
             {sourceId && <FollowButton target={{ kind: 'source', source_id: sourceId }} />}
           </>
         }
