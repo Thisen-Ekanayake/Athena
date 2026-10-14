@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { ArrowLeft, Layers } from 'lucide-react'
 import { useCluster } from '../api/queries/phase4'
 import { ItemList } from '../components/items/ItemRow'
+import { FollowButton } from '../features/inbox/FollowButton'
 import { Button, ButtonLink } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Notice } from '../ui/Notice'
@@ -25,7 +26,12 @@ function ClusterView({ id }: { id: string }) {
       <PageHeader
         title={data?.cluster.label || (isLoading ? 'Loading…' : 'Cluster')}
         description={data?.cluster.summary}
-        actions={data && <span className="font-mono text-[12px] text-fg-3 tabular-nums">{data.pagination.total} items</span>}
+        actions={data && (
+          <>
+            <span className="font-mono text-[12px] text-fg-3 tabular-nums">{data.pagination.total} items</span>
+            <FollowButton target={{ kind: 'cluster', cluster_id: id }} />
+          </>
+        )}
       />
       {isLoading ? (
         <SkeletonRows count={5} />

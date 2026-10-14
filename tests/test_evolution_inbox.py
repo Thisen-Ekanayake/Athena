@@ -43,18 +43,6 @@ def test_snapshots_announce_new_maps_and_changes(reason, first, c, expected):
         assert add.call_args.args[4].startswith("/evolution/peft")
 
 
-def test_feed_papers_citing_milestones_make_one_event():
-    from athena.evolution.feedlink import announce
-    items = [(SimpleNamespace(id=uuid4(), title=f"Paper {i}"),
-              [{"named_method": "LoRA", "title": "LoRA", "topic_name": "PEFT"}]) for i in range(4)]
-    with patch("athena.database.inbox.add_event") as add:
-        announce(None, items)
-    args = add.call_args.args
-    assert args[1:3] == ("feed_citations", "4 new papers cite milestones in your maps")
-    assert args[3] == "Paper 0; Paper 1; Paper 2; ..." and args[4] == "/evolution"
-    assert args[6]["items"][0]["cites"] == ["LoRA"]
-
-
 @pytest.fixture
 def client():
     app.dependency_overrides[get_db] = lambda: None

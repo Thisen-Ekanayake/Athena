@@ -790,18 +790,21 @@ class EvoSnapshot(Base):
 
 
 class InboxEvent(Base):
-    """Something worth telling every user about: a map changed, a new map is ready, new papers cite milestones.
+    """Something to tell users about.
 
-    Events are shared (maps are a shared library); each user's read position is in ``InboxState``.
+    Map events (a map changed, a new map is ready, new papers cite a map's milestones) are shared rows with no
+    ``user_id``: everyone sees new maps, and a map's followers see the rest. Watch matches and digests belong to
+    one user. Each user's read position is in ``InboxState``.
     """
     __tablename__ = "inbox_events"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    kind = Column(String, nullable=False)            # map_changes | map_new | feed_citations
+    kind = Column(String, nullable=False)            # map_changes | map_new | feed_citations | watch_matches | digest
     title = Column(String, nullable=False)
     body = Column(String, nullable=True)
     link = Column(String, nullable=True)             # a path in the app
     topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"), nullable=True)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     payload = Column(JSONB, nullable=False, default={})
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
 
@@ -812,3 +815,51 @@ class InboxState(Base):
 
     user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     last_seen_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class InboxSettings(Base):
+    """A user's digest schedule and the shared kinds they muted. No row means the defaults."""
+    __tablename__ = "inbox_settings"
+
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    digest = Column(String, nullable=False, default="weekly")   # off | daily | weekly
+    digest_day = Column(Integer, nullable=False, default=0)     # weekly digests: 0 = Monday ... 6 = Sunday
+    muted_kinds = Column(JSONB, nullable=False, default=[])     # map_new | feed_citations
+    last_digest_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class Watch(Base):
+    """Something a user follows: a map, a search, a source or a cluster.
+
+    ``target`` names it once per user (``map:<id>``, ``search:<query>``, ...). A search keeps its query's vector,
+    and the embedding model that made it, so it can be compared with new feed items.
+    """
+    __tablename__ = "watches"
+    __table_args__ = (UniqueConstraint("user_id", "target", name="uq_watch_user_target"),)
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String, nullable=False)            # map | search | source | cluster
+    target = Column(String, nullable=False)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"), nullable=True)
+    source_id = Column(PG_UUID(as_uuid=True), ForeignKey("sources.id", ondelete="CASCADE"), nullable=True)
+    cluster_id = Column(PG_UUID(as_uuid=True), ForeignKey("clusters.id", ondelete="CASCADE"), nullable=True)
+    query = Column(String, nullable=True)
+    query_vector = Column(ARRAY(Float), nullable=True)
+    embed_model = Column(String, nullable=True)
+    delivery = Column(String, nullable=False, default="instant")  # instant (its own inbox entries) | digest
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    checked_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class WatchHit(Base):
+    """A feed item a watch caught. Each item counts once per watch; the digest reads these."""
+    __tablename__ = "watch_hits"
+    __table_args__ = (UniqueConstraint("watch_id", "item_id", name="uq_watch_hit"),)
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    watch_id = Column(PG_UUID(as_uuid=True), ForeignKey("watches.id", ondelete="CASCADE"), nullable=False,
+                      index=True)
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id", ondelete="CASCADE"), nullable=False)
+    similarity = Column(Float, nullable=True)        # searches only
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)

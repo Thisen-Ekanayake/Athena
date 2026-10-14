@@ -4,6 +4,8 @@ import { apiClient } from '../../api/client'
 export type TopicStatus = 'pending' | 'building' | 'refining' | 'ready' | 'failed'
 
 export interface EvolutionTopic {
+  /** Null only for responses from before topic ids were sent */
+  id: string | null
   slug: string
   name: string
   aliases: string[]

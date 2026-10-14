@@ -9,6 +9,7 @@ import { useClusters, useFetchHealth, useScoringHealth } from '../api/queries/ph
 import { useAddSource, useSources, useToggleSource, useUpdateSource, type PreviewResponse } from '../api/queries/sources'
 import { timeAgo } from '../components/items/format'
 import { SyncLog } from '../components/layout/SyncLog'
+import { NotificationsSettings } from '../features/inbox/NotificationsSettings'
 import { PasswordForm } from './AuthPages'
 import { useAppStore, type Accent } from '../store/appStore'
 import { Button } from '../ui/Button'
@@ -21,12 +22,13 @@ import { Spinner } from '../ui/Spinner'
 import { cn } from '../ui/cn'
 import { inputClass } from '../ui/inputClass'
 
-// Admin tabs change Athena for everyone; Account and Appearance are each person's own.
+// Admin tabs change Athena for everyone; Account, Notifications and Appearance are each person's own.
 const TABS = [
   { id: 'sources', label: 'Sources', admin: true },
   { id: 'keys', label: 'Models and keys', admin: true },
   { id: 'users', label: 'Users', admin: true },
   { id: 'account', label: 'Account', admin: false },
+  { id: 'notifications', label: 'Notifications', admin: false },
   { id: 'appearance', label: 'Appearance', admin: false },
   { id: 'clusters', label: 'Clusters', admin: true },
   { id: 'health', label: 'Health', admin: true },
@@ -85,6 +87,7 @@ export function SettingsPage() {
           {active === 'keys' && <KeysSection />}
           {active === 'users' && <UsersSection />}
           {active === 'account' && <AccountSection />}
+          {active === 'notifications' && <NotificationsSettings />}
           {active === 'appearance' && <AppearanceSection />}
           {active === 'clusters' && <ClustersSection />}
           {active === 'health' && <HealthSection />}

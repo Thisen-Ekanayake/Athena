@@ -11,6 +11,7 @@ import { PageHeader } from '../ui/PageHeader'
 import { Segmented } from '../ui/Segmented'
 import { SkeletonRows } from '../ui/Skeleton'
 import { Spinner } from '../ui/Spinner'
+import { FollowButton } from '../features/inbox/FollowButton'
 
 type Sort = 'score' | 'date'
 type Range = '24h' | '7d' | '30d' | 'all'
@@ -62,7 +63,12 @@ export function FeedPage() {
       <PageHeader
         title={sourceId ? sourceName ?? 'Source' : 'Feed'}
         description={sourceId ? 'Everything fetched from this source, ranked.' : 'Everything new from your sources, ranked by relevance.'}
-        actions={total !== undefined && <span className="font-mono text-[12px] text-fg-3 tabular-nums">{total.toLocaleString()} items</span>}
+        actions={
+          <>
+            {total !== undefined && <span className="font-mono text-[12px] text-fg-3 tabular-nums">{total.toLocaleString()} items</span>}
+            {sourceId && <FollowButton target={{ kind: 'source', source_id: sourceId }} />}
+          </>
+        }
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">

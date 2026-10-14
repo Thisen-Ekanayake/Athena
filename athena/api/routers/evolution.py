@@ -63,6 +63,7 @@ from athena.api.config import settings
 from athena.api.deps import get_db, get_redis
 from athena.core.models import User
 from athena.database import evolution as db
+from athena.database import watches as watch_db
 from athena.core import llm
 from athena.evolution import ask, export, ideas, notes
 from athena.evolution import propose as proposals
@@ -273,7 +274,9 @@ def create_topic(body: TopicCreateRequest, session: Session = Depends(get_db),
     except Exception as exc:
         db.set_topic_status(slug, "failed", f"Could not queue the build: {exc}"[:500])
         raise HTTPException(status_code=503, detail="The task queue is not reachable; is Redis running?")
-    return db.topic_summary(db.get_topic(session, slug))  # not loaded in this session before, so read fresh
+    topic = db.get_topic(session, slug)  # not loaded in this session before, so read fresh
+    watch_db.follow_map(session, user.id, topic.id, commit=True)  # its builder hears about its later updates
+    return db.topic_summary(topic)
 
 
 @router.get("/topics/{slug}")
