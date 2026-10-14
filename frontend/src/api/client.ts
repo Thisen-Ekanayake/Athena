@@ -78,6 +78,8 @@ export interface FeedItem {
   me?: ItemMeSummary | null
   /** For you only: how close it is to what the user liked, as a rank among the candidates (0-1) */
   interest?: number | null
+  /** Search only: how it matched the query (exact: its title names it) */
+  match?: 'exact' | 'both' | 'keyword' | 'meaning'
 }
 
 export type Reaction = 'up' | 'down' | 'hide'

@@ -3,6 +3,7 @@ import { NavLink, useParams } from 'react-router-dom'
 import { Bookmark, Check, EyeOff, Pencil, Plus, Trash2, X } from 'lucide-react'
 import { useCreateList, useDeleteList, useListItems, useLists, useRenameList } from '../api/queries/saved'
 import { apiErrorMessage } from '../api/error'
+import { DownloadMenu } from '../components/DownloadMenu'
 import { ItemList } from '../components/items/ItemRow'
 import { NotesTab, ReadTab } from '../features/reading/LibraryTabs'
 import { Button } from '../ui/Button'
@@ -14,6 +15,16 @@ import { Spinner } from '../ui/Spinner'
 import { cn } from '../ui/cn'
 
 const inputClass = 'h-8 min-w-0 flex-1 rounded-lg border border-line bg-surface-2 px-2.5 text-[13px] text-fg placeholder:text-fg-3 focus:border-accent-line focus:outline-none'
+
+/** A saved list's citations, with your notes on each paper. */
+function exportOptions(listId: string, name: string) {
+  const file = name.normalize('NFKD').replace(/[^\w]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'saved-list'
+  return (['bib', 'ris'] as const).map((format) => ({
+    label: format === 'bib' ? 'BibTeX' : 'RIS',
+    hint: format === 'bib' ? 'For LaTeX, Zotero, JabRef; your notes as annote' : 'For Zotero, Mendeley, EndNote; your notes as N1',
+    path: `/lists/${listId}/export`, params: { format }, filename: `${file}.${format}`,
+  }))
+}
 
 const TABS = [
   { id: 'lists', label: 'Lists' },
@@ -147,6 +158,7 @@ function ListsTab() {
               <Button variant="ghost" size="sm" aria-pressed={hideRead} onClick={() => setHideRead((v) => !v)} className={cn(hideRead && 'bg-surface-2 text-fg')}>
                 <EyeOff /> Hide read
               </Button>
+              <DownloadMenu options={exportOptions(selected.id, selected.name)} />
             </div>
           )}
           {!isLoading && !lists?.length ? (
