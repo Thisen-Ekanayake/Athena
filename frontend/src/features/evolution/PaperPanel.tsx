@@ -245,9 +245,14 @@ const SECTION_NAMES: Record<string, string> = {
   other: 'other section',
 }
 
-function fullTextLabel(paper: { full_text_status: string; full_text: { status?: string; sections?: number } }) {
+function fullTextLabel(paper: { full_text_status: string; full_text: { status?: string; sections?: number; contexts?: number } }) {
   if (paper.full_text.status === 'parsed') return `Parsed, ${paper.full_text.sections ?? 0} sections`
-  if (paper.full_text.status === 's2_contexts') return 'Not openly available; citing sentences from Semantic Scholar'
+  if (paper.full_text.status === 's2_contexts') {
+    // Publishers such as IEEE and Elsevier withhold many older papers' reference lists from Semantic Scholar.
+    return paper.full_text.contexts
+      ? 'Not openly available; citing sentences from Semantic Scholar'
+      : 'Not openly available, and Semantic Scholar has none of its citing sentences'
+  }
   if (paper.full_text_status === 'failed') return 'Could not be parsed'
   return paper.full_text_status === 'unavailable' ? 'Not openly available' : 'Openly available'
 }
