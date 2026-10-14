@@ -1,15 +1,20 @@
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronDown, Flame, Layers, Sparkles } from 'lucide-react'
+import { ChevronDown, EyeOff, Flame, Layers, Sparkles } from 'lucide-react'
 import type { FeedItem } from '../../api/client'
 import { useItemDetail } from '../../api/queries'
+import { useAddHighlight, useMe, useReaction } from '../../api/queries/personal'
 import { useRelatedItems } from '../../api/queries/related'
 import { usePanelStore } from '../../store/panelStore'
 import { Chip } from '../../ui/Chip'
 import { Notice } from '../../ui/Notice'
+import { Button } from '../../ui/Button'
 import { Spinner } from '../../ui/Spinner'
 import { cn } from '../../ui/cn'
+import { Highlightable } from '../../features/reading/Highlightable'
+import { NotesSection } from '../../features/reading/NotesSection'
 import { CATEGORY_LABELS, timeAgo } from '../items/format'
+import { ReactionButtons, ReadToggle } from '../items/ItemActions'
 import { ScoreBadge } from '../items/ScoreBadge'
 import { AskPaper } from './AskPaper'
 import { PlaceInEvolution } from './PlaceInEvolution'
@@ -27,6 +32,9 @@ function Section({ title, children, className }: { title: string; children: Reac
 /** Everything about one item: summary, score, questions and related reading. Shared by the side panel and the full page. */
 export function PaperDetail({ itemId, initial, layout }: { itemId: string; initial?: FeedItem | null; layout: 'panel' | 'page' }) {
   const { data, isLoading, error } = useItemDetail(itemId, true)
+  const me = useMe('item', itemId)
+  const addHighlight = useAddHighlight('item', itemId)
+  const react = useReaction()
   const item = data ?? initial ?? null
   const [showScore, setShowScore] = useState(false)
   const [showAbstract, setShowAbstract] = useState(false)
@@ -40,6 +48,10 @@ export function PaperDetail({ itemId, initial, layout }: { itemId: string; initi
   }
 
   const abstract = data?.abstract
+  const highlights = me.data?.highlights ?? []
+  const reaction = me.data ? me.data.reaction : item.me?.reaction
+  const read = me.data ? me.data.read : !!item.me?.read
+  const mark = (h: Parameters<typeof addHighlight.mutateAsync>[0]) => addHighlight.mutateAsync(h)
 
   return (
     <div className={cn('grid gap-6', layout === 'panel' ? 'p-5' : 'py-2')}>
@@ -66,18 +78,35 @@ export function PaperDetail({ itemId, initial, layout }: { itemId: string; initi
           )}
         </div>
         {showScore && <div className="rounded-lg border border-line bg-surface-2/50 p-3"><ScoreBreakdown itemId={item.id} /></div>}
+        <div className="flex flex-wrap items-center gap-1">
+          <ReadToggle itemId={item.id} read={read} withLabel />
+          <span className="mx-1 h-4 w-px bg-line" aria-hidden="true" />
+          <ReactionButtons itemId={item.id} reaction={reaction} />
+          {reaction === 'hide' ? (
+            <span className="ml-1 flex items-center gap-1 text-[12.5px] text-fg-3">
+              Hidden from your feed
+              <Button variant="ghost" size="sm" onClick={() => react.mutate({ id: item.id, reaction: null })}>Undo</Button>
+            </span>
+          ) : (
+            <Button variant="ghost" size="sm" title="Leave it out of your feed, and show less like it"
+              onClick={() => react.mutate({ id: item.id, reaction: 'hide' })}>
+              <EyeOff /> Not interested
+            </Button>
+          )}
+        </div>
       </header>
 
       <Section title="Summary">
         {item.summary ? (
           <div className="grid gap-3">
-            <p className="text-[14px] leading-relaxed text-fg-2">{item.summary}</p>
+            <Highlightable text={item.summary} field="summary" highlights={highlights} onHighlight={mark}
+              className="text-[14px] leading-relaxed text-fg-2" />
             {item.takeaways && item.takeaways.length > 0 && (
               <ul className="grid gap-1.5">
                 {item.takeaways.map((t, i) => (
                   <li key={i} className="flex gap-2 text-[13.5px] leading-relaxed text-fg-2">
                     <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-accent" aria-hidden="true" />
-                    {t}
+                    <Highlightable as="span" text={t} field={`takeaway:${i}`} highlights={highlights} onHighlight={mark} />
                   </li>
                 ))}
               </ul>
@@ -92,9 +121,16 @@ export function PaperDetail({ itemId, initial, layout }: { itemId: string; initi
             <button type="button" onClick={() => setShowAbstract((v) => !v)} aria-expanded={showAbstract} className="inline-flex items-center gap-1 text-[12.5px] text-fg-3 hover:text-fg">
               {showAbstract ? 'Hide the abstract' : 'Read the abstract'} <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showAbstract && 'rotate-180')} />
             </button>
-            {showAbstract && <p className="mt-2 text-[13.5px] leading-relaxed text-fg-2">{abstract}</p>}
+            {showAbstract && (
+              <Highlightable text={abstract} field="abstract" highlights={highlights} onHighlight={mark}
+                className="mt-2 text-[13.5px] leading-relaxed text-fg-2" />
+            )}
           </div>
         )}
+      </Section>
+
+      <Section title="Your notes">
+        {me.data ? <NotesSection key={item.id} kind="item" id={item.id} me={me.data} /> : <Spinner />}
       </Section>
 
       <PlaceInEvolution itemId={item.id} />

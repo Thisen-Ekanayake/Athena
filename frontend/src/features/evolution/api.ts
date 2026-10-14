@@ -425,7 +425,10 @@ export const useMarkRead = (slug: string, n: number) => {
         return { ...path, survey: path.survey && tick(path.survey), steps: path.steps.map(tick) }
       })
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['evolution', 'reading-path'] }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['evolution', 'reading-path'] })
+      queryClient.invalidateQueries({ queryKey: ['me'] })  // the paper panel's read mark, and a feed item's
+    },
   })
 }
 

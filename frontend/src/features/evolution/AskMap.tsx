@@ -7,6 +7,8 @@ import { Button } from '../../ui/Button'
 import { Notice } from '../../ui/Notice'
 import { Spinner } from '../../ui/Spinner'
 import { cn } from '../../ui/cn'
+import { useAddHighlight } from '../../api/queries/personal'
+import { Highlightable } from '../reading/Highlightable'
 import { PaperPanel } from './PaperPanel'
 import { useClearMapQuestions, useMapQuestions, type MapSource, type SectionFilter } from './api'
 
@@ -148,7 +150,7 @@ export function AskMap({ slug, topicName }: { slug: string; topicName: string })
             <p className="text-[13px] text-fg-3">Try: “What limits current methods?”, “How do the main approaches differ?”, or “Which datasets are used to evaluate them?”</p>
           )}
           {turns.map((t) => (
-            <TurnView key={t.id} turn={t} selected={selected} onCite={setSelected} />
+            <TurnView key={t.id} slug={slug} turn={t} selected={selected} onCite={setSelected} />
           ))}
           <div ref={endRef} />
         </div>
@@ -199,7 +201,7 @@ export function AskMap({ slug, topicName }: { slug: string; topicName: string })
 const chipClass = (on: boolean) =>
   cn('h-6 rounded-full border px-2.5 text-[12px] transition-colors', on ? 'border-accent-line bg-accent-soft text-fg' : 'border-line text-fg-2 hover:text-fg')
 
-function TurnView({ turn, selected, onCite }: { turn: Turn; selected: string | null; onCite: (paperId: string) => void }) {
+function TurnView({ slug, turn, selected, onCite }: { slug: string; turn: Turn; selected: string | null; onCite: (paperId: string) => void }) {
   const [showSources, setShowSources] = useState(false)
   const byNumber = new Map(turn.sources.map((s) => [s.n, s]))
   const abstractOnly = turn.sources.filter((s) => s.abstract_only).length
@@ -233,20 +235,45 @@ function TurnView({ turn, selected, onCite }: { turn: Turn; selected: string | n
           </div>
           {showSources && (
             <ol className="grid gap-1">
-              {turn.sources.map((s) => (
-                <li key={s.n} className="flex items-baseline gap-2 text-[12.5px]">
-                  <span className="font-mono text-fg-3 tabular-nums">[{s.n}]</span>
-                  <button type="button" onClick={() => onCite(s.paper_id)} className="min-w-0 text-left text-fg-2 hover:text-fg hover:underline">
-                    {s.named_method ?? s.title} ({s.year ?? 'n.d.'})
-                  </button>
-                  <span className="shrink-0 text-fg-3">{s.abstract_only ? 'abstract only' : SECTION_LABELS[s.section_type] ?? s.section_type}</span>
-                </li>
-              ))}
+              {turn.sources.map((s) => <SourceEntry key={s.n} slug={slug} source={s} onCite={onCite} />)}
             </ol>
           )}
         </div>
       )}
     </div>
+  )
+}
+
+/** One cited passage: its paper, its section, and the passage itself, which you can highlight onto the paper. */
+function SourceEntry({ slug, source: s, onCite }: { slug: string; source: MapSource; onCite: (paperId: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const addHighlight = useAddHighlight('paper', s.paper_id)
+  const section = s.abstract_only ? 'abstract only' : SECTION_LABELS[s.section_type] ?? s.section_type
+  return (
+    <li className="grid gap-1 text-[12.5px]">
+      <div className="flex items-baseline gap-2">
+        <span className="font-mono text-fg-3 tabular-nums">[{s.n}]</span>
+        <button type="button" onClick={() => onCite(s.paper_id)} className="min-w-0 text-left text-fg-2 hover:text-fg hover:underline">
+          {s.named_method ?? s.title} ({s.year ?? 'n.d.'})
+        </button>
+        <span className="shrink-0 text-fg-3">{section}</span>
+        {s.excerpt && (
+          <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="ml-auto shrink-0 text-fg-3 hover:text-fg">
+            {open ? 'Hide passage' : 'Passage'}
+          </button>
+        )}
+      </div>
+      {open && s.excerpt && (
+        <Highlightable
+          text={s.excerpt}
+          field="passage"
+          context={{ topic: slug, section: s.abstract_only ? 'abstract' : s.section_type, heading: s.heading }}
+          onHighlight={(h) => addHighlight.mutateAsync(h)}
+          className="ml-7 rounded-lg bg-surface-2 px-3 py-2 leading-relaxed text-fg-2"
+        />
+      )}
+      {addHighlight.isSuccess && open && <p className="ml-7 text-[11.5px] text-fg-3">Saved to your notes on this paper.</p>}
+    </li>
   )
 }
 

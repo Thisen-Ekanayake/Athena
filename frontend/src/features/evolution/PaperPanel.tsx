@@ -1,8 +1,12 @@
 import { useState } from 'react'
-import { ExternalLink, Pin, PinOff, RotateCcw, X } from 'lucide-react'
+import { Check, CircleCheck, ExternalLink, Pin, PinOff, RotateCcw, X } from 'lucide-react'
 import { useIsAdmin } from '../../api/queries/auth'
+import { useAddHighlight, useMe, useSetRead } from '../../api/queries/personal'
 import { Button } from '../../ui/Button'
 import { Spinner } from '../../ui/Spinner'
+import { cn } from '../../ui/cn'
+import { Highlightable } from '../reading/Highlightable'
+import { NotesSection } from '../reading/NotesSection'
 import { useMapScope, usePaperDetail, useSetMilestone, type EvolutionNode, type LooseMatch, type PaperGap, type StrictLink } from './api'
 
 interface PaperPanelProps {
@@ -36,6 +40,10 @@ export function PaperPanel({ slug, paperId, onSelect, onClose }: PaperPanelProps
   const isAdmin = useIsAdmin() && !readOnly  // pinning changes the map for everyone; a shared link can't
   const [note, setNote] = useState('')
   const [showAbstract, setShowAbstract] = useState(false)
+  // Your own reading state; a shared link has none.
+  const me = useMe('paper', paperId, !readOnly)
+  const setRead = useSetRead('paper')
+  const addHighlight = useAddHighlight('paper', paperId)
 
   if (isLoading) {
     return (
@@ -96,17 +104,37 @@ export function PaperPanel({ slug, paperId, onSelect, onClose }: PaperPanelProps
         <dd className="text-fg-2">{fullTextLabel(paper)}</dd>
       </dl>
 
-      <a href={paper.url} target="_blank" rel="noreferrer" className="inline-flex w-fit items-center gap-1.5 text-[13px] text-accent-ink hover:underline">
-        Open the paper <ExternalLink className="h-3.5 w-3.5" />
-      </a>
+      <div className="flex flex-wrap items-center gap-3">
+        <a href={paper.url} target="_blank" rel="noreferrer" className="inline-flex w-fit items-center gap-1.5 text-[13px] text-accent-ink hover:underline">
+          Open the paper <ExternalLink className="h-3.5 w-3.5" />
+        </a>
+        {!readOnly && me.data && (
+          <Button variant="secondary" size="sm" aria-pressed={me.data.read} title="Also ticks it on the reading path, and in the feed if it is there"
+            onClick={() => setRead.mutate({ id: paper.id, read: !me.data!.read })}
+            className={cn('ml-auto', me.data.read && 'border-good/40 [&_svg]:text-good')}>
+            {me.data.read ? <CircleCheck /> : <Check />} {me.data.read ? 'Read' : 'Mark read'}
+          </Button>
+        )}
+      </div>
 
       {paper.abstract && (
         <div>
           <button onClick={() => setShowAbstract(!showAbstract)} className="text-[12px] font-medium text-fg-3 hover:text-fg">
             {showAbstract ? 'Hide abstract' : 'Show abstract'}
           </button>
-          {showAbstract && <p className="mt-2 text-[13px] text-fg-2 leading-relaxed">{paper.abstract}</p>}
+          {showAbstract && (
+            <Highlightable text={paper.abstract} field="abstract" highlights={me.data?.highlights}
+              onHighlight={readOnly ? undefined : (h) => addHighlight.mutateAsync(h)}
+              className="mt-2 text-[13px] text-fg-2 leading-relaxed" />
+          )}
         </div>
+      )}
+
+      {!readOnly && me.data && (
+        <section className="flex flex-col gap-2">
+          <h4 className="text-[11px] font-medium tracking-[0.08em] text-fg-3 uppercase">Your notes</h4>
+          <NotesSection key={paper.id} kind="paper" id={paper.id} me={me.data} />
+        </section>
       )}
 
       <section className="flex flex-col gap-2">
