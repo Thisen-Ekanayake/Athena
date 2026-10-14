@@ -240,7 +240,8 @@ def update_gains(session, now: datetime) -> int:
     session.execute(update(ContentItem).where(
         ContentItem.category == ContentCategory.PAPER,
         ContentItem.published_at < now - timedelta(days=window_days()),
-        ContentItem.citation_gain_7d.isnot(None)).values(citation_gain_7d=None, citation_gain_30d=None))
+        ContentItem.citation_gain_7d.isnot(None)).values(citation_gain_7d=None, citation_gain_30d=None)
+        .execution_options(synchronize_session="fetch"))
     session.commit()
     return len(papers)
 
