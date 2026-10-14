@@ -17,6 +17,7 @@ interface ApiScoreBreakdown {
 export interface ScoreBreakdown {
   score: number
   signals: {
+    key: string
     label: string
     value: number
     max_value: number
@@ -32,6 +33,7 @@ const SIGNAL_LABELS: Record<string, string> = {
   community_sentiment: 'Community sentiment',
   recency_velocity: 'Recency',
   source_authority: 'Source authority',
+  your_interests: 'Your interests',
 }
 
 export const useScoreBreakdown = (itemId: string, enabled: boolean) => {
@@ -40,6 +42,7 @@ export const useScoreBreakdown = (itemId: string, enabled: boolean) => {
     queryFn: async (): Promise<ScoreBreakdown> => {
       const { data } = await apiClient.get<ApiScoreBreakdown>(`/items/${itemId}/score-breakdown`)
       const signals = Object.entries(data.signals ?? {}).map(([key, s]) => ({
+        key,
         label: SIGNAL_LABELS[key] ?? key,
         value: s.score,
         max_value: 1,

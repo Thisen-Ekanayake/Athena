@@ -80,3 +80,35 @@ export const useTestModels = () =>
     mutationFn: async () =>
       (await apiClient.post<{ chat: ModelTestResult; embed: ModelTestResult }>('/settings/models/test')).data,
   })
+
+// ── Scoring weights (admin) ───────────────────────────────────────────
+
+export const BASE_SIGNALS = ['citation', 'engagement', 'sentiment', 'recency', 'authority'] as const
+export type BaseSignal = (typeof BASE_SIGNALS)[number]
+
+export type CategoryWeights = Record<BaseSignal, number> & { preference: number; half_life_days: number }
+
+export interface ScoringSettings {
+  categories: Record<string, CategoryWeights & { version: number | null; source: 'saved' | 'default' }>
+  defaults: Record<string, CategoryWeights>
+  rescoring?: boolean
+}
+
+export const useScoringSettings = () =>
+  useQuery({
+    queryKey: ['scoring-settings'],
+    queryFn: async () => (await apiClient.get<ScoringSettings>('/settings/scoring')).data,
+  })
+
+export const useUpdateScoring = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (categories: Record<string, CategoryWeights>) =>
+      (await apiClient.put<ScoringSettings>('/settings/scoring', { categories })).data,
+    onSuccess: (data) => {
+      queryClient.setQueryData(['scoring-settings'], data)
+      queryClient.invalidateQueries({ queryKey: ['score-breakdown'] })
+      queryClient.invalidateQueries({ queryKey: ['feed'] })
+    },
+  })
+}

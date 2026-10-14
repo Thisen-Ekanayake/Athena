@@ -116,7 +116,7 @@ export function SearchPage() {
             ) : library.error ? (
               <Notice tone="error" title="Search failed">Check that the API is running, then try again.</Notice>
             ) : library.data?.items.length ? (
-              <ItemList items={library.data.items} />
+              <ItemList items={library.data.items} collapseHidden={false} />
             ) : (
               <EmptyState icon={Search} title="Nothing in your library matches">
                 Try other words, or search Semantic Scholar as well.

@@ -11,6 +11,8 @@ import { timeAgo } from '../components/items/format'
 import { SyncLog } from '../components/layout/SyncLog'
 import { SharingSettings } from '../features/evolution/SharingSettings'
 import { ModelsCard } from '../features/settings/ModelsCard'
+import { ScoringSettings } from '../features/settings/ScoringSettings'
+import { PersonalisationSettings } from '../features/personalisation/PersonalisationSettings'
 import { NotificationsSettings } from '../features/inbox/NotificationsSettings'
 import { UsageSettings } from '../features/usage/UsageSettings'
 import { PasswordForm } from './AuthPages'
@@ -25,15 +27,17 @@ import { Spinner } from '../ui/Spinner'
 import { cn } from '../ui/cn'
 import { inputClass } from '../ui/inputClass'
 
-// Admin tabs change Athena for everyone; Account, Notifications, Usage and Appearance are each person's own
-// (Usage also shows admins the whole app).
+// Admin tabs change Athena for everyone; Account, Notifications, Personalisation, Usage and Appearance are each
+// person's own (Usage also shows admins the whole app).
 const TABS = [
   { id: 'sources', label: 'Sources', admin: true },
   { id: 'keys', label: 'Models and keys', admin: true },
   { id: 'users', label: 'Users', admin: true },
   { id: 'sharing', label: 'Sharing', admin: true },
+  { id: 'scoring', label: 'Scoring', admin: true },
   { id: 'account', label: 'Account', admin: false },
   { id: 'notifications', label: 'Notifications', admin: false },
+  { id: 'personalisation', label: 'Personalisation', admin: false },
   { id: 'usage', label: 'Usage', admin: false },
   { id: 'appearance', label: 'Appearance', admin: false },
   { id: 'clusters', label: 'Clusters', admin: true },
@@ -93,8 +97,10 @@ export function SettingsPage() {
           {active === 'keys' && <KeysSection />}
           {active === 'users' && <UsersSection />}
           {active === 'sharing' && <SharingSettings />}
+          {active === 'scoring' && <ScoringSettings />}
           {active === 'account' && <AccountSection />}
           {active === 'notifications' && <NotificationsSettings />}
+          {active === 'personalisation' && <PersonalisationSettings />}
           {active === 'usage' && <UsageSettings />}
           {active === 'appearance' && <AppearanceSection />}
           {active === 'clusters' && <ClustersSection />}

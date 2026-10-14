@@ -107,7 +107,7 @@ export function SavedPage() {
           ) : itemsLoading ? (
             <SkeletonRows count={4} />
           ) : items?.length ? (
-            <ItemList items={items} />
+            <ItemList items={items} collapseHidden={false} />
           ) : selected ? (
             <EmptyState icon={Bookmark} title={`${selected.name} is empty`}>Open any item and use its bookmark button to save it here.</EmptyState>
           ) : null}

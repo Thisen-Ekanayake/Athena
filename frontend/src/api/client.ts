@@ -72,6 +72,20 @@ export interface FeedItem {
   related_count: number
   /** Milestones of the evolution maps it cites */
   milestones_cited?: number
+  /** Citations gained in the last 7 days (papers; null until known) */
+  citation_gain_7d?: number | null
+  /** The user's own state: read, their reaction, whether they wrote notes or highlights */
+  me?: ItemMeSummary | null
+  /** For you only: how close it is to what the user liked, as a rank among the candidates (0-1) */
+  interest?: number | null
+}
+
+export type Reaction = 'up' | 'down' | 'hide'
+
+export interface ItemMeSummary {
+  read: boolean
+  annotated: boolean
+  reaction: Reaction | null
 }
 
 export interface FeedResponse {
@@ -82,6 +96,8 @@ export interface FeedResponse {
     total: number
     has_next: boolean
   }
+  /** The For-you order was used (false: it fell back to relevance) */
+  personalised?: boolean
 }
 
 export interface TrendingResponse {
