@@ -28,6 +28,7 @@ from athena.api.schemas import (
 )
 from athena.api.routers.feed import _build_feed_item
 from athena.core.models import SavedList, SavedListItem, ContentItem, User
+from athena.database import personal
 
 router = APIRouter(prefix="/api/v1", tags=["Saved Lists"])
 
@@ -78,12 +79,14 @@ def list_lists(
     lists = db.execute(
         select(SavedList).where(SavedList.user_id == user.id).order_by(SavedList.created_at.desc())
     ).scalars().all()
+    read = personal.read_counts(db, user.id, [lst.id for lst in lists])
 
     return [
         SavedListResponse(
             id=lst.id,
             name=lst.name,
             item_count=counts.get(lst.id, 0),
+            read_count=read.get(lst.id, 0),
             created_at=lst.created_at,
             contains_item=(lst.id in contains) if item_id is not None else None,
         )
@@ -177,21 +180,25 @@ def delete_list(
 @router.get("/lists/{list_id}/items")
 def get_list_items(
     list_id: str,
+    unread: bool = Query(False),
     db: Session = Depends(get_db),
     user: User = Depends(active_user),
 ):
-    """Content items saved in a list, newest-added first, as feed cards."""
+    """Content items saved in a list, newest-added first, as feed cards. ``unread`` leaves out what was read."""
     list_uuid = _parse_uuid(list_id, "list ID")
     _get_list_or_404(db, list_uuid, user)
 
-    rows = db.execute(
+    query = (
         select(ContentItem)
         .join(SavedListItem, SavedListItem.item_id == ContentItem.id)
         .where(SavedListItem.list_id == list_uuid)
         .order_by(SavedListItem.added_at.desc())
-    ).scalars().all()
+    )
+    if unread:
+        query = query.where(personal.unread_filter(user.id))
+    rows = db.execute(query).scalars().all()
 
-    return {"items": [_build_feed_item(item) for item in rows]}
+    return {"items": personal.overlay(db, user.id, [_build_feed_item(item) for item in rows])}
 
 
 @router.post("/lists/{list_id}/items", status_code=201)

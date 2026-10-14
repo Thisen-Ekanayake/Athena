@@ -13,7 +13,8 @@ from loguru import logger
 from athena.api import auth
 from athena.api.deps import get_db, get_redis
 from athena.api.config import settings
-from athena.api.routers.feed import _build_feed_item
+from athena.api.auth import active_user
+from athena.api.routers.feed import _build_feed_item, _for_user
 from athena.core.models import ContentItem, Source, User
 from athena.search.arxiv_live import search_arxiv
 from athena.search.lit_review import generate_lit_review
@@ -69,6 +70,7 @@ def search(
     category: str | None = Query(None),
     limit: int = Query(20, ge=1, le=20),
     db: Session = Depends(get_db),
+    user: User = Depends(active_user),
 ):
     # ── Semantic Search Attempt ─────────────────────────
     qdrant_results = []
@@ -106,12 +108,12 @@ def search(
         for r in results:
             r["similarity"] = 0.5  # Neutral score for keyword matches
 
-        return {
+        return _for_user(db, user, {
             "query": q,
             "items": results,
             "total": len(results),
             "method": "keyword"
-        }
+        })
 
     # ── Map Qdrant results if successful ────────────────
 
@@ -137,12 +139,12 @@ def search(
             item_dict["similarity"] = similarity_map.get(pid, 0.0)
             sorted_items.append(item_dict)
 
-    return {
+    return _for_user(db, user, {
         "query": q,
         "items": sorted_items,
         "total": len(sorted_items),
         "method": "semantic"
-    }
+    })
 
 
 # ── Research search (POST /api/v1/search) ────────────────────

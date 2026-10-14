@@ -13,9 +13,10 @@ import redis as redis_lib
 from athena.api.deps import get_db, get_redis
 from athena.api.cache import cache_get, cache_set
 from athena.api.config import settings
-from athena.api.routers.feed import _build_feed_item
+from athena.api.auth import active_user
+from athena.api.routers.feed import _build_feed_item, _for_user
 from athena.core.models import (
-    ContentItem, Cluster, Source,
+    ContentItem, Cluster, Source, User,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["Clusters"])
@@ -83,6 +84,7 @@ def get_cluster_detail(
     sort: str = Query("score", pattern="^(score|date)$"),
     db: Session = Depends(get_db),
     r: redis_lib.Redis = Depends(get_redis),
+    user: User = Depends(active_user),
 ):
     """
     Returns cluster metadata and top items sorted by score.
@@ -94,10 +96,10 @@ def get_cluster_detail(
             status_code=400, detail="Invalid cluster ID format"
         )
 
-    cache_key = f"cluster:{cluster_id}:{page}:{sort}"
+    cache_key = f"cluster:{cluster_id}:{page}:{limit}:{sort}"
     cached = cache_get(r, cache_key)
     if cached:
-        return cached
+        return _for_user(db, user, cached)
 
     cluster = db.execute(
         select(Cluster).where(Cluster.id == cluster_uuid)
@@ -146,4 +148,4 @@ def get_cluster_detail(
     }
 
     cache_set(r, cache_key, response, settings.CACHE_CLUSTER_DETAIL_TTL)
-    return response
+    return _for_user(db, user, response)

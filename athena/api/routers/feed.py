@@ -9,6 +9,7 @@ from sqlalchemy import select, func, desc
 from datetime import datetime, timedelta
 import redis as redis_lib
 
+from athena.api.auth import active_user
 from athena.api.deps import get_db, get_redis
 from athena.api.cache import cache_get, cache_set
 from athena.api.config import settings
@@ -16,8 +17,9 @@ from athena.api.schemas import (
     FeedResponse,
 )
 from athena.core.models import (
-    ContentItem, Source, Cluster, ItemLink,
+    ContentItem, Source, Cluster, ItemLink, User,
 )
+from athena.database import personal
 
 router = APIRouter(prefix="/api/v1", tags=["Feed"])
 
@@ -69,18 +71,22 @@ def get_feed(
     date_from: str | None = Query(None),
     date_to: str | None = Query(None),
     date_range: str | None = Query(None, pattern="^(24h|7d|30d)$"),
+    unread: bool = Query(False),
     db: Session = Depends(get_db),
     r: redis_lib.Redis = Depends(get_redis),
+    user: User = Depends(active_user),
 ):
     """
     Returns a paginated, sorted list of content cards.
-    The primary endpoint for the main feed.
+    The primary endpoint for the main feed. ``unread`` leaves out what the user marked read.
     """
     # ── Cache check ─────────────────────────────────────
-    cache_key = f"feed:{sort}:{category}:{page}:{limit}:{cluster_id}:{source_id}:{date_from}:{date_to}:{date_range}"  # noqa: E501
+    # The user only joins the key when the page depends on them; each item's own state is added afterwards.
+    mine = f":u{user.id}" if unread else ""
+    cache_key = f"feed:{sort}:{category}:{page}:{limit}:{cluster_id}:{source_id}:{date_from}:{date_to}:{date_range}{mine}"  # noqa: E501
     cached = cache_get(r, cache_key)
     if cached:
-        return cached
+        return _for_user(db, user, cached)
 
     # ── Build query ─────────────────────────────────────
     query = select(ContentItem).join(
@@ -109,6 +115,9 @@ def get_feed(
             query = query.where(ContentItem.published_at >= now - timedelta(days=7))
         elif date_range == "30d":
             query = query.where(ContentItem.published_at >= now - timedelta(days=30))
+
+    if unread:
+        query = query.where(personal.unread_filter(user.id))
 
     # Sort
     if sort == "score":
@@ -160,6 +169,13 @@ def get_feed(
 
     # ── Cache store ─────────────────────────────────────
     ttl = settings.CACHE_FEED_SCORE_TTL if sort == "score" else settings.CACHE_FEED_DATE_TTL  # noqa: E501
+    if unread:
+        ttl = min(ttl, 60)  # marking an item read changes this page
     cache_set(r, cache_key, response, ttl)
 
-    return response
+    return _for_user(db, user, response)
+
+
+def _for_user(db: Session, user: User, response: dict) -> dict:
+    """The page with each item's ``me`` (read, reaction, annotated) for this user."""
+    return response | {"items": personal.overlay(db, user.id, response["items"])}

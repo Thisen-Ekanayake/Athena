@@ -914,3 +914,55 @@ class MapShare(Base):
     last_viewed_at = Column(DateTime(timezone=True), nullable=True)
 
     topic = relationship("EvoTopic")
+
+
+# ── Reading and personalisation ──────────────────────────────────────
+
+
+class ItemRead(Base):
+    """A feed item a user has marked as read. Map papers have their own (EvoReadingProgress); a feed item and the
+    map paper it is stay in step (athena.database.personal)."""
+    __tablename__ = "item_reads"
+
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id", ondelete="CASCADE"), primary_key=True)
+    read_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class UserNote(Base):
+    """A user's own note on a feed item or a map paper. ``target`` names the paper once per user (``item:<id>`` or
+    ``paper:<id>``); the foreign key that matches it removes the note with the paper."""
+    __tablename__ = "user_notes"
+    __table_args__ = (UniqueConstraint("user_id", "target", name="uq_user_note_target"),)
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    target = Column(String, nullable=False)
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id", ondelete="CASCADE"), nullable=True)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"), nullable=True)
+    body = Column(String, nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class UserHighlight(Base):
+    """A passage a user marked in text the app shows: an abstract, a summary, a takeaway, or a passage an answer
+    about a map cited. Kept as the quote with its offsets and a little text on either side, so it can be found
+    again if the text around it changes; one that can't be found is still listed."""
+    __tablename__ = "user_highlights"
+    __table_args__ = (Index("ix_user_highlights_user_target", "user_id", "target"),)
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    target = Column(String, nullable=False)          # item:<id> | paper:<id>
+    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id", ondelete="CASCADE"), nullable=True)
+    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"), nullable=True)
+    field = Column(String, nullable=False)           # abstract | summary | takeaway:<n> | passage
+    quote = Column(String, nullable=False)
+    start_offset = Column(Integer, nullable=True)    # where the quote was in the field's text
+    end_offset = Column(Integer, nullable=True)
+    prefix = Column(String, nullable=True)           # up to 32 characters before and after it
+    suffix = Column(String, nullable=True)
+    comment = Column(String, nullable=True)
+    context = Column(JSONB, nullable=False, default={})  # passages: the map, section and chunk they came from
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

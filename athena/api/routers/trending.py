@@ -11,8 +11,9 @@ import redis as redis_lib
 from athena.api.deps import get_db, get_redis
 from athena.api.cache import cache_get, cache_set
 from athena.api.config import settings
-from athena.api.routers.feed import _build_feed_item
-from athena.core.models import ContentItem, Source, TrendingBrief
+from athena.api.auth import active_user
+from athena.api.routers.feed import _build_feed_item, _for_user
+from athena.core.models import ContentItem, Source, TrendingBrief, User
 
 router = APIRouter(prefix="/api/v1", tags=["Trending"])
 
@@ -22,6 +23,7 @@ def get_trending(
     category: str | None = Query(None),
     db: Session = Depends(get_db),
     r: redis_lib.Redis = Depends(get_redis),
+    user: User = Depends(active_user),
 ):
     """
     Returns currently trending items and the daily trending brief.
@@ -29,7 +31,7 @@ def get_trending(
     cache_key = f"trending:{category}"
     cached = cache_get(r, cache_key)
     if cached:
-        return cached
+        return _for_user(db, user, cached)
 
     # Fetch trending items
     query = (
@@ -50,7 +52,7 @@ def get_trending(
     )
     if category:
         brief_query = brief_query.where(TrendingBrief.category == category)
-    brief = db.execute(brief_query).scalar_one_or_none()
+    brief = db.execute(brief_query.limit(1)).scalar_one_or_none()
 
     response = {
         "brief": {
@@ -65,4 +67,4 @@ def get_trending(
     }
 
     cache_set(r, cache_key, response, settings.CACHE_TRENDING_TTL)
-    return response
+    return _for_user(db, user, response)

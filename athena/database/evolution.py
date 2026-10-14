@@ -449,17 +449,9 @@ def read_papers(session: Session, user_id: UUID | None, paper_ids: list[UUID]) -
 
 
 def set_read(session: Session, user_id: UUID, paper_id: UUID, read: bool) -> bool:
-    """Tick or untick a paper for a user. Returns False if the paper is unknown."""
-    if session.get(EvoPaper, paper_id) is None:
-        return False
-    if read:
-        session.execute(insert(EvoReadingProgress).values(user_id=user_id, paper_id=paper_id)
-                        .on_conflict_do_nothing(index_elements=["user_id", "paper_id"]))
-    else:
-        session.execute(delete(EvoReadingProgress).where(EvoReadingProgress.user_id == user_id,
-                                                         EvoReadingProgress.paper_id == paper_id))
-    session.commit()
-    return True
+    """Tick or untick a paper for a user, and the feed item that is the same paper. False if it is unknown."""
+    from athena.database.personal import set_paper_read
+    return set_paper_read(session, user_id, paper_id, read)
 
 
 def reading_path(session: Session, topic: EvoTopic, user_id: UUID | None, n: int = 10) -> dict:

@@ -43,6 +43,7 @@ class FeedItemResponse(BaseModel):
     related_count: int = 0
     milestones_cited: int = 0
     citation_gain_7d: Optional[int] = None
+    me: Optional[dict] = None  # the user's own state (athena.database.personal.overlay); never cached
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -202,6 +203,7 @@ class SavedListResponse(BaseModel):
     id: UUID
     name: str
     item_count: int = 0
+    read_count: int = 0  # items in it the user marked read
     created_at: Optional[datetime] = None
     # Populated only when a list is queried in the context of a specific item.
     contains_item: Optional[bool] = None

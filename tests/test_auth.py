@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from athena.api import auth
 from athena.api.deps import get_db, get_redis
 from athena.api.main import app
-from athena.core.models import SavedList, SavedListItem, User, UserSession
+from athena.core.models import ItemRead, SavedList, SavedListItem, User, UserHighlight, UserNote, UserSession
 
 pytestmark = pytest.mark.real_auth
 
@@ -42,7 +42,8 @@ class FakeRedis:
 @pytest.fixture
 def db():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    tables = [User.__table__, UserSession.__table__, SavedList.__table__, SavedListItem.__table__]
+    tables = [User.__table__, UserSession.__table__, SavedList.__table__, SavedListItem.__table__,
+              ItemRead.__table__, UserNote.__table__, UserHighlight.__table__]
     for table in tables:
         table.create(engine)
     Session = sessionmaker(bind=engine)

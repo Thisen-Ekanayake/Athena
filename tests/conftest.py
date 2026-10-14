@@ -2,8 +2,17 @@
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import ARRAY
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
 
 from athena.core.models import User
+
+
+@compiles(JSONB, "sqlite")
+@compiles(ARRAY, "sqlite")
+def _as_json(type_, compiler, **kw):  # Postgres types in tables SQLite tests create; SQLite stores them as JSON
+    return "JSON"
 
 ADMIN = User(id=uuid4(), email="admin@example.com", display_name="Admin", password_hash="-", role="admin",
              is_active=True, must_change_password=False)
