@@ -125,6 +125,14 @@ def test_without_a_week_old_snapshot_old_items_count_as_unchanged_and_new_ones_a
         assert scoring._week_ago_metrics(new, s, 0.0) == (0, 0.0)
 
 
+def test_full_corpus_runs_stream_every_item_id(Session, monkeypatch):
+    monkeypatch.setattr(scoring, "SessionLocal", Session)
+    with Session() as s:
+        source = add_source(s)
+        ids = {add_item(s, source, arxiv=f"2608.0000{i}").id for i in range(3)}
+    assert set(scoring._iter_item_ids(select(ContentItem.id))) == ids  # it raised AttributeError before
+
+
 def test_no_engagement_data_means_no_engagement_velocity():
     assert scoring.engagement_raw([]) == 0.0
     assert compute_velocity_score(0, scoring.engagement_raw([]), 0, 0.0) == 0.0

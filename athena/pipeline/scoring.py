@@ -358,7 +358,7 @@ def _iter_item_ids(stmt) -> Any:
     server-side cursor instead of loading the whole result set into memory.
     """
     with SessionLocal() as session:
-        result = session.execute(stmt).execution_options(yield_per=CHUNK_SIZE)
+        result = session.execute(stmt.execution_options(yield_per=CHUNK_SIZE))
         for row in result.scalars():
             yield row
 
