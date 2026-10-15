@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, NavLink, useNavigate, useParams } from 'react-router-dom'
 import { ArrowDownWideNarrow, ArrowUpNarrowWide, Check, Eye, EyeOff, Pencil, RefreshCw, Trash2, X, ExternalLink } from 'lucide-react'
-import { apiClient, type Source } from '../api/client'
+import type { Source } from '../api/client'
 import { apiErrorMessage } from '../api/error'
 import { useCreateUser, useCurrentUser, useIsAdmin, useResetPassword, useSetOnboarded, useUpdateUser, useUsers, type AuthUser, type IssuedUser, type Role } from '../api/queries/auth'
 import { useApiKeys, useDeleteApiKey, useSetApiKey } from '../api/queries/app_settings'
@@ -9,6 +9,7 @@ import { useClusters, useFetchHealth, useScoringHealth } from '../api/queries/ph
 import { useAddSource, useSources, useToggleSource, useUpdateSource, type PreviewResponse } from '../api/queries/sources'
 import { timeAgo } from '../components/items/format'
 import { SyncLog } from '../components/layout/SyncLog'
+import { useStartSync } from '../api/queries/sync'
 import { SharingSettings } from '../features/evolution/SharingSettings'
 import { ModelsCard } from '../features/settings/ModelsCard'
 import { ScoringSettings } from '../features/settings/ScoringSettings'
@@ -666,17 +667,15 @@ function HealthSection() {
 /* ── Sync ── */
 
 function SyncSection() {
-  const [starting, setStarting] = useState(false)
+  const startSync = useStartSync()
+  const starting = startSync.isPending
   const [error, setError] = useState<string | null>(null)
   const start = async () => {
-    setStarting(true)
     setError(null)
     try {
-      await apiClient.post('/sync')
+      await startSync.mutateAsync()
     } catch (e) {
       setError(apiErrorMessage(e, 'The sync could not be started.'))
-    } finally {
-      setStarting(false)
     }
   }
   return (

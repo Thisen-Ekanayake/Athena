@@ -1,12 +1,12 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, Check, Download, GitBranch, Search } from 'lucide-react'
-import { apiClient } from '../../api/client'
 import { apiErrorMessage } from '../../api/error'
 import { useCurrentUser, useSetOnboarded } from '../../api/queries/auth'
 import { useWatches } from '../../api/queries/inbox'
 import { useSources } from '../../api/queries/sources'
 import { SyncLog } from '../../components/layout/SyncLog'
+import { useStartSync } from '../../api/queries/sync'
 import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
 import { Notice } from '../../ui/Notice'
@@ -309,10 +309,11 @@ function GoStep({ admin }: { admin: boolean }) {
   const maps = all.filter((w) => w.kind === 'map').length
   const sources = all.filter((w) => w.kind === 'source').length
 
+  const startSync = useStartSync()
   const sync = async () => {
     setSyncError(null)
     try {
-      await apiClient.post('/sync')
+      await startSync.mutateAsync()
       setSyncing(true)
     } catch (e) {
       setSyncError(apiErrorMessage(e, 'The sync could not start. Is the worker running?'))
