@@ -25,20 +25,49 @@ API_URL="http://127.0.0.1:8000"
 FRONTEND_URL="http://localhost:5173"
 
 # ---------------------------------------------------------------------------
+# Is any target (a pid, or -pgid for a whole process group) still alive?
+any_alive() {
+  for t in "$@"; do kill -0 -- "$t" 2>/dev/null && return 0; done
+  return 1
+}
+
+# SIGTERM the targets, then SIGKILL whatever is left after a grace period. llama-server finishes the
+# generation in flight before it exits on SIGTERM, which can take a minute, and holds the GPU until then.
+terminate() {
+  [ $# -gt 0 ] || return 0
+  for t in "$@"; do kill -TERM -- "$t" 2>/dev/null || true; done
+  for _ in $(seq 1 20); do
+    any_alive "$@" || return 0
+    sleep 0.5
+  done
+  echo "   still running after 10s; killing"
+  for t in "$@"; do kill -KILL -- "$t" 2>/dev/null || true; done
+}
+
 stop_all() {
   echo ">> Stopping local processes..."
+  local targets=()
   for svc in api worker summary evolution frontend llm; do
     pidfile="$RUN_DIR/$svc.pid"
     if [ -f "$pidfile" ]; then
       pid="$(cat "$pidfile")"
-      # kill the process group so child processes (vite, celery pool) die too
-      if kill -0 "$pid" 2>/dev/null; then
-        kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
-        echo "   stopped $svc (pid $pid)"
+      # the process group, so child processes (vite, celery pool, model instances) die too
+      if kill -0 -- -"$pid" 2>/dev/null; then
+        targets+=("-$pid")
+        echo "   stopping $svc (pid $pid)"
       fi
       rm -f "$pidfile"
     fi
   done
+  terminate "${targets[@]}"
+  # A model server whose pid file is gone (one that outlived an earlier --stop was adopted by the next
+  # start without one) is found by its preset; its model instances are its children.
+  targets=()
+  for pid in $(pgrep -f '^[^ ]*llama-server .*--models-preset config/llama-router\.ini'); do
+    targets+=("$pid" $(pgrep -P "$pid"))
+    echo "   stopping llm (pid $pid)"
+  done
+  terminate "${targets[@]}"
   echo ">> Stopping infra containers..."
   docker compose -f "$INFRA_COMPOSE" stop db redis qdrant 2>/dev/null || true
   echo "Stopped."
