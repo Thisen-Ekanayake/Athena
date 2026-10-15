@@ -257,8 +257,8 @@ def _get_scraper(source, source_id: str):
     if stype == SourceType.API:
         if "arxiv" in url:
             return ArXivScraper(source_id=source_id)
-    elif stype == SourceType.RSS:
-        cat = source.category.value if hasattr(source.category, 'value') else str(source.category)
+    cat = source.category.value if hasattr(source.category, 'value') else str(source.category)
+    if stype == SourceType.RSS:
         return RSSScraper(source_id=source_id, source_category=cat)
     elif stype == SourceType.SCRAPE:
         # Route to API-based scrapers where possible to avoid fragile headless browser
@@ -269,7 +269,8 @@ def _get_scraper(source, source_id: str):
         elif "substack" in url:
             return SubstackScraper(source_id=source_id)
         else:
-            return PlaywrightScraper(source_id=source_id)
+            from athena.database.operations import known_urls
+            return PlaywrightScraper(source_id=source_id, source_category=cat, known=known_urls)
     return None
 
 
