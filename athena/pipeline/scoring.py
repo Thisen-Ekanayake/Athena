@@ -33,7 +33,7 @@ from athena.pipeline.signals import (
 from athena.pipeline.mlflow_utils import mlflow_run, ml_log
 
 SCORING_QUEUE_KEY = "athena:scoring_queue"
-BATCH_SIZE = 20
+BATCH_SIZE = 200  # scoring is a few queries an item; 20 a minute fell behind a sync's arXiv papers
 # Stream rows from the DB in bounded chunks so full-corpus tasks don't
 # materialise every ContentItem in RAM at once.
 CHUNK_SIZE = 500

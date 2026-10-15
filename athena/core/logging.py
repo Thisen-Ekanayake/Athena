@@ -1,30 +1,26 @@
-import os
 from loguru import logger
 
 from athena.core.redis_client import get_redis
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-SYNC_LOG_CHANNEL = "athena:sync:logs"
-
 
 class RedisSink:
+    """Keeps a sync's log lines with the sync, so the UI can show them during the sync and after it."""
+
     def __init__(self):
         self.redis_client = get_redis()
 
     def write(self, message):
-        # message is a string from loguru
+        from athena.pipeline import sync_status
         try:
-            # We can parse the loguru message or just send it as is
-            # For simplicity, we send the raw string
-            self.redis_client.publish(SYNC_LOG_CHANNEL, message.strip())
+            sync_status.log(self.redis_client, message.record["extra"]["sync_id"], message.strip())
         except Exception as e:
             # Don't use the logger here to avoid infinite recursion if it fails
-            print(f"Failed to publish log to Redis: {e}")
+            print(f"Failed to store a sync log line in Redis: {e}")
 
 
 def setup_redis_logging():
-    """Add a Redis sink to loguru to stream sync logs."""
+    """Add a Redis sink to loguru for the lines logged inside a sync (``logger.contextualize(sync_id=...)``)."""
     sink = RedisSink()
-    # We only want to stream INFO and above, and maybe filter by module if needed
-    logger.add(sink.write, level="INFO", format="{time:HH:mm:ss} | {level: <8} | {message}")
+    logger.add(sink.write, level="INFO", format="{time:HH:mm:ss} | {level: <8} | {message}",
+               filter=lambda record: bool(record["extra"].get("sync_id")))
     return sink

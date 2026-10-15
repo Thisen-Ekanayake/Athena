@@ -5,6 +5,9 @@ from athena.core.schemas import ContentItemCreate
 
 
 class BaseScraper(ABC):
+    # How many items the last fetch listed, for scrapers that leave already-stored ones out of what they return
+    found: int | None = None
+
     def __init__(self, source_id: str):
         self.source_id = source_id
 

@@ -24,7 +24,7 @@ class RSSScraper(BaseScraper):
                 feed = feedparser.parse(response.text)
                 return [(entry, url) for entry in feed.entries]
             except Exception as e:
-                logger.error(f"Error fetching RSS from {url}: {e}")
+                logger.error(f"Error fetching RSS from {url}: {e!r}")
                 raise e
 
     def parse(self, raw: Any) -> ContentItemCreate:

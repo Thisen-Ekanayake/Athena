@@ -6,6 +6,7 @@ import { Button } from '../../ui/Button'
 import { CommandPalette } from '../command/CommandPalette'
 import { PaperPanel } from '../paper/PaperPanel'
 import { Sidebar } from './Sidebar'
+import { SyncDialog } from './SyncLog'
 import { TopBar } from './TopBar'
 
 /** Sidebar, top bar and page, plus the two overlays every page shares: ⌘K search and the paper panel. */
@@ -49,6 +50,7 @@ export function AppShell() {
 
       <PaperPanel />
       <CommandPalette />
+      <SyncDialog />
     </div>
   )
 }

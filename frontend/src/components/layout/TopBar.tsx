@@ -1,44 +1,13 @@
-import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Menu, RefreshCw, Search } from 'lucide-react'
-import { apiClient } from '../../api/client'
-import { useSources } from '../../api/queries/sources'
+import { Menu, Search } from 'lucide-react'
 import { usePaletteStore } from '../../store/panelStore'
 import { Button } from '../../ui/Button'
 import { Kbd } from '../../ui/Kbd'
 import { OwlCoin } from '../../ui/OwlCoin'
-import { timeAgo } from '../items/format'
 import { InboxBell } from './InboxBell'
-import { SyncDialog } from './SyncLog'
-
-/** The most recent fetch across all sources, as "4 minutes ago". */
-function useLastSynced() {
-  const { data: sources } = useSources()
-  const latest = sources
-    ?.map((s) => s.last_fetched_at)
-    .filter((d): d is string => !!d)
-    .sort()
-    .at(-1)
-  return latest ? timeAgo(latest) : null
-}
 
 export function TopBar({ onMenu }: { onMenu: () => void }) {
   const openPalette = usePaletteStore((s) => s.open)
-  const lastSynced = useLastSynced()
-  const [showSync, setShowSync] = useState(false)
-  const [starting, setStarting] = useState(false)
-
-  const sync = async () => {
-    setShowSync(true)
-    setStarting(true)
-    try {
-      await apiClient.post('/sync')
-    } catch {
-      // The dialog's log shows whether the sync started.
-    } finally {
-      setStarting(false)
-    }
-  }
 
   return (
     <div className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-bg/85 px-4 backdrop-blur-md md:px-6">
@@ -55,14 +24,10 @@ export function TopBar({ onMenu }: { onMenu: () => void }) {
         <span className="min-w-0 flex-1 truncate">Search papers and topics, or ask a question</span>
         <Kbd className="max-sm:hidden">⌘K</Kbd>
       </button>
-      <div className="ml-auto flex items-center gap-2">
+      {/* Sync lives in the sidebar now; the bell takes its corner */}
+      <div className="ml-auto flex items-center">
         <InboxBell />
-        {lastSynced && <span className="text-[12px] whitespace-nowrap text-fg-3 max-lg:hidden">Synced {lastSynced}</span>}
-        <Button variant="secondary" size="sm" onClick={sync} disabled={starting} title="Fetch new items from every source">
-          <RefreshCw className={starting ? 'animate-spin' : undefined} /> <span className="max-sm:sr-only">Sync</span>
-        </Button>
       </div>
-      {showSync && <SyncDialog onClose={() => setShowSync(false)} />}
     </div>
   )
 }

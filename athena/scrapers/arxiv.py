@@ -3,19 +3,29 @@ import xml.etree.ElementTree as ET
 import asyncio
 import time
 from typing import List, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from athena.scrapers.base import BaseScraper
 from athena.core.schemas import ContentItemCreate
 from athena.core.models import ContentCategory
 from loguru import logger
 
-# All 4 required arXiv categories from the acquisition plan
-ARXIV_DEFAULT_QUERY = "cat:cs.AI OR cat:cs.LG OR cat:cs.CL OR stat.ML"
+# All 4 required arXiv categories from the acquisition plan. Each needs its cat: prefix: a bare stat.ML
+# searched every field for that text instead of the category.
+ARXIV_DEFAULT_QUERY = "cat:cs.AI OR cat:cs.LG OR cat:cs.CL OR cat:stat.ML"
 ARXIV_DEFAULT_MAX_RESULTS = 50
+# A sync takes every paper since the newest one stored, up to this many; the categories get several hundred
+# to over a thousand a day, and the newest 50 alone missed most of them.
+ARXIV_MAX_PER_SYNC = 1000
+ARXIV_PAGE_SIZE = 200
+ARXIV_PAGE_DELAY = 3.0  # seconds between pages, as arXiv's API terms ask
 
 # Global state to enforce 3 req/s limit across all ArXivScraper instances in this process
 _LAST_ARXIV_CALL_TIME = 0.0
 _ARXIV_LOCK = asyncio.Lock()
+
+
+def _aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 class ArXivScraper(BaseScraper):
@@ -23,33 +33,63 @@ class ArXivScraper(BaseScraper):
     NAMESPACE = {'atom': 'http://www.w3.org/2005/Atom'}
 
     async def fetch(self, search_query: str = ARXIV_DEFAULT_QUERY,
-                    max_results: int = ARXIV_DEFAULT_MAX_RESULTS) -> List[Any]:
-        """Fetch raw arXiv Atom XML entries and return as parsed XML element list."""
+                    max_results: int = ARXIV_DEFAULT_MAX_RESULTS,
+                    since: datetime | None = None) -> List[Any]:
+        """The newest papers as Atom XML entries, newest first.
+
+        Without ``since``, the newest ``max_results``. With it, pages back until papers published before
+        ``since`` (the newest one already stored), stopping at ``max_results``.
+        """
+        entries: List[Any] = []
+        async with httpx.AsyncClient() as client:
+            while len(entries) < max_results:
+                size = min(ARXIV_PAGE_SIZE, max_results - len(entries))
+                if entries:
+                    await asyncio.sleep(ARXIV_PAGE_DELAY)
+                page = await self._page(client, search_query, len(entries), size)
+                if not page and entries:
+                    # arXiv now and then answers a deep page with nothing; one more try before stopping
+                    await asyncio.sleep(ARXIV_PAGE_DELAY)
+                    page = await self._page(client, search_query, len(entries), size)
+                if not page:
+                    break
+                for entry in page:
+                    if since is not None and self._published(entry) < _aware(since):
+                        return entries
+                    entries.append(entry)
+                if since is None:
+                    break  # one page is all a plain fetch asks for
+        return entries[:max_results]
+
+    async def _page(self, client: httpx.AsyncClient, search_query: str, start: int, size: int) -> List[Any]:
         params = {
             "search_query": search_query,
-            "start": 0,
-            "max_results": max_results,
+            "start": start,
+            "max_results": size,
             "sortBy": "submittedDate",
             "sortOrder": "descending"
         }
-        async with httpx.AsyncClient() as client:
-            try:
-                global _LAST_ARXIV_CALL_TIME
-                async with _ARXIV_LOCK:
-                    now = time.time()
-                    elapsed = now - _LAST_ARXIV_CALL_TIME
-                    if elapsed < 0.34:  # 3 requests per second limit
-                        await asyncio.sleep(0.34 - elapsed)
+        try:
+            global _LAST_ARXIV_CALL_TIME
+            async with _ARXIV_LOCK:
+                now = time.time()
+                elapsed = now - _LAST_ARXIV_CALL_TIME
+                if elapsed < 0.34:  # 3 requests per second limit
+                    await asyncio.sleep(0.34 - elapsed)
 
-                    response = await client.get(self.BASE_URL, params=params, timeout=30.0)
-                    _LAST_ARXIV_CALL_TIME = time.time()
+                response = await client.get(self.BASE_URL, params=params, timeout=30.0)
+                _LAST_ARXIV_CALL_TIME = time.time()
 
-                response.raise_for_status()
-                root = ET.fromstring(response.text)
-                return root.findall('atom:entry', self.NAMESPACE)
-            except Exception as e:
-                logger.error(f"Error fetching from ArXiv: {e}")
-                raise e
+            response.raise_for_status()
+            root = ET.fromstring(response.text)
+            return root.findall('atom:entry', self.NAMESPACE)
+        except Exception as e:
+            logger.error(f"Error fetching from ArXiv: {e!r}")
+            raise e
+
+    def _published(self, entry: Any) -> datetime:
+        published = entry.find('atom:published', self.NAMESPACE).text.strip()
+        return datetime.fromisoformat(published.replace('Z', '+00:00'))
 
     def parse(self, entry: Any) -> ContentItemCreate:
         """Normalise a single arXiv Atom XML entry to ContentItemCreate."""
@@ -57,8 +97,7 @@ class ArXivScraper(BaseScraper):
 
         title = entry.find('atom:title', ns).text.strip().replace('\n', ' ')
         abstract_url = entry.find('atom:id', ns).text.strip()
-        published_str = entry.find('atom:published', ns).text.strip()
-        published_at = datetime.fromisoformat(published_str.replace('Z', '+00:00'))
+        published_at = self._published(entry)
 
         authors = [
             author.find('atom:name', ns).text

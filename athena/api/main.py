@@ -108,7 +108,7 @@ def create_app() -> FastAPI:
     app.include_router(trending.router, dependencies=login)
     app.include_router(search.router, dependencies=login)
     app.include_router(sources.router, dependencies=login)
-    app.include_router(sync.router, dependencies=admin)
+    app.include_router(sync.router, dependencies=login)  # starting one is for admins; the route says so
     app.include_router(app_settings.router, dependencies=admin)
     app.include_router(saved.router, dependencies=login)
     app.include_router(evolution.router, dependencies=login)

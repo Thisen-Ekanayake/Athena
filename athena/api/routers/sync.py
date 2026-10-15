@@ -1,58 +1,42 @@
-import json
-from fastapi import APIRouter, BackgroundTasks, Request
-from fastapi.responses import StreamingResponse
-from athena.pipeline.celery_app import celery_app
-from athena.core.logging import SYNC_LOG_CHANNEL
-from athena.core.redis_client import get_redis
-import asyncio
+"""Starting a sync of every source, and its progress for the sidebar and the sync dialog."""
+from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
+
+from athena.api import auth
+from athena.api.deps import get_redis
+from athena.core.models import User
+from athena.database.operations import fetch_durations, get_active_sources
+from athena.pipeline import sync_status
+from athena.pipeline.celery_app import celery_app
 
 router = APIRouter(prefix="/api/v1/sync", tags=["Sync"])
 
 
-@router.post("")
-async def trigger_sync(background_tasks: BackgroundTasks):
+@router.post("", dependencies=[Depends(auth.require_admin)])
+def trigger_sync(r=Depends(get_redis)):
+    """Crawl every active source in the background; 409 while a sync is already running.
+
+    The sync is opened here, not in the worker, so its progress shows at once, including when the worker
+    is busy or down (the status then says it is waiting for the worker).
     """
-    Trigger a manual sync of all active sources.
-    This runs the crawl_all_sources task in the background (via Celery).
-    """
+    sources = get_active_sources()
+    if not sources:
+        raise HTTPException(status_code=400, detail="There are no active sources to sync")
+    durations = fetch_durations([s.id for s in sources])
+    sync_id = sync_status.start(r, [(str(s.id), s.name, durations.get(str(s.id))) for s in sources], "manual")
+    if sync_id is None:
+        raise HTTPException(status_code=409, detail="A sync is already running")
     logger.info("Manual sync triggered via API")
-    celery_app.send_task("athena.pipeline.tasks.crawl_all_sources")
-    return {"status": "Sync triggered", "message": "Scraping pipeline has been started in the background."}
+    celery_app.send_task("athena.pipeline.tasks.crawl_all_sources", kwargs={"sync_id": sync_id})
+    return sync_status.status(r)
 
 
-@router.get("/events")
-async def sync_events(request: Request):
-    """
-    Stream live sync logs to the client via Server-Sent Events (SSE).
-    """
-    async def log_generator():
-        r = get_redis()
-        pubsub = r.pubsub()
-        pubsub.subscribe(SYNC_LOG_CHANNEL)
-
-        try:
-            # Send initial message
-            yield f"data: {json.dumps({'message': 'Connection established. Waiting for logs...'})}\n\n"
-
-            while True:
-                if await request.is_disconnected():
-                    break
-
-                # Check for messages
-                message = pubsub.get_message(ignore_subscribe_messages=True)
-                if message:
-                    log_data = message['data']
-                    if isinstance(log_data, bytes):
-                        log_data = log_data.decode('utf-8')
-
-                    yield f"data: {json.dumps({'message': log_data})}\n\n"
-
-                await asyncio.sleep(0.1)  # Avoid pegging CPU
-        except Exception as e:
-            logger.error(f"Error in log generator: {e}")
-        finally:
-            pubsub.unsubscribe(SYNC_LOG_CHANNEL)
-            pubsub.close()
-
-    return StreamingResponse(log_generator(), media_type="text/event-stream")
+@router.get("/status")
+def sync_progress(
+    log: bool = Query(False, description="Include the log lines (admins only)"),
+    log_after: int = Query(0, ge=0, description="Only log lines after this sequence number"),
+    user: User = Depends(auth.active_user),
+    r=Depends(get_redis),
+):
+    """The latest sync's progress. Its log (source URLs and errors) is for admins only, and only when asked."""
+    return sync_status.status(r, with_log=log and user.role == "admin", log_after=log_after)

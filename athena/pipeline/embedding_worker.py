@@ -1,4 +1,5 @@
 import os
+import time
 from typing import List
 from datetime import datetime
 from loguru import logger
@@ -18,6 +19,7 @@ QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 COLLECTION_NAME = "athena_content"
 EMBEDDING_DIM = llm.EMBED_DIM
 BATCH_SIZE = 20
+DRAIN_SECONDS = 45  # a run keeps taking batches this long; beat starts one a minute
 
 # Clients
 qdrant = QdrantClient(url=QDRANT_URL)
@@ -55,20 +57,22 @@ def process_embedding_queue():
 
     r = get_redis()
 
-    item_ids = []
-    # Pull up to BATCH_SIZE items
-    for _ in range(BATCH_SIZE):
-        item_id = r.lpop("athena:embedding_queue")
-        if not item_id:
-            break
-        item_ids.append(item_id.decode('utf-8'))
+    # Keep taking batches for most of the minute: one batch of 20 a minute took most of an hour to embed a
+    # sync's worth of arXiv papers. The deadline keeps one run from overlapping the next for long.
+    deadline = time.monotonic() + DRAIN_SECONDS
+    while time.monotonic() < deadline:
+        item_ids = []
+        for _ in range(BATCH_SIZE):
+            item_id = r.lpop("athena:embedding_queue")
+            if not item_id:
+                break
+            item_ids.append(item_id.decode('utf-8'))
 
-    if not item_ids:
-        return
+        if not item_ids:
+            return
 
-    logger.info(f"Processing batch of {len(item_ids)} items for embedding.")
-
-    process_batch(item_ids)
+        logger.info(f"Processing batch of {len(item_ids)} items for embedding.")
+        process_batch(item_ids)
 
 
 def process_batch(item_ids: List[str]):

@@ -5,6 +5,7 @@ import { useAppStore, type Accent } from '../../store/appStore'
 import { Button } from '../../ui/Button'
 import { OwlCoin } from '../../ui/OwlCoin'
 import { cn } from '../../ui/cn'
+import { SyncPanel } from './SyncPanel'
 
 const NAV: { to: string; label: string; icon: LucideIcon; end?: boolean }[] = [
   { to: '/', label: 'Home', icon: House, end: true },
@@ -90,7 +91,8 @@ export function Sidebar({ compact = true, onNavigate, className }: { compact?: b
       <nav className="grid gap-0.5" aria-label="Main">
         {NAV.map((n) => <Item key={n.to} {...n} compact={compact} onNavigate={onNavigate} />)}
       </nav>
-      <div className="mt-auto grid gap-2">
+      <div className="mt-auto grid min-w-0 grid-cols-1 gap-2">
+        <SyncPanel compact={compact} />
         <div role="group" aria-label="Accent colour" className={cn('flex items-center gap-1.5 px-2.5', compact && 'max-lg:flex-col max-lg:px-0')}>
           <span className={cn('mr-auto text-[12px] text-fg-3', compact && 'max-lg:sr-only')}>Look</span>
           {ACCENTS.map((a) => (
