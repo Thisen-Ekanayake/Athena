@@ -204,7 +204,9 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
       },
     },
     { selector: 'edge.strict.thread', style: { 'line-color': c.strict, 'target-arrow-color': c.strict, width: 2.4 } },
-    { selector: 'edge.faded', style: { opacity: 0.03 } },
+    // Fading must not bring back citations that are switched off: thousands of faint lines read as haze.
+    { selector: 'edge.faded', style: { opacity: showCitations ? 0.03 : 0 } },
+    { selector: 'edge.main-path.faded, edge.strict.faded, edge.loose.faded', style: { opacity: 0.03 } },
   ]
 }
 
