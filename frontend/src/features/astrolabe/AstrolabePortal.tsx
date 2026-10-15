@@ -7,9 +7,7 @@ import type { AstrolabeHandle } from './scene'
 export function AstrolabePortal({ onCoreClick, className }: { onCoreClick?: () => void; className?: string }) {
   const accent = useAppStore((s) => s.accent)
   const wrapRef = useRef<HTMLDivElement>(null)
-  const tipRef = useRef<HTMLDivElement>(null)
   const clickRef = useRef(onCoreClick)
-  const [hoverCore, setHoverCore] = useState(false)
   const [failed, setFailed] = useState(false)
 
   useEffect(() => {
@@ -33,13 +31,6 @@ export function AstrolabePortal({ onCoreClick, className }: { onCoreClick?: () =
         createAstrolabe(canvas, {
           mode: 'portal',
           paletteEl: wrap,
-          onCoreHover: setHoverCore,
-          onPointer: (x, y, w) => {
-            const tip = tipRef.current
-            if (!tip) return
-            tip.style.left = `${Math.min(Math.max(x, 100), w - 100)}px`
-            tip.style.top = `${y}px`
-          },
           onCoreClick: () => clickRef.current?.(),
         }),
       )
@@ -65,14 +56,6 @@ export function AstrolabePortal({ onCoreClick, className }: { onCoreClick?: () =
           style={{ background: 'radial-gradient(circle, var(--neb-1), var(--sky) 65%)', boxShadow: '0 0 0 5px var(--metal), 0 0 0 22px transparent, 0 0 0 23px var(--metal)' }}
         />
       )}
-      <div
-        ref={tipRef}
-        hidden={!hoverCore}
-        className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-[calc(100%+16px)] whitespace-nowrap rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[12px] text-fg-3 shadow-pop"
-      >
-        <b className="block text-[13px] font-medium text-fg">Ask Athena</b>
-        Click to search or ask
-      </div>
     </div>
   )
 }
