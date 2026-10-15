@@ -3,6 +3,7 @@ from sqlalchemy import select
 from athena.database.db import SessionLocal
 from athena.core.models import Source, ContentItem
 from athena.core.schemas import SourceCreate, ContentItemCreate
+from datetime import datetime
 from loguru import logger
 
 
@@ -100,3 +101,37 @@ def save_metric_snapshot(item_id, citation_count: int, engagement_raw: float):
         )
         session.add(snapshot)
         session.commit()
+
+
+def fetch_durations(source_ids: list) -> dict[str, float]:
+    """Each source's usual fetch time in seconds: the median of its last five successful fetches."""
+    from statistics import median
+    from athena.core.models import FetchLog
+    out: dict[str, float] = {}
+    with SessionLocal() as session:
+        for source_id in source_ids:
+            rows = session.execute(
+                select(FetchLog.duration_ms)
+                .where(FetchLog.source_id == source_id, FetchLog.status == "success")
+                .order_by(FetchLog.created_at.desc()).limit(5)
+            ).scalars().all()
+            if rows:
+                out[str(source_id)] = median(rows) / 1000
+    return out
+
+
+def latest_published(source_id) -> datetime | None:
+    """When the newest item this source has given us was published."""
+    from sqlalchemy import func
+    with SessionLocal() as session:
+        return session.execute(
+            select(func.max(ContentItem.published_at)).where(ContentItem.source_id == source_id)
+        ).scalar_one_or_none()
+
+
+def known_urls(urls: list[str]) -> set[str]:
+    """The URLs among ``urls`` that are already stored."""
+    if not urls:
+        return set()
+    with SessionLocal() as session:
+        return set(session.execute(select(ContentItem.url).where(ContentItem.url.in_(urls))).scalars())

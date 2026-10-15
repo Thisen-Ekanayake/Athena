@@ -35,13 +35,13 @@ setup_redis_logging()
 DLQ_KEY = "athena:dlq"  # Redis list for permanently failed tasks
 
 
-def _push_to_dlq(source_id: str, exc: Exception):
+def _push_to_dlq(source_id: str, error: str):
     """Push a permanently failed task to the dead-letter queue in Redis."""
     import json
     r = get_redis()
-    payload = json.dumps({"source_id": source_id, "error": str(exc), "ts": time.time()})
+    payload = json.dumps({"source_id": source_id, "error": error, "ts": time.time()})
     r.rpush(DLQ_KEY, payload)
-    logger.critical(f"[DLQ] Permanent failure for source {source_id}: {exc}")
+    logger.critical(f"[DLQ] Permanent failure for source {source_id}: {error}")
 
 
 @celery_app.on_after_configure.connect
@@ -165,84 +165,60 @@ def enqueue_tier2_summaries():
     logger.info(f"Queued {queued} items for summarisation.")
 
 
-def _publish_sync_event(payload: dict):
-    """Publish a structured sync progress event to Redis."""
-    import json
-    from athena.core.logging import SYNC_LOG_CHANNEL
-    try:
-        r = get_redis()
-        r.publish(SYNC_LOG_CHANNEL, json.dumps(payload))
-    except Exception as e:
-        logger.warning(f"Failed to publish sync event: {e}")
+def describe_error(exc: BaseException) -> str:
+    """An exception as text that is never blank: some (httpx timeouts, connection resets) have no message."""
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 
 
-def _publish_crawl_progress(status: str):
-    """Increment the sync counter and emit progress/done events."""
-    try:
-        r = get_redis()
-        if not r.exists('athena:sync:state'):
-            return
-
-        r.hincrby('athena:sync:state', 'completed', 1)
-        if status == 'error':
-            r.hincrby('athena:sync:state', 'errors', 1)
-
-        state = {k.decode(): v.decode() for k, v in r.hgetall('athena:sync:state').items()}
-        completed = int(state.get('completed', 0))
-        total = int(state.get('total', 0))
-        errors = int(state.get('errors', 0))
-
-        _publish_sync_event({'type': 'sync_progress', 'completed': completed, 'total': total})
-
-        if total > 0 and completed >= total:
-            overall = 'error' if errors == total else ('partial' if errors > 0 else 'done')
-            _publish_sync_event({
-                'type': 'sync_done',
-                'status': overall,
-                'completed': completed,
-                'errors': errors,
-                'total': total,
-            })
-            r.delete('athena:sync:state')
-    except Exception as e:
-        logger.warning(f"Failed to publish crawl progress: {e}")
+# Seconds before each retry of a failed source. They were 1, 2 and 4 minutes, which held a manual sync's
+# last source for seven minutes; a source that is down for longer is better caught by the next sync.
+RETRY_DELAYS = (15, 30, 60)
 
 
 @celery_app.task
-def crawl_all_sources():
-    logger.info("Starting manual sync of all sources...")
-    sources = get_active_sources()
-    if not sources:
-        logger.warning("No active sources found to sync!")
-        return
+def crawl_all_sources(sync_id: str | None = None):
+    """Crawl every active source. The API opens the sync for a manual one; a scheduled one opens its own."""
+    from athena.database.operations import fetch_durations
+    from athena.pipeline import sync_status
+    r = get_redis()
+    if sync_id is None:
+        sources = get_active_sources()
+        if not sources:
+            logger.warning("No active sources found to sync!")
+            return
+        durations = fetch_durations([s.id for s in sources])
+        sync_id = sync_status.start(r, [(str(s.id), s.name, durations.get(str(s.id))) for s in sources], "scheduled")
+        if sync_id is None:
+            logger.info("A sync is already running; the scheduled one is skipped.")
+            return
+    with logger.contextualize(sync_id=sync_id):
+        ids = sync_status.source_ids(r, sync_id)
+        logger.info(f"Syncing {len(ids)} sources...")
+        for source_id in ids:
+            crawl_source.delay(source_id, sync_id)
 
-    total = len(sources)
-    try:
-        r = get_redis()
-        r.hset('athena:sync:state', mapping={'total': total, 'completed': 0, 'errors': 0})
-        r.expire('athena:sync:state', 7200)
-        _publish_sync_event({'type': 'sync_start', 'total': total})
-    except Exception as e:
-        logger.warning(f"Failed to initialise sync state: {e}")
 
-    logger.info(f"Found {total} active sources. Enqueueing crawl tasks...")
-    for source in sources:
-        crawl_source.delay(str(source.id))
-    logger.info("All crawl tasks have been enqueued.")
-
-
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
-def crawl_source(self, source_id: str):
-    try:
-        asyncio.run(_crawl_source_async(source_id, is_retry=self.request.retries > 0))
-        _publish_crawl_progress('success')
-    except Exception as exc:
-        logger.error(f"Task for source {source_id} failed: {exc}")
-        if self.request.retries >= self.max_retries:
-            _push_to_dlq(source_id, exc)
-            _publish_crawl_progress('error')
-            return  # Drop - already in DLQ, no more retries
-        raise self.retry(exc=exc, countdown=2 ** self.request.retries * 60)
+@celery_app.task(bind=True, max_retries=len(RETRY_DELAYS))
+def crawl_source(self, source_id: str, sync_id: str | None = None):
+    from contextlib import nullcontext
+    from athena.pipeline import sync_status
+    r = get_redis()
+    with logger.contextualize(sync_id=sync_id) if sync_id else nullcontext():
+        sync_status.source_started(r, sync_id, source_id)
+        try:
+            found, new = asyncio.run(_crawl_source_async(source_id, is_retry=self.request.retries > 0))
+        except Exception as exc:
+            error = describe_error(exc)
+            if self.request.retries >= self.max_retries:
+                _push_to_dlq(source_id, error)
+                sync_status.source_finished(r, sync_id, source_id, "error", error=error)
+                return  # Drop - already in DLQ, no more retries
+            delay = RETRY_DELAYS[self.request.retries]
+            logger.warning(f"Retrying in {delay} s: {error}")
+            sync_status.source_retrying(r, sync_id, source_id, error, time.time() + delay)
+            raise self.retry(exc=exc, countdown=delay)
+        sync_status.source_finished(r, sync_id, source_id, "done" if found else "empty", new=new)
 
 
 @celery_app.task(bind=True, max_retries=3, rate_limit="1/s")
@@ -250,7 +226,7 @@ def enrich_arxiv_paper(self, url: str, arxiv_id: str):
     try:
         asyncio.run(_enrich_paper_async(url, arxiv_id))
     except Exception as exc:
-        logger.error(f"Enrichment task failed for {arxiv_id}: {exc}")
+        logger.error(f"Enrichment task failed for {arxiv_id}: {describe_error(exc)}")
         raise self.retry(exc=exc, countdown=60)
 
 
@@ -297,7 +273,8 @@ def _get_scraper(source, source_id: str):
     return None
 
 
-async def _crawl_source_async(source_id: str, is_retry: bool = False):
+async def _crawl_source_async(source_id: str, is_retry: bool = False) -> tuple[int, int]:
+    """Crawl one source: (items it listed, new items saved). Listing nothing is logged as 'empty', not success."""
     from athena.database.db import SessionLocal
     from athena.core.models import Source, FetchLog, QuarantineItem
     from sqlalchemy import select
@@ -306,17 +283,18 @@ async def _crawl_source_async(source_id: str, is_retry: bool = False):
         source = session.execute(select(Source).where(Source.id == source_id)).scalar_one_or_none()
         if not source:
             logger.error(f"Source {source_id} not found.")
-            return
+            return 0, 0
 
         if not source.is_active:
             logger.warning(f"Source {source.name} is inactive. Skipping.")
-            return
+            return 0, 0
 
         logger.info(f"Crawling source: {source.name} ({source.url})")
         start_time = time.time()
 
         items = []
         new_urls = []
+        found = 0
         error_msg = None
         status = "success"
 
@@ -324,11 +302,18 @@ async def _crawl_source_async(source_id: str, is_retry: bool = False):
             scraper = _get_scraper(source, source_id)
             if scraper is None:
                 logger.warning(f"No scraper configured for {source.name}. Skipping.")
-                return
+                status, error_msg = "empty", "No scraper handles this source's type and URL"
+                return 0, 0
 
-            # Use the BaseScraper.run() orchestrator (fetch + parse per item)
-            # This allows per-item Pydantic validation errors to be quarantined
-            raw_items = await scraper.fetch(source.url) if source.type != SourceType.API else await scraper.fetch()
+            # Parse per item, so one record failing validation is quarantined instead of failing the source
+            if isinstance(scraper, ArXivScraper):
+                from athena.database.operations import latest_published
+                from athena.scrapers.arxiv import ARXIV_MAX_PER_SYNC
+                raw_items = await scraper.fetch(since=latest_published(source.id), max_results=ARXIV_MAX_PER_SYNC)
+            else:
+                raw_items = await scraper.fetch(source.url)
+            # Scrapers that skip pages already stored say how many they listed; the rest return all of them
+            found = scraper.found if scraper.found is not None else len(raw_items)
 
             for raw in raw_items:
                 try:
@@ -363,14 +348,20 @@ async def _crawl_source_async(source_id: str, is_retry: bool = False):
                             stage_content_item.delay(item_url, item.abstract or '', item.title)
                 else:
                     logger.info(f"No new items found for {source.name} (all {len(items)} items were duplicates).")
+            elif raw_items:
+                logger.warning(f"None of the {len(raw_items)} items from {source.name} could be read; "
+                               "they are in the quarantine.")
+            elif found:
+                logger.info(f"No new items from {source.name} ({found} listed, all already stored).")
             else:
-                logger.warning(f"No items were correctly parsed from {source.name}.")
+                status, error_msg = "empty", f"Nothing found at {source.url}"
+                logger.warning(f"{source.name} listed nothing at {source.url}; check the source's URL.")
 
             # Reset consecutive failures on success
             source.consecutive_failures = 0
 
         except Exception as e:
-            error_msg = str(e)
+            error_msg = describe_error(e)
             status = "error"
             logger.error(f"Error crawling {source.name}: {error_msg}")
 
@@ -397,6 +388,8 @@ async def _crawl_source_async(source_id: str, is_retry: bool = False):
             from datetime import datetime
             source.last_fetched_at = datetime.utcnow()
             session.commit()
+
+        return found, len(new_urls)
 
 
 @celery_app.task(bind=True, max_retries=2)

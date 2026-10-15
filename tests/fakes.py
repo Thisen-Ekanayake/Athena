@@ -41,3 +41,36 @@ class FakeRedis:
 
     def scan_iter(self, match, count=100):
         return [k for k in list(self.store) if fnmatch.fnmatch(k, match)]
+
+    # Hashes and lists, for the sync's progress and log
+
+    def hset(self, key, field=None, value=None, mapping=None):
+        h = self.store.setdefault(key, {})
+        if field is not None:
+            h[field] = value
+        h.update(mapping or {})
+        return 1
+
+    def hget(self, key, field):
+        return self.store.get(key, {}).get(field)
+
+    def hgetall(self, key):
+        return dict(self.store.get(key, {}))
+
+    def hincrby(self, key, field, n=1):
+        h = self.store.setdefault(key, {})
+        h[field] = int(h.get(field) or 0) + n
+        return h[field]
+
+    def rpush(self, key, *values):
+        self.store.setdefault(key, []).extend(values)
+        return len(self.store[key])
+
+    def lrange(self, key, start, end):
+        items = self.store.get(key, [])
+        return items[start:None if end == -1 else end + 1]
+
+    def ltrim(self, key, start, end):
+        items = self.store.get(key, [])
+        self.store[key] = items[start:None if end == -1 else end + 1]
+        return True
