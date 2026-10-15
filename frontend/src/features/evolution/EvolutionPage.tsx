@@ -54,6 +54,7 @@ const LIMITS = [
   { value: '80', label: '80' },
   { value: '250', label: '250' },
   { value: '600', label: '600' },
+  { value: '0', label: 'All' }, // 0 asks the API for every paper in the map
 ]
 
 type Tab = 'map' | 'path' | 'gaps' | 'ask' | 'people' | 'links' | 'changes' | 'no-full-text'

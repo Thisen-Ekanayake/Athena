@@ -117,7 +117,7 @@ export const useTopicRising = (slug: string, limit = 10) => {
   })
 }
 
-/** ``version`` (status and build time) refetches the map when a build or refinement finishes. */
+/** ``limit`` 0 draws every paper; ``version`` (status and build time) refetches the map when a build or refinement finishes. */
 export const useTopicGraph = (slug: string | undefined, limit: number, version = '', enabled = true) => {
   const scope = useMapScope()
   return useQuery({
