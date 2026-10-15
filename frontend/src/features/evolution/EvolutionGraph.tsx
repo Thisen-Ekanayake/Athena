@@ -43,6 +43,9 @@ interface LaidOutNode extends SimulationNodeDatum {
   milestone: boolean
 }
 
+// Milestone labels are 10px; below this zoom they are under 7px on screen and unreadable.
+const LABEL_MIN_ZOOM = 0.7
+
 const nodeRadius = (n: EvolutionNode) =>
   n.is_milestone ? 9 + 13 * n.milestone_score : 3 + 5 * n.milestone_score
 
@@ -136,6 +139,8 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
         'min-zoomed-font-size': 7, // hide labels too small to read until the user zooms in
       },
     },
+    // The WebGL renderer ignores min-zoomed-font-size, so small labels are also hidden by class.
+    { selector: 'node.milestone.quiet', style: { label: '' } },
     { selector: 'node.main-path', style: { 'border-width': 2, 'border-color': c.path } },
     { selector: 'node.seed', style: { 'border-width': 2, 'border-color': c.seed } },
     { selector: 'node.selected', style: { 'border-width': 3, 'border-color': c.label, 'background-color': c.accent, 'background-opacity': 1 } },
@@ -176,7 +181,8 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
       },
     },
     {
-      // Loose link: no citation, only a text match between a gap and a later paper. Dashed, on request.
+      // Loose link: no citation, only a text match between a gap and a later paper; on request.
+      // Dashed in exports; the WebGL renderer draws every line solid, so its colour tells it apart.
       selector: 'edge.loose',
       style: {
         'curve-style': 'straight',
@@ -208,6 +214,16 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
     { selector: 'edge.faded', style: { opacity: showCitations ? 0.03 : 0 } },
     { selector: 'edge.main-path.faded, edge.strict.faded, edge.loose.faded', style: { opacity: 0.03 } },
   ]
+}
+
+/**
+ * WebGL2 lets the GPU draw the map; without it cytoscape's 2D canvas does, as before.
+ * A software WebGL (no usable GPU) is several times slower than the canvas, so it counts as none.
+ */
+let webglSupport: boolean | undefined
+function hasWebgl() {
+  webglSupport ??= !!document.createElement('canvas').getContext('webgl2', { failIfMajorPerformanceCaveat: true })
+  return webglSupport
 }
 
 /** The paper under the pointer, at its on-screen position. */
@@ -271,6 +287,8 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
           classes: 'loose',
         })),
     ]
+    // The WebGL renderer reads the container's inline background: arrowheads are blended over it.
+    containerRef.current.style.backgroundColor = themeColors().surface
     const cy = cytoscape({
       container: containerRef.current,
       elements,
@@ -279,6 +297,7 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
       minZoom: 0.15,
       maxZoom: 3,
       autoungrabify: true,
+      webgl: hasWebgl(),
     })
     // Open on the milestones; the whole corpus is one zoom-out away.
     const milestones = cy.nodes('.milestone')
@@ -327,6 +346,13 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
       })
     }
     cy.on('viewport', updateAxis)
+    let quiet: boolean | null = null
+    const updateLabels = () => {
+      const next = cy.zoom() < LABEL_MIN_ZOOM
+      if (next !== quiet) cy.nodes('.milestone').toggleClass('quiet', (quiet = next))
+    }
+    cy.on('viewport', updateLabels)
+    updateLabels()
     cy.on('viewport', () => setHovered(null)) // the label would drift off its node while panning
     updateAxis()
     cyRef.current = cy

@@ -534,7 +534,7 @@ function Legend() {
       {dot({ boxShadow: 'inset 0 0 0 2px var(--fg-2)' }, 'On the main path')}
       {dot({ boxShadow: 'inset 0 0 0 2px var(--warn)' }, 'Seed paper')}
       <span className="flex items-center gap-1.5"><span className="inline-block h-0.5 w-4 bg-bad" />Takes on a stated limitation</span>
-      <span className="flex items-center gap-1.5"><span className="inline-block w-4 border-t-2 border-dashed border-warn" />Loose link</span>
+      <span className="flex items-center gap-1.5"><span className="inline-block h-0.5 w-4 bg-warn" />Loose link</span>
     </span>
   )
 }

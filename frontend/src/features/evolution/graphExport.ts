@@ -37,13 +37,23 @@ function ticks(cy: cytoscape.Core, xOf: Map<number, number>, firstYear: number, 
   return out
 }
 
+/** Draws with every milestone label: the screen hides them when zoomed out, but an export is read at full size. */
+async function withLabels<T>(cy: cytoscape.Core, draw: () => T | Promise<T>): Promise<T> {
+  const quiet = cy.nodes('.quiet').removeClass('quiet')
+  try {
+    return await draw()
+  } finally {
+    quiet.addClass('quiet')
+  }
+}
+
 /** The whole map (not just the view) at twice the size, with the year axis drawn under it. */
 export function makeExporter(cy: cytoscape.Core, xOf: Map<number, number>, firstYear: number, lastYear: number): GraphExporter {
   return {
     png: async () => {
       const scale = 2
       const c = colours()
-      const graph = await createImageBitmap(await cy.png({ full: true, scale, bg: c.bg, output: 'blob-promise' }))
+      const graph = await createImageBitmap(await withLabels(cy, () => cy.png({ full: true, scale, bg: c.bg, output: 'blob-promise' })))
       const canvas = document.createElement('canvas')
       canvas.width = graph.width
       canvas.height = graph.height + AXIS * scale
@@ -62,7 +72,7 @@ export function makeExporter(cy: cytoscape.Core, xOf: Map<number, number>, first
     svg: async () => {
       await loadSvg()
       const c = colours()
-      const doc = new DOMParser().parseFromString(cy.svg({ full: true, scale: 1, bg: c.bg }), 'image/svg+xml')
+      const doc = new DOMParser().parseFromString(await withLabels(cy, () => cy.svg({ full: true, scale: 1, bg: c.bg })), 'image/svg+xml')
       const root = doc.documentElement
       const width = parseFloat(root.getAttribute('width') ?? '0')
       const height = parseFloat(root.getAttribute('height') ?? '0')
