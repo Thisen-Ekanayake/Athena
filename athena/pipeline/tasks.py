@@ -256,24 +256,20 @@ def enrich_arxiv_paper(self, url: str, arxiv_id: str):
 
 async def _enrich_paper_async(url: str, arxiv_id: str):
     from athena.scrapers.semanticscholar import SemanticScholarEnricher
-    from athena.scrapers.paperswithcode import PapersWithCodeEnricher
     from athena.database.operations import update_content_item_metrics
 
     ss_enricher = SemanticScholarEnricher()
-    pwc_enricher = PapersWithCodeEnricher()
 
     # Strip version suffix (e.g. 2403.00001v1 -> 2403.00001) as enrichment APIs prefer base IDs
     base_arxiv_id = re.sub(r'v\d+$', '', arxiv_id)
 
     logger.info(f"Enriching paper: {base_arxiv_id} (original: {arxiv_id})")
+    # Papers With Code shut down in 2025 (its API redirects to Hugging Face), so only Semantic Scholar is asked;
+    # repositories it found earlier stay in extra_data and still count towards engagement.
     ss_data = await ss_enricher.fetch_paper_metrics(base_arxiv_id)
-    pwc_data = await pwc_enricher.fetch_paper_artifacts(base_arxiv_id)
 
     citation_count = ss_data.get("citation_count", 0) if ss_data else 0
-    extra_data = {
-        "semantic_scholar": ss_data,
-        "papers_with_code": pwc_data
-    }
+    extra_data = {"semantic_scholar": ss_data}
     update_content_item_metrics(url, citation_count, extra_data)
 
 
