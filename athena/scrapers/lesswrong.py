@@ -36,8 +36,12 @@ class LessWrongScraper(BaseScraper):
     API_URL = LESSWRONG_API
     SITE_NAME = "LessWrong"
 
-    async def fetch(self, limit: int = 20) -> List[Any]:
-        """Fetch recent posts from the GraphQL endpoint."""
+    async def fetch(self, url: str | None = None, limit: int = 20) -> List[Any]:
+        """Fetch recent posts from the GraphQL endpoint. ``url`` (the source's) is unused: the API is fixed.
+
+        The crawl calls ``fetch(source.url)``; with ``limit`` first, the URL went to the API as the post
+        limit and LessWrong returned nothing.
+        """
         async with httpx.AsyncClient() as client:
             try:
                 resp = await client.post(
@@ -52,7 +56,7 @@ class LessWrongScraper(BaseScraper):
                 logger.info(f"{self.SITE_NAME} API returned {len(posts)} posts.")
                 return posts
             except Exception as e:
-                logger.error(f"Error fetching from {self.SITE_NAME} API: {e}")
+                logger.error(f"Error fetching from {self.SITE_NAME} API: {e!r}")
                 raise e
 
     def parse(self, post: Any) -> ContentItemCreate:
