@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/v1/share", tags=["Shared maps"])
 
 RATE_LIMIT = 300
 RATE_WINDOW = 600
-GRAPH_LIMITS = (80, 250, 600)  # the sizes the map page offers
+GRAPH_LIMITS = (80, 250, 600, 0)  # the sizes the map page offers; 0 is every paper
 PRIVATE_TOPIC_FIELDS = ("created_by", "build_stats", "query")
 NOT_FOUND = "This link has expired, was revoked, or sharing is switched off"
 

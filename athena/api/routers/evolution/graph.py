@@ -27,7 +27,7 @@ class MilestoneOverrideRequest(BaseModel):
 @router.get("/topics/{slug}/graph")
 def topic_graph(
     slug: str,
-    limit: int = Query(250, ge=10, le=2000),
+    limit: int = Query(250, ge=0, le=2000, description="Papers to draw; 0 draws every paper"),
     session: Session = Depends(get_db),
     r: redis_lib.Redis = Depends(get_redis),
 ):

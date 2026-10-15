@@ -73,7 +73,7 @@ def _evidence(ctx: EvoCitationContext) -> dict:
 
 
 def topic_graph(session: Session, topic: EvoTopic, limit: int = 250) -> dict:
-    """Milestones, main-path papers and seeds, then the highest-scoring papers up to ``limit``."""
+    """Milestones, main-path papers and seeds, then the highest-scoring papers up to ``limit`` (0: every paper)."""
     overrides = _overrides(session, topic.id)
     rows = _topic_rows(session, topic.id)
     names = method_names(session, {p.id: p.title for _, p in rows})
@@ -81,7 +81,8 @@ def topic_graph(session: Session, topic: EvoTopic, limit: int = 250) -> dict:
     total = len(nodes)
     nodes.sort(key=lambda n: (n["is_milestone"] or n["on_main_path"] or n["role"] == "seed",
                               n["milestone_score"]), reverse=True)
-    nodes = nodes[:max(limit, sum(1 for n in nodes if n["is_milestone"] or n["on_main_path"]))]
+    if limit > 0:
+        nodes = nodes[:max(limit, sum(1 for n in nodes if n["is_milestone"] or n["on_main_path"]))]
     shown = {UUID(n["id"]) for n in nodes}
 
     main = {(r.citing_id, r.cited_id) for r in session.execute(
