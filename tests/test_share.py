@@ -186,6 +186,9 @@ def test_the_map_routes_answer_as_the_map_does_without_private_fields(env):
     assert built.call_args.args[:2] == ("peft", 600)
     assert body["nodes"] == [1] and body["topic"] == {"slug": "peft"}
     assert anonymous().get(f"/api/v1/share/{token}/graph", params={"limit": 2000}).status_code == 422
+    with patch.object(share_routes.graph, "topic_graph", return_value=graph) as built:
+        assert anonymous().get(f"/api/v1/share/{token}/graph", params={"limit": 0}).status_code == 200  # "All"
+    assert built.call_args.args[:2] == ("peft", 0)
 
 
 def test_the_reading_path_has_no_reader_and_never_asks_the_model(env):

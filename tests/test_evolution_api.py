@@ -97,6 +97,18 @@ def test_graph_is_cached(client):
     assert build.call_count == 1
 
 
+def test_graph_limit_zero_draws_every_paper(client):
+    # The map's "All" option asks for limit=0; the size cap stays for anything else.
+    c, _ = client
+    payload = {"topic": SUMMARY, "nodes": [], "edges": [], "total_papers": 0, "year_range": None}
+    with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), \
+            patch(f"{ROUTER_DB}.labels_version", return_value="0-0"), \
+            patch(f"{ROUTER_DB}.topic_graph", return_value=payload) as build:
+        assert c.get("/api/v1/evolution/topics/object-detection/graph", params={"limit": 0}).status_code == 200
+        assert c.get("/api/v1/evolution/topics/object-detection/graph", params={"limit": 5000}).status_code == 422
+    assert build.call_args.kwargs["limit"] == 0
+
+
 def test_new_labels_refresh_the_cached_graph(client):
     # Strict links arrive from the GPU lane without a rebuild, so built_at alone would serve stale edges.
     c, _ = client
