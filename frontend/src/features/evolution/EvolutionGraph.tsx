@@ -208,24 +208,16 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
   ]
 }
 
-/** A fixed field of faint stars behind the map, seeded so it is the same on every visit. */
-const STARS = (() => {
-  let a = 7
-  const rnd = () => {
-    a = (a + 0x6d2b79f5) | 0
-    let t = Math.imul(a ^ (a >>> 15), 1 | a)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-  return Array.from({ length: 220 }, () => ({ x: rnd() * 100, y: rnd() * 100, r: 0.35 + rnd() * rnd() * 1.2, o: 0.15 + rnd() * 0.5 }))
-})()
-
-function StarField() {
-  return (
-    <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
-      {STARS.map((s, i) => <circle key={i} cx={`${s.x}%`} cy={`${s.y}%`} r={s.r} style={{ fill: 'var(--star)' }} opacity={s.o} />)}
-    </svg>
-  )
+/** The paper under the pointer, at its on-screen position. */
+interface Hovered {
+  title: string
+  year: number | null
+  x: number
+  y: number
+  r: number
+  /** Which side of the node the label sits on, so it stays inside the map's box. */
+  below: boolean
+  align: 'left' | 'center' | 'right'
 }
 
 export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations, onExporter }: EvolutionGraphProps) {
@@ -235,6 +227,7 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
   const onExporterRef = useRef(onExporter)
   const accent = useAppStore((s) => s.accent)
   const [ticks, setTicks] = useState<{ year: number; x: number }[]>([])
+  const [hovered, setHovered] = useState<Hovered | null>(null)
 
   useEffect(() => {
     onSelectRef.current = onSelect
@@ -292,6 +285,28 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
     cy.on('tap', (evt) => {
       if (evt.target === cy) onSelectRef.current(null)
     })
+    // Name the paper under the pointer; most papers carry no label.
+    const byId = new Map(nodes.map((n) => [n.id, n]))
+    cy.on('mouseover', 'node', (evt) => {
+      const paper = byId.get(evt.target.id())
+      if (!paper) return
+      const { x, y } = evt.target.renderedPosition()
+      const width = containerRef.current!.clientWidth
+      setHovered({
+        title: paper.title,
+        year: paper.year,
+        x,
+        y,
+        r: evt.target.renderedWidth() / 2,
+        below: y < 70,
+        align: x < 160 ? 'left' : x > width - 160 ? 'right' : 'center',
+      })
+      containerRef.current!.style.cursor = 'pointer'
+    })
+    cy.on('mouseout', 'node', () => {
+      setHovered(null)
+      containerRef.current!.style.cursor = ''
+    })
 
     // Year axis: model x -> screen x follows pan and zoom.
     let frame = 0
@@ -310,12 +325,14 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
       })
     }
     cy.on('viewport', updateAxis)
+    cy.on('viewport', () => setHovered(null)) // the label would drift off its node while panning
     updateAxis()
     cyRef.current = cy
     onExporterRef.current?.(makeExporter(cy, xOf, firstYear, lastYear))
     return () => {
       cancelAnimationFrame(frame)
       onExporterRef.current?.(null)
+      setHovered(null)
       cy.destroy()
       cyRef.current = null
     }
@@ -357,9 +374,22 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
 
   return (
     <div className="relative h-[620px] w-full overflow-hidden rounded-xl border border-line" style={{ background: 'var(--map-bg)' }}>
-      <StarField />
       {/* Explicit size: an absolutely positioned container collapsed to zero height once cytoscape took it over. */}
       <div ref={containerRef} className="relative h-full w-full" aria-label="Lineage map of the topic, oldest papers on the left" />
+      {hovered && (
+        <div
+          role="tooltip"
+          className="pointer-events-none absolute z-10 w-max max-w-[320px] rounded-md border border-line-strong bg-surface-2 px-2.5 py-1.5 text-[12px] leading-snug text-fg shadow-lg"
+          style={{
+            left: hovered.x,
+            top: hovered.below ? hovered.y + hovered.r + 6 : hovered.y - hovered.r - 6,
+            transform: `translate(${{ left: '-12px', center: '-50%', right: 'calc(-100% + 12px)' }[hovered.align]}, ${hovered.below ? '0' : '-100%'})`,
+          }}
+        >
+          {hovered.title}
+          {hovered.year !== null && <span className="ml-1.5 font-mono text-[11px] text-fg-3 tabular-nums">{hovered.year}</span>}
+        </div>
+      )}
       <div className="pointer-events-none absolute right-0 bottom-0 left-0 h-7 border-t border-line" style={{ background: 'color-mix(in srgb, var(--map-bg) 85%, transparent)' }}>
         {ticks.map((t) => (
           <span key={t.year} className="absolute top-1.5 -translate-x-1/2 font-mono text-[10px] text-fg-3 tabular-nums" style={{ left: t.x }}>
