@@ -163,11 +163,11 @@ class Retried(Exception):
 
 @pytest.fixture
 def task(r):
-    from athena.pipeline import tasks
+    from athena.pipeline import crawl
     sync_id = sync_status.start(r, SOURCES, "manual")
-    with patch.object(tasks, "get_redis", return_value=r), patch.object(tasks, "_push_to_dlq") as dlq, \
-            patch.object(tasks.crawl_source, "retry", side_effect=Retried):
-        yield tasks, sync_id, dlq
+    with patch.object(crawl, "get_redis", return_value=r), patch.object(crawl, "_push_to_dlq") as dlq, \
+            patch.object(crawl.crawl_source, "retry", side_effect=Retried):
+        yield crawl, sync_id, dlq
 
 
 def run(tasks, sync_id, retries=0):
@@ -204,7 +204,7 @@ def test_a_failure_is_retried_soon_then_given_up_with_its_error(task, r):
 
 
 def test_describe_error_names_the_exception():
-    from athena.pipeline.tasks import describe_error
+    from athena.pipeline.crawl import describe_error
     assert describe_error(ValueError("bad page")) == "ValueError: bad page"
     assert describe_error(TimeoutError()) == "TimeoutError"
 
