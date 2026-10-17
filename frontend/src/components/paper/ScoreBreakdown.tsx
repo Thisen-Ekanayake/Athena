@@ -9,7 +9,8 @@ export function ScoreBreakdown({ itemId }: { itemId: string }) {
   if (isLoading) return <Spinner label="Loading the score…" />
   if (error || !data) return <p className="text-[13px] text-fg-3">This item has not been scored yet.</p>
 
-  const shared = data.signals.filter((s) => s.key !== 'your_interests')
+  // A signal with no weight for this kind of item (no data for it) is left out
+  const shared = data.signals.filter((s) => s.key !== 'your_interests' && s.weight > 0)
   const mine = data.signals.find((s) => s.key === 'your_interests')
 
   return (

@@ -42,22 +42,24 @@ CHUNK_SIZE = 500
 # Default scoring config weights per category
 # ──────────────────────────────────────────────────────────
 
-# The four signal weights sum to 1. "preference" is not part of the score: it is the share a user's interests
-# get in their "For you" order (athena.pipeline.interests).
+# The four signal weights sum to 1. A category gets no weight on a signal it has no data for: blogs are never
+# cited, and only community sites (LessWrong) report engagement, so those signals would be the same 0.5 for every
+# item and shift whole categories against each other in the mixed feed. "preference" is not part of the score: it
+# is the share a user's interests get in their "For you" order (athena.pipeline.interests).
 BASE_SIGNALS = ("citation", "engagement", "recency", "authority")
 DEFAULT_PREFERENCE = 0.30
 DEFAULT_WEIGHTS = {
     "paper": {
-        "citation": 0.35, "engagement": 0.18,
-        "recency": 0.235, "authority": 0.235, "half_life_days": 60, "preference": DEFAULT_PREFERENCE,
+        "citation": 0.40, "engagement": 0.0,
+        "recency": 0.35, "authority": 0.25, "half_life_days": 60, "preference": DEFAULT_PREFERENCE,
     },
     "company_blog": {
-        "citation": 0.125, "engagement": 0.3125,
-        "recency": 0.375, "authority": 0.1875, "half_life_days": 14, "preference": DEFAULT_PREFERENCE,
+        "citation": 0.0, "engagement": 0.0,
+        "recency": 0.60, "authority": 0.40, "half_life_days": 14, "preference": DEFAULT_PREFERENCE,
     },
     "community_blog": {
-        "citation": 0.125, "engagement": 0.375,
-        "recency": 0.3125, "authority": 0.1875, "half_life_days": 21, "preference": DEFAULT_PREFERENCE,
+        "citation": 0.0, "engagement": 0.40,
+        "recency": 0.35, "authority": 0.25, "half_life_days": 21, "preference": DEFAULT_PREFERENCE,
     },
 }
 
