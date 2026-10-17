@@ -15,7 +15,7 @@ First, create and activate a virtual environment, then install the required Pyth
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt
 ```
 
 Then, install the Playwright browsers:
@@ -46,7 +46,7 @@ docker compose -f docker/docker-compose.yml ps
 
 ## 3. Initialize and Seed
 
-Run the setup script to initialize the database schema and seed all 11 sources (8 RSS/API + 3 headless-scraped):
+Run the setup script to create or update the database schema (Alembic migrations) and seed all 11 sources (8 RSS/API + 3 headless-scraped):
 
 ```bash
 python3 scripts/setup_project.py
@@ -199,7 +199,7 @@ Ensure your virtual environment is active and infrastructure (DB, Redis, Qdrant)
 source venv/bin/activate
 uvicorn athena.api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-The API will be available at `http://localhost:8000`. You can view the interactive API documentation at `http://localhost:8000/docs`.
+The API will be available at `http://localhost:8000`. With `DOCS_ENABLED=true` in `.env`, the interactive API documentation is at `http://localhost:8000/docs`.
 
 **Option B: Using Docker Compose**
 The `web` service in `docker/docker-compose.yml` automatically starts the API when you run `docker compose -f docker/docker-compose.yml up -d`.

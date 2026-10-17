@@ -85,17 +85,23 @@ cp .env.example .env
 ./run_docker.sh
 
 # Or native dev: infra in Docker, API / workers / frontend / model server on the host, with hot reload
-pip install -r requirements.txt && playwright install chromium
+pip install -r requirements.txt -r requirements-dev.txt && playwright install chromium
 ./run_native.sh                # --stop to stop
 ```
 
-Open http://localhost:5173 and create the admin account. There is no public sign-up: the admin adds people in **Settings → Users**. The API and its docs are at http://localhost:8000/docs.
+Open http://localhost:5173 and create the admin account. There is no public sign-up: the admin adds people in **Settings → Users**. The app calls the API on its own address (`/api/v1`): nginx passes it on in Docker, and Vite does in native dev. The API docs (`/docs`, `/redoc`) are off unless `DOCS_ENABLED=true`.
+
+The database schema is created and kept up to date by Alembic when the API starts (`scripts/setup_project.py` runs the same step). A database made before Alembic is brought up to date and stamped automatically the first time.
 
 With Docker, start the model server on the host (it needs the GPU); the containers reach it at `host.docker.internal:8080`:
 
 ```bash
 llama-server --models-preset config/llama-router.ini --models-max 1 --port 8080
 ```
+
+### Behind HTTPS
+
+To serve Athena from another machine, put an HTTPS reverse proxy (Caddy, Traefik, nginx, …) in front of the frontend on port 5173. The proxy must send `X-Forwarded-Proto`, which all of these do. The release Compose file publishes the API on 127.0.0.1 only and trusts nginx's forwarded headers (`FORWARDED_ALLOW_IPS`). That way, the session cookie is marked `Secure` and rate limits see each visitor's address. If you expose the API some other way, set `FORWARDED_ALLOW_IPS` to your proxy's address.
 
 ## Configuration
 
@@ -107,7 +113,8 @@ Everything is set through environment variables (`.env`, read by `athena/api/con
 | `LLM_*`, `EMBED_*` | Chat and embedding endpoints (also editable in **Settings → Models and keys**) |
 | `SEMANTIC_SCHOLAR_API_KEY` | Optional; higher rate limits for maps, momentum and search |
 | `LIMIT_*_PER_DAY`, `MONTHLY_BUDGET_USD`, `USER_MONTHLY_TOKENS` | Per-user allowances and spending caps |
-| `DOCS_USERNAME`, `DOCS_PASSWORD` | Optional Basic Auth on `/docs` |
+| `DOCS_ENABLED`, `DOCS_USERNAME`, `DOCS_PASSWORD` | API docs, off by default; with a password they ask for Basic Auth |
+| `FORWARDED_ALLOW_IPS` | Addresses whose `X-Forwarded-*` headers the API trusts (set in the release Compose file) |
 
 See `.env.example` for the full list.
 
@@ -130,9 +137,24 @@ Two Celery pipelines, one for the feed and one for the research maps, write to P
 
 ```bash
 DATABASE_URL="sqlite:///test.db" pytest tests/test_scoring.py tests/test_preprocessing.py tests/test_connectors.py -v
-flake8 . --max-line-length=120 --exclude=".venv,venv,frontend/node_modules"
+flake8 . --max-line-length=120 --exclude=".venv,venv,frontend/node_modules,alembic/versions"
 cd frontend && npm run lint && npm run build
 ```
+
+**Schema changes.** Edit the models in `athena/core/models.py`, then write a revision and apply it:
+
+```bash
+alembic revision --autogenerate -m "add papers.venue"   # review the file it writes in alembic/versions/
+alembic upgrade head
+alembic check                                            # the models and the database agree
+```
+
+`tests/test_migrations.py` fails when a model changes without a revision.
+
+**Dependencies.** The `.txt` files are pinned and compiled from the `.in` files. To change a dependency, edit the `.in` file and recompile with the commands at the top of `requirements.in`. Add `--upgrade-package NAME` to move one package to a newer version.
+- `requirements.txt`: the worker and local development.
+- `requirements.api.txt`: the API image.
+- `requirements-dev.txt`: tests and lint.
 
 ## Contributing
 
