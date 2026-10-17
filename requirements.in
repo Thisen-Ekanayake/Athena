@@ -1,0 +1,50 @@
+# Everything the worker runs (docker/Dockerfile.worker) and local development needs; the API image uses
+# requirements.api.in. Edit this file, not requirements.txt, then compile:
+#
+#   uv pip compile requirements.in -o requirements.txt --python-version 3.11
+#   uv pip compile requirements.api.in -o requirements.api.txt --python-version 3.11 -c requirements.txt
+#   uv pip compile requirements-dev.in -o requirements-dev.txt --python-version 3.11 -c requirements.txt
+#
+# (pip-compile from pip-tools takes the same files.) Add --upgrade-package NAME to move one package on.
+# The pins also install on Python 3.10 (which adds a few backports, such as tomli and exceptiongroup).
+
+# Web and API
+fastapi
+uvicorn
+httpx
+requests
+pydantic
+argon2-cffi
+
+# Storage
+sqlalchemy
+alembic
+psycopg2-binary
+redis
+celery[redis]
+qdrant-client
+
+# Models
+openai
+tiktoken
+numpy
+tenacity
+
+# Feed: scrapers and the text they need
+feedparser
+playwright
+newspaper4k
+lxml
+beautifulsoup4
+pdfplumber
+python-dateutil
+
+# Clustering, gaps and maps
+umap-learn
+scikit-learn
+python-igraph
+mlflow
+
+# Config and logs
+python-dotenv
+loguru
