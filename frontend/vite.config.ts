@@ -8,4 +8,11 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  // The app calls the API on its own origin (/api/v1); in development Vite passes those calls to uvicorn,
+  // as nginx does in the frontend image. 127.0.0.1, not localhost: uvicorn listens on IPv4 only.
+  server: {
+    proxy: {
+      '/api': 'http://127.0.0.1:8000',
+    },
+  },
 })
