@@ -7,8 +7,10 @@ Covers:
 - Failure tests: rate limit, timeout, bad HTML handling
 - Integration test: end-to-end fetch → normalise → store → queue flow
 """
+from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
+
 import pytest
 
 
@@ -211,6 +213,94 @@ class TestPlaywrightScraperParse:
         from athena.scrapers.scraping import PlaywrightScraper
         with pytest.raises(ValueError, match="No text content"):
             PlaywrightScraper(self.SOURCE).parse(self._raw(page_html="<html><body><nav>Home</nav></body></html>"))
+
+
+# ─────────────────────────────────────────────────────────────
+# RECORDED FETCH TESTS: fetch() → parse() on real responses, offline
+# ─────────────────────────────────────────────────────────────
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _answering(body: str):
+    """Patch httpx.AsyncClient so every GET answers 200 with ``body``; returns the patcher and the mock get."""
+    patcher = patch("httpx.AsyncClient")
+    cls = patcher.start()
+    client = AsyncMock()
+    cls.return_value.__aenter__.return_value = client
+    resp = MagicMock()
+    resp.text = body
+    resp.raise_for_status = MagicMock()
+    client.get = AsyncMock(return_value=resp)
+    return patcher, client.get
+
+
+class TestRecordedFetch:
+    """The arXiv API page (cat:cs.AI, 3 results) and OpenAI News feed (first 3 items) recorded on 2026-10-17."""
+
+    @pytest.mark.asyncio
+    async def test_arxiv_page_becomes_papers(self):
+        from athena.scrapers.arxiv import ArXivScraper
+        from athena.core.schemas import ContentItemCreate
+        scraper = ArXivScraper(source_id="55555555-5555-5555-5555-555555555555")
+        patcher, get = _answering((FIXTURES / "arxiv_atom.xml").read_text())
+        try:
+            entries = await scraper.fetch(max_results=5)
+        finally:
+            patcher.stop()
+
+        assert get.await_count == 1  # a plain fetch asks for one page
+        items = [scraper.parse(e) for e in entries]
+        assert [i.title for i in items] == [
+            "LIBERO-PeRM: Benchmarking Personalized Robotic Manipulation",
+            "Discovering state-of-the-art quantum circuits with large language models",
+            "T2-z: Test-Time Optimization of Environment Latents for Robotic World Models",
+        ]
+        first = items[0]
+        assert str(first.url) == "http://arxiv.org/abs/2610.22372v1"
+        assert first.authors[0] == "Zhixu Li" and len(first.authors) == 10
+        assert first.published_at == datetime(2026, 10, 15, 17, 59, 59, tzinfo=timezone.utc)
+        assert first.extra_data == {"arxiv_id": "2610.22372v1",
+                                    "pdf_url": "http://arxiv.org/pdf/2610.22372v1.pdf"}
+        assert first.abstract.startswith("Personalization is essential")
+        assert all(isinstance(i, ContentItemCreate) and i.category == "paper" for i in items)
+
+    @pytest.mark.asyncio
+    async def test_arxiv_sync_stops_at_the_newest_stored_paper(self):
+        from athena.scrapers.arxiv import ArXivScraper
+        scraper = ArXivScraper(source_id="55555555-5555-5555-5555-555555555555")
+        patcher, _ = _answering((FIXTURES / "arxiv_atom.xml").read_text())
+        try:
+            entries = await scraper.fetch(max_results=1000, since=datetime(2026, 10, 15, 17, 59, 15))
+        finally:
+            patcher.stop()
+        assert [scraper.parse(e).title[:10] for e in entries] == ["LIBERO-PeR", "Discoverin"]
+
+    @pytest.mark.asyncio
+    async def test_rss_feed_becomes_blog_posts(self):
+        from athena.scrapers.rss import RSSScraper
+        from athena.core.schemas import ContentItemCreate
+        url = "https://openai.com/news/rss.xml"
+        scraper = RSSScraper(source_id="66666666-6666-6666-6666-666666666666", source_category="company")
+        patcher, get = _answering((FIXTURES / "openai_news_rss.xml").read_text(encoding="utf-8"))
+        try:
+            raw = await scraper.fetch(url)
+        finally:
+            patcher.stop()
+
+        assert get.await_args.args[0] == url
+        items = [scraper.parse(r) for r in raw]
+        assert [str(i.url) for i in items] == [
+            "https://openai.com/index/itau-generative-ai",
+            "https://openai.com/index/stack-overflow-chatgpt-plugin",
+            "https://openai.com/index/benefit-street-partners",
+        ]
+        first = items[0]
+        assert first.title == "How Itaú is building generative AI for its entire customer base"
+        assert first.published_at == datetime(2026, 10, 16, 19, 0, tzinfo=timezone.utc)
+        assert first.abstract.startswith("With ia.i, a conversational interface")
+        assert first.extra_data == {"feed_link": url}
+        assert all(isinstance(i, ContentItemCreate) and i.category == "company_blog" for i in items)
 
 
 # ─────────────────────────────────────────────────────────────
