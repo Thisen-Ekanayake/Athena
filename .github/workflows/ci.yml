@@ -55,7 +55,7 @@ jobs:
             tests/test_llm.py tests/test_summary_text.py tests/test_auth.py tests/test_evolution_*.py \
             tests/test_momentum.py tests/test_personal.py tests/test_interests.py tests/test_scoring_settings.py \
             tests/test_hybrid_search.py tests/test_list_export.py tests/test_review.py tests/test_search.py \
-            tests/test_settings_keys.py tests/test_app_routes.py \
+            tests/test_settings_keys.py tests/test_app_routes.py tests/test_migrations.py \
             -v --tb=short
 
   test-connectors:

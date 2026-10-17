@@ -86,9 +86,9 @@ wait_for_http "API"      "${API_URL}/health" 90 || {
 wait_for_http "frontend" "${FRONTEND_URL}/" 60 || true
 
 # --- bring the database up to date -------------------------------------------
-# The API creates new tables on startup; scripts/setup_project.py also migrates
-# existing databases, loads the summary prompt templates and seeds the initial
-# sources. Every step is safe to repeat, so it runs on each start.
+# The API runs the Alembic migrations on startup; scripts/setup_project.py runs
+# them too, loads the summary prompt templates and seeds the initial sources.
+# Every step is safe to repeat, so it runs on each start.
 echo ">> Updating the database (migrations, prompt templates, sources)..."
 docker compose -f "$COMPOSE_FILE" exec -T web python3 scripts/setup_project.py >/dev/null \
   || echo "   (setup failed — run 'docker compose -f ${COMPOSE_FILE} exec web python3 scripts/setup_project.py' manually)"

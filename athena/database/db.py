@@ -20,5 +20,6 @@ def get_db():
 
 
 def init_db():
-    from athena.core.models import Base
-    Base.metadata.create_all(bind=engine)
+    """Bring the schema up to date with the Alembic revisions (athena.database.migrate)."""
+    from athena.database.migrate import upgrade
+    upgrade()
