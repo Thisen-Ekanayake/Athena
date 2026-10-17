@@ -142,7 +142,7 @@ flake8 . --max-line-length=120 --exclude=".venv,venv,frontend/node_modules,alemb
 cd frontend && npm run lint && npm test && npm run build
 ```
 
-**Schema changes.** Edit the models in `athena/core/models.py`, then write a revision and apply it:
+**Schema changes.** Edit the models in `athena/core/models/` (feed, accounts, evolution, personal), then write a revision and apply it:
 
 ```bash
 alembic revision --autogenerate -m "add papers.venue"   # review the file it writes in alembic/versions/
