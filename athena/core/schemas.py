@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional, Any, Dict
 from uuid import UUID
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, ConfigDict, HttpUrl
 
 
 class SourceBase(BaseModel):
@@ -22,8 +22,7 @@ class SourceRead(SourceBase):
     last_fetched_at: Optional[datetime] = None
     added_by: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ContentItemBase(BaseModel):
@@ -54,5 +53,4 @@ class ContentItemRead(ContentItemBase):
     summary_status: str
     summarised_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

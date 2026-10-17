@@ -9,7 +9,7 @@ import json
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 from loguru import logger
 from sqlalchemy import select
 
@@ -26,7 +26,8 @@ class SummaryOutput(BaseModel):
     summary: str
     takeaways: List[str]
 
-    @validator('summary')
+    @field_validator('summary')
+    @classmethod
     def summary_length(cls, v):
         words = len(v.split())
         if words < 20:
@@ -35,7 +36,8 @@ class SummaryOutput(BaseModel):
             raise ValueError('Summary too long (> 120 words)')
         return v
 
-    @validator('takeaways')
+    @field_validator('takeaways')
+    @classmethod
     def takeaways_count(cls, v):
         if len(v) < 3:
             raise ValueError('Need at least 3 takeaways')
