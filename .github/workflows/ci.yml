@@ -26,7 +26,7 @@ jobs:
       - name: Run flake8
         run: |
           python -m flake8 . --max-line-length=120 --count --statistics \
-            --exclude="__pycache__,*.pyc,.venv,venv,.git,frontend/node_modules"
+            --exclude="__pycache__,*.pyc,.venv,venv,.git,frontend/node_modules,alembic/versions"
 
   test:
     name: Unit Tests
