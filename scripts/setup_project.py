@@ -9,6 +9,7 @@ from scripts.seed_prompts import seed_prompts  # noqa: E402
 from athena.database.operations import upsert_source  # noqa: E402
 from athena.core.schemas import SourceCreate  # noqa: E402
 from athena.core.models import SourceType, SourceCategory  # noqa: E402
+from athena.pipeline.scoring import populate_default_authority_scores  # noqa: E402
 
 
 def setup():
@@ -107,6 +108,7 @@ def setup():
         category=SourceCategory.BLOG,
         fetch_config={"use_playwright": True}
     ))
+    populate_default_authority_scores()  # known publishers get their authority; values set by hand stay
 
     print("Setup Complete.")
 

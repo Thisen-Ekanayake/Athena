@@ -122,3 +122,51 @@ class TestScoringConfigDefaults:
         assert DEFAULT_AUTHORITY["arxiv"] == 0.85
         assert DEFAULT_AUTHORITY["neurips"] == 1.0
         assert DEFAULT_AUTHORITY["openai"] == 0.90
+
+
+class TestDefaultAuthority:
+    """Sources get their publisher's authority at setup and when added (ROADMAP_v2 T1)."""
+
+    @pytest.mark.parametrize("url, expected", [
+        ("https://export.arxiv.org/api/query", 0.85),
+        ("https://openai.com/news/rss.xml", 0.90),
+        ("https://ai.meta.com/blog", 0.90),
+        ("https://www.microsoft.com/en-us/research/feed/", 0.85),
+        ("https://huggingface.co/blog/feed.xml", 0.80),
+        ("https://blogs.nvidia.com/feed/", 0.70),
+        ("https://x.ai/news", 0.70),
+        ("https://thegradient.pub/", 0.75),
+        ("https://metaculus.com/feed", None),  # "meta" alone no longer matches
+        ("https://max.ai/blog", None),  # a domain key matches that host, not any host ending in it
+        ("https://example.com/", None),
+    ])
+    def test_default_authority_by_url(self, url, expected):
+        from athena.pipeline.scoring import default_authority
+        assert default_authority(url) == expected
+
+    def test_populate_keeps_values_set_by_hand(self, monkeypatch):
+        from uuid import uuid4
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+        from athena.core.models import Source, SourceCategory, SourceType
+        from athena.pipeline import scoring
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Source.__table__.create(engine)
+        Session = sessionmaker(bind=engine)
+        monkeypatch.setattr(scoring, "SessionLocal", Session)
+        urls = {"neutral": "https://huggingface.co/blog/feed.xml", "hand": "https://openai.com/news/rss.xml",
+                "unknown": "https://example.com/feed", "later": "https://blogs.nvidia.com/feed/"}
+        ids = {k: uuid4() for k in urls}
+        with Session() as s:
+            for key, url in urls.items():
+                s.add(Source(id=ids[key], name=key, url=url, type=SourceType.RSS, category=SourceCategory.COMPANY,
+                             authority_score=0.3 if key == "hand" else 0.5))
+            s.commit()
+
+        assert scoring.populate_default_authority_scores(ids["neutral"]) == 1  # only the one asked for
+        assert scoring.populate_default_authority_scores() == 1  # then the rest: nvidia
+        with Session() as s:
+            got = {src.name: src.authority_score for src in s.query(Source).all()}
+        assert got == {"neutral": 0.80, "hand": 0.3, "unknown": 0.5, "later": 0.70}

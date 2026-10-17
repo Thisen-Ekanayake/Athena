@@ -63,15 +63,35 @@ DEFAULT_WEIGHTS = {
     },
 }
 
-# Default authority scores for known source types
+# Default authority per source, by what its URL contains. A key with a dot and no slash is a domain and matches
+# that host or its subdomains (so "x.ai" is not any host ending in "x.ai"); any other key matches anywhere in the
+# host and path. The first match wins. Sources none of them match keep the neutral 0.5.
+DEFAULT_SOURCE_AUTHORITY = 0.5
 DEFAULT_AUTHORITY = {
     "arxiv": 0.85,
     "neurips": 1.0, "icml": 1.0, "iclr": 1.0,
-    "deepmind": 0.90, "openai": 0.90, "anthropic": 0.90, "meta": 0.90,
+    "deepmind": 0.90, "openai": 0.90, "anthropic": 0.90, "ai.meta.com": 0.90,
+    "microsoft.com/en-us/research": 0.85,
+    "huggingface.co": 0.80,
+    "lesswrong": 0.75, "alignmentforum": 0.75, "thegradient.pub": 0.75,
+    "nvidia.com": 0.70, "x.ai": 0.70,
     "towardsdatascience": 0.60, "medium": 0.60,
-    "lesswrong": 0.75, "alignmentforum": 0.75,
     "substack": 0.55,
 }
+
+
+def default_authority(url: str) -> Optional[float]:
+    """The default authority for a source URL (DEFAULT_AUTHORITY), or None when no key matches."""
+    from urllib.parse import urlparse
+    parsed = urlparse(url.lower() if "//" in url else f"//{url.lower()}")
+    host = parsed.netloc.split("@")[-1].split(":")[0].removeprefix("www.")
+    for key, score in DEFAULT_AUTHORITY.items():
+        if "." in key and "/" not in key:
+            if host == key or host.endswith(f".{key}"):
+                return score
+        elif key in host + parsed.path:
+            return score
+    return None
 
 
 def _get_weights(category: str, session) -> Dict[str, Any]:
@@ -452,15 +472,24 @@ def enqueue_summary_tier(item_id: str, score: float, is_trending: bool):
     logger.info(f"Item {item_id} enqueued to {tier}")
 
 
-def populate_default_authority_scores():
-    """Assign authority_score to all existing sources based on URL keywords."""
+def populate_default_authority_scores(source_id=None) -> int:
+    """Give sources their default authority (default_authority), all of them or the one with this id.
+
+    Only a source still at the neutral 0.5 (or none) gets one, so a value set by hand stays. Returns how many changed.
+    """
     with SessionLocal() as session:
-        sources = session.execute(select(Source)).scalars().all()
-        for source in sources:
-            url_lower = source.url.lower()
-            for keyword, score in DEFAULT_AUTHORITY.items():
-                if keyword in url_lower:
-                    source.authority_score = score
-                    break
+        query = select(Source)
+        if source_id is not None:
+            query = query.where(Source.id == UUID(str(source_id)))
+        changed = 0
+        for source in session.execute(query).scalars().all():
+            if source.authority_score not in (None, DEFAULT_SOURCE_AUTHORITY):
+                continue
+            score = default_authority(source.url)
+            if score is not None and score != source.authority_score:
+                source.authority_score = score
+                changed += 1
         session.commit()
-        logger.info(f"Authority scores assigned to {len(sources)} sources.")
+    if changed:
+        logger.info(f"Default authority given to {changed} source(s).")
+    return changed
