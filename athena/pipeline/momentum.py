@@ -21,13 +21,13 @@ restarts often it never fired: metric_snapshots was empty.
 """
 from __future__ import annotations
 
-import bisect
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 
 from loguru import logger
 from sqlalchemy import delete, select, update
 
+from athena.core.citation_gains import gain
 from athena.core.config_store import get_setting, set_setting
 from athena.pipeline.celery_app import celery_app
 
@@ -196,24 +196,6 @@ def take_snapshots(session, now: datetime) -> int:
         taken += 1
     session.commit()
     return taken
-
-
-def count_at(history: list[tuple[datetime, int]], when: datetime) -> int | None:
-    """The count of the latest snapshot at or before ``when`` (``history`` sorted by date), or None."""
-    i = bisect.bisect_right([d for d, _ in history], when)
-    return history[i - 1][1] if i else None
-
-
-def gain(history: list[tuple[datetime, int]], current: int, published: datetime | None, since: datetime) -> int | None:
-    """Citations gained since ``since``. A paper published after it gained everything it has; one with no snapshot
-    from then is unknown."""
-    before = count_at(history, since)
-    if before is None:
-        if published is not None and published >= since:
-            before = 0
-        else:
-            return None
-    return max(0, current - before)
 
 
 def histories(session, item_ids: list) -> dict:

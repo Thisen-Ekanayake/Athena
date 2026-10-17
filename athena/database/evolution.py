@@ -1080,7 +1080,7 @@ def paper_detail(session: Session, topic: EvoTopic, paper_id: UUID) -> dict | No
 
 
 def _citations_by_year(p: EvoPaper) -> list[dict]:
-    from athena.evolution.momentum import by_year, counts_of
+    from athena.core.citation_gains import by_year, counts_of
     counts = counts_of(p)
     return by_year(counts, datetime.now(timezone.utc)) if counts else []
 
@@ -1089,7 +1089,7 @@ def topic_rising(session: Session, topic: EvoTopic, limit: int = 10, now: dateti
     """The map's on-topic papers gaining citations fastest: the last twelve months against the twelve before
     (OpenAlex). Papers the corpus only holds because on-topic ones cite them (background like the Transformer, or
     neighbouring fields) are left out, as the milestones and the People view leave them out."""
-    from athena.evolution.momentum import by_year, counts_of, rising_entry
+    from athena.core.citation_gains import by_year, counts_of, rising_entry
     now = now or datetime.now(timezone.utc)
     rows = _topic_rows(session, topic.id)
     weight = TopicConfig.from_dict(topic.config).weights.relevance
