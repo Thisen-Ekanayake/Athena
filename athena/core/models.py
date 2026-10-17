@@ -227,25 +227,6 @@ class PromptVersion(Base):
     notes = Column(String, nullable=True)
 
 
-class SummaryUsageLog(Base):
-    """Audit log for OpenAI LLM token usage and cost."""
-    __tablename__ = "summary_usage_log"
-
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=True)
-    cluster_id = Column(PG_UUID(as_uuid=True), ForeignKey("clusters.id"), nullable=True)
-    job_type = Column(SQLEnum(JobType), nullable=False)
-    model = Column(String, nullable=False)
-    prompt_version = Column(Integer, nullable=False)
-    input_tokens = Column(Integer, default=0)
-    output_tokens = Column(Integer, default=0)
-    total_cost_usd = Column(Float, default=0.0)
-    latency_ms = Column(Integer, default=0)
-    success = Column(Boolean, default=True)
-    error_message = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-
 class QAFetchCache(Base):
     """Caches fetch status and metadata for Q&A features."""
     __tablename__ = "qa_fetch_cache"

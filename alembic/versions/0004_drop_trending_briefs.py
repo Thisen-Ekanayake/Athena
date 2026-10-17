@@ -37,7 +37,8 @@ def upgrade() -> None:
         op.execute("ALTER TYPE jobtype RENAME TO jobtype_old")
         op.execute("CREATE TYPE jobtype AS ENUM (" + ", ".join(f"'{v}'" for v in JOB_TYPES) + ")")
         for table, column in JOB_TYPE_COLUMNS:
-            op.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE jobtype USING {column}::text::jobtype")
+            if table in tables:  # summary_usage_log is gone from the models (0009)
+                op.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE jobtype USING {column}::text::jobtype")
         op.execute("DROP TYPE jobtype_old")
 
 
