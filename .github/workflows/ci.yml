@@ -58,3 +58,25 @@ jobs:
           REDIS_URL: "redis://localhost:6379/0"
           QDRANT_URL: "http://localhost:6333"
         run: python -m pytest tests/ -m "not network" -v --tb=short
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      # tsc -b (app and tests) and the Vite build, as the frontend image runs it
+      - run: npm run build
