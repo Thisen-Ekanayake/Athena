@@ -361,19 +361,6 @@ class SavedListItem(Base):
     content_item = relationship("ContentItem")
 
 
-class ScoreAuditLog(Base):
-    """Audit log for significant score changes (> 0.1 delta)."""
-    __tablename__ = "score_audit_logs"
-
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
-    old_score = Column(Float, nullable=False)
-    new_score = Column(Float, nullable=False)
-    delta = Column(Float, nullable=False)
-    reason = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-
 class AppSetting(Base):
     """User-configurable key/value settings persisted in the database."""
     __tablename__ = "app_settings"
