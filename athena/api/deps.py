@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Shared FastAPI Dependencies
+Shared FastAPI dependencies
 
 DB session and Redis client. Accounts and sessions live in athena/api/auth.py.
 """

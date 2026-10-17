@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Pydantic v2 Response Schemas
+Pydantic v2 response schemas
 
 Response models for all API endpoints, matching the plan document Section 3.4.
 """

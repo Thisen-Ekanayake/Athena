@@ -1,5 +1,5 @@
 """
-Athena Layer 4 — Summarisation Core Logic
+Item summaries and cluster labels: the shared parts.
 
 Contains utilities for Redis-based budget tracking, Pydantic validation of model
 responses, and core logic for formatting prompts and generating summaries.

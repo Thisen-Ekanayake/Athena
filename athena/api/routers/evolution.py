@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Research Evolution Router
+Research maps (evolution)
 
 GET  /api/v1/evolution/topics                                — topics (curated and search-built) and their status
 GET  /api/v1/evolution/search?q=                             — match a query to a topic by alias or by its

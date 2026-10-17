@@ -1,8 +1,8 @@
 """
-Athena Layer 3 — Scoring Worker
+Feed scoring worker
 
 Celery tasks for computing, persisting, and updating content scores.
-Consumes items from the Redis scoring queue (emitted after Layer 2 embedding).
+Consumes items from the Redis scoring queue (filled once an item is embedded).
 """
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
@@ -352,7 +352,7 @@ def score_new_item(item_id: str):
 
 
 def enqueue_summary_tier(item_id: str, score: float):
-    """Emits the item to the correct Celery queue based on Layer 3 score.
+    """Emits the item to the correct Celery queue based on its score.
 
     An item whose summary is already complete, or that was skipped for too little text, is left alone: rescoring
     (every six hours for recency) must not send it back to the queue.

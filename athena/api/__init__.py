@@ -1,1 +1,1 @@
-# athena.api — Layer 5 FastAPI Backend
+# athena.api — the FastAPI app, its routers and accounts

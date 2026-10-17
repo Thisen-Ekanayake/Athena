@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Redis Caching Utilities
+Response caching in Redis.
 
 Simple get/set/invalidate wrappers with JSON serialisation.
 """

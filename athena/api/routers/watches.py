@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Watches Router (follows)
+Follows (watches)
 
 GET    /api/v1/watches         — what the user follows, with what each caught in the last 7 days
 POST   /api/v1/watches         — follow a map, a search, a source or a cluster (following it again is a no-op)

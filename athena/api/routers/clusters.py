@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Clusters Router
+Clusters: themes found by grouping similar feed items.
 
 GET /api/v1/clusters       — all active clusters with item counts
 GET /api/v1/clusters/{id}  — cluster detail + paginated items

@@ -1,5 +1,5 @@
 """
-Signal computation functions for Athena Layer 3 Scoring & Ranking.
+The feed score's signals, as pure functions shared by the scoring worker and the score API.
 
 Each function computes a single normalised score in [0.0, 1.0].
 """

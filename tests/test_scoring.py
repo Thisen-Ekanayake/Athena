@@ -1,5 +1,5 @@
 """
-Unit tests for Athena Layer 3 Scoring & Ranking.
+Unit tests for feed scoring and ranking.
 
 Covers:
 - Log normalisation formula correctness

@@ -1,7 +1,7 @@
 """
-Athena Layer 5 — API Tests
+API tests
 
-Unit and integration tests for all Layer 5 API endpoints using TestClient.
+Unit and integration tests for the health, feed, cluster, source and item endpoints using TestClient.
 """
 import pytest
 from fastapi.testclient import TestClient
