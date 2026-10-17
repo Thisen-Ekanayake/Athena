@@ -25,7 +25,6 @@ from athena.pipeline.signals import (
     compute_authority_score,
     compute_composite_score,
 )
-from athena.pipeline.mlflow_utils import mlflow_run, ml_log
 
 SCORING_QUEUE_KEY = "athena:scoring_queue"
 BATCH_SIZE = 200  # scoring is a few queries an item; 20 a minute fell behind a sync's arXiv papers
@@ -270,24 +269,18 @@ def process_scoring_queue():
 
     logger.info(f"Processing scoring queue batch of {len(item_ids)} items.")
 
-    import mlflow
-    with mlflow_run("athena-scoring", "process_scoring_queue"):
-        scores = []
-        with SessionLocal() as session:
-            for item_id in item_ids:
-                s = score_item(item_id, session)
-                if s is not None:
-                    scores.append(s)
+    scores = []
+    with SessionLocal() as session:
+        for item_id in item_ids:
+            s = score_item(item_id, session)
+            if s is not None:
+                scores.append(s)
 
-        update_category_ranks()
+    update_category_ranks()
 
-        ml_log(mlflow.log_metrics, {
-            "batch_size": len(item_ids),
-            "scored_count": len(scores),
-            **({"mean_score": float(np.mean(scores)),
-                "max_score": float(np.max(scores)),
-                "high_score_count": sum(1 for s in scores if s >= 0.75)} if scores else {}),
-        })
+    logger.info(f"Scoring batch done: {len(scores)} of {len(item_ids)} scored"
+                + (f", mean {np.mean(scores):.3f}, max {np.max(scores):.3f}, "
+                   f"{sum(1 for s in scores if s >= 0.75)} at 0.75 or more" if scores else ""))
 
 
 def _iter_item_ids(stmt) -> Any:
@@ -307,27 +300,20 @@ def score_all_items():
     """Batch re-score all items (triggered by config change or enrichment refresh)."""
     logger.info("Starting full corpus re-score...")
 
-    import mlflow
-    with mlflow_run("athena-scoring", "score_all_items"):
-        scores = []
-        total = 0
-        for item_id in _iter_item_ids(select(ContentItem.id)):
-            total += 1
-            s = score_item(str(item_id))
-            if s is not None:
-                scores.append(s)
+    scores = []
+    total = 0
+    for item_id in _iter_item_ids(select(ContentItem.id)):
+        total += 1
+        s = score_item(str(item_id))
+        if s is not None:
+            scores.append(s)
 
-        update_category_ranks()
+    update_category_ranks()
 
-        ml_log(mlflow.log_metrics, {
-            "total_items": total,
-            "scored_count": len(scores),
-            **({"mean_score": float(np.mean(scores)),
-                "median_score": float(np.median(scores)),
-                "p90_score": float(np.percentile(scores, 90)),
-                "high_score_count": sum(1 for s in scores if s >= 0.75)} if scores else {}),
-        })
-        logger.info(f"Full re-score complete. {total} items processed.")
+    logger.info(f"Full re-score complete. {total} items processed, {len(scores)} scored"
+                + (f"; mean {np.mean(scores):.3f}, median {np.median(scores):.3f}, "
+                   f"p90 {np.percentile(scores, 90):.3f}, {sum(1 for s in scores if s >= 0.75)} at 0.75 or more"
+                   if scores else ""))
 
 
 @shared_task
@@ -337,25 +323,18 @@ def refresh_recency_scores():
 
     stmt = select(ContentItem.id).where(ContentItem.scored_at.isnot(None))
 
-    import mlflow
-    with mlflow_run("athena-scoring", "refresh_recency_scores"):
-        scores = []
-        total = 0
-        for item_id in _iter_item_ids(stmt):
-            total += 1
-            s = score_item(str(item_id))
-            if s is not None:
-                scores.append(s)
+    scores = []
+    total = 0
+    for item_id in _iter_item_ids(stmt):
+        total += 1
+        s = score_item(str(item_id))
+        if s is not None:
+            scores.append(s)
 
-        update_category_ranks()
+    update_category_ranks()
 
-        ml_log(mlflow.log_metrics, {
-            "total_items": total,
-            "scored_count": len(scores),
-            **({"mean_score": float(np.mean(scores)),
-                "median_score": float(np.median(scores))} if scores else {}),
-        })
-        logger.info(f"Recency refresh complete. {total} items re-scored.")
+    logger.info(f"Recency refresh complete. {total} items re-scored"
+                + (f"; mean {np.mean(scores):.3f}, median {np.median(scores):.3f}" if scores else ""))
 
 
 @shared_task
