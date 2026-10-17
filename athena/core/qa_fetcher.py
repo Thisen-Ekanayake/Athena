@@ -62,7 +62,13 @@ async def try_playwright_fetch(url: str) -> Optional[FetchResult]:
                 ),
             )
             page = await context.new_page()
-            await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+            # Some sites (openai.com) answer through a bot check and a redirect, and their page often isn't
+            # "loaded" within the time a goto allows: go on once the response starts, and read whatever arrived.
+            await page.goto(url, wait_until="commit", timeout=30000)
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=15000)
+            except Exception:
+                logger.debug(f"Playwright: {url} not fully loaded; reading what arrived")
             await page.wait_for_timeout(2000)
             html_content = await page.content()
             await browser.close()
