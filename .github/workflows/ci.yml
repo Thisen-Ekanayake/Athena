@@ -17,11 +17,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
 
-      - name: Install dependencies
+      - name: Install flake8
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
+          pip install -r requirements-dev.txt
 
       - name: Run flake8
         run: |
@@ -29,7 +31,7 @@ jobs:
             --exclude="__pycache__,*.pyc,.venv,venv,.git,frontend/node_modules,alembic/versions"
 
   test:
-    name: Unit Tests
+    name: Tests
     runs-on: ubuntu-latest
     needs: lint
     steps:
@@ -39,45 +41,20 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Run unit tests
+      # Every test except those marked network. Postgres, Redis and Qdrant aren't running: tests use SQLite and fakes.
+      - name: Run tests
         env:
           DATABASE_URL: "sqlite:///test.db"
           REDIS_URL: "redis://localhost:6379/0"
           QDRANT_URL: "http://localhost:6333"
-        run: |
-          python -m pytest tests/test_scoring.py tests/test_scoring_integration.py tests/test_preprocessing.py \
-            tests/test_llm.py tests/test_summary_text.py tests/test_auth.py tests/test_evolution_*.py \
-            tests/test_momentum.py tests/test_personal.py tests/test_interests.py tests/test_scoring_settings.py \
-            tests/test_hybrid_search.py tests/test_list_export.py tests/test_review.py tests/test_search.py \
-            tests/test_settings_keys.py tests/test_app_routes.py tests/test_migrations.py \
-            -v --tb=short
-
-  test-connectors:
-    name: Connector Tests
-    runs-on: ubuntu-latest
-    needs: lint
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
-
-      - name: Run connector tests
-        env:
-          DATABASE_URL: "sqlite:///test.db"
-          REDIS_URL: "redis://localhost:6379/0"
-        run: |
-          python -m pytest tests/test_connectors.py -v --tb=short
+        run: python -m pytest tests/ -m "not network" -v --tb=short
