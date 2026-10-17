@@ -24,7 +24,7 @@ interface Entry {
 const PAGES: { label: string; to: string; icon: LucideIcon; keywords: string }[] = [
   { label: 'Home', to: '/', icon: House, keywords: 'dashboard overview start' },
   { label: 'Feed', to: '/feed', icon: Newspaper, keywords: 'latest papers posts ranked' },
-  { label: 'Trending', to: '/trending', icon: TrendingUp, keywords: 'rising hot popular' },
+  { label: 'Rising', to: '/rising', icon: TrendingUp, keywords: 'trending momentum citations hot popular' },
   { label: 'Clusters', to: '/clusters', icon: Layers, keywords: 'themes groups topics' },
   { label: 'Evolution', to: '/evolution', icon: GitBranch, keywords: 'lineage history graph gaps milestones' },
   { label: 'Library', to: '/library', icon: Bookmark, keywords: 'saved lists reading bookmarks notes highlights read' },

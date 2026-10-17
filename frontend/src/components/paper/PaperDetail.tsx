@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronDown, EyeOff, Flame, Layers, Sparkles } from 'lucide-react'
+import { ChevronDown, EyeOff, Layers, Sparkles } from 'lucide-react'
 import type { FeedItem } from '../../api/client'
 import { useItemDetail } from '../../api/queries'
 import { useAddHighlight, useMe, useReaction } from '../../api/queries/personal'
@@ -62,7 +62,6 @@ export function PaperDetail({ itemId, initial, layout }: { itemId: string; initi
           <span aria-hidden="true">·</span>
           <time dateTime={item.published_at}>{timeAgo(item.published_at)}</time>
           {CATEGORY_LABELS[item.category] && <Chip>{CATEGORY_LABELS[item.category]}</Chip>}
-          {item.is_trending && <Chip tone="accent"><Flame aria-hidden="true" />Trending</Chip>}
         </div>
         <h2 className={cn('font-semibold leading-snug tracking-[-0.01em] text-fg', layout === 'panel' ? 'text-[18px]' : 'text-[24px]')}>
           <a href={item.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{item.title}</a>
@@ -115,7 +114,11 @@ export function PaperDetail({ itemId, initial, layout }: { itemId: string; initi
             <p className="flex items-center gap-1.5 text-[11.5px] text-fg-3"><Sparkles className="h-3 w-3 text-accent" aria-hidden="true" /> Written by AI from the item's text</p>
           </div>
         ) : (
-          <p className="text-[13px] text-fg-3">{item.summary_status === 'pending' ? 'The summary is being written.' : 'No summary yet.'}</p>
+          <p className="text-[13px] text-fg-3">
+            {item.summary_status === 'pending' ? 'The summary is being written.'
+              : item.summary_status === 'skipped' ? 'Too little text to summarise without inventing details. Open the original to read it.'
+                : 'No summary yet.'}
+          </p>
         )}
         {abstract && (
           <div>

@@ -14,7 +14,7 @@ records it.
 
 Every day at INBOX_DIGEST_HOUR_UTC, users whose digest is due get one entry that rolls up the period: what each
 watch caught, updates to the maps they follow, new maps, feed papers citing their maps' milestones, the top new
-papers and the latest trending briefs. It makes no model call.
+and the top new papers. It makes no model call.
 """
 from __future__ import annotations
 
@@ -224,7 +224,7 @@ def digest_is_empty(payload: dict) -> bool:
 def build_digest(session, user, start: datetime, end: datetime, muted: list[str]) -> dict:
     """The digest's sections for one user and period, as the inbox entry's payload."""
     from athena.core.models import (
-        ContentItem, EvoSnapshot, EvoTopic, InboxEvent, TrendingBrief, Watch, WatchHit,
+        ContentItem, EvoSnapshot, EvoTopic, InboxEvent, Watch, WatchHit,
     )
     from athena.database import watches as db
     from athena.evolution.snapshots import is_empty, summary
@@ -274,17 +274,9 @@ def build_digest(session, user, start: datetime, end: datetime, muted: list[str]
     new_items = session.execute(select(func.count()).select_from(ContentItem).where(
         ContentItem.fetched_at >= start, ContentItem.fetched_at < end)).scalar_one()
 
-    briefs = {}
-    for b in session.execute(select(TrendingBrief).where(TrendingBrief.generated_at >= start,
-                                                         TrendingBrief.generated_at < end)
-                             .order_by(TrendingBrief.generated_at)).scalars():
-        briefs[b.category.value] = {"category": b.category.value, "theme": b.theme, "brief": b.brief,
-                                    "generated_at": b.generated_at.isoformat()}
-
     return {"period": {"start": start.isoformat(), "end": end.isoformat()}, "watches": watch_sections,
             "maps": maps, "new_maps": new_maps, "citations": citations, "new_items": new_items,
-            "top_papers": [{"id": str(i), "title": t, "score": round(s, 3)} for i, t, s in top],
-            "briefs": list(briefs.values())}
+            "top_papers": [{"id": str(i), "title": t, "score": round(s, 3)} for i, t, s in top]}
 
 
 def send_digest(session, user, settings: dict, now: datetime) -> bool:

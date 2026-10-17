@@ -9,6 +9,7 @@ from scripts.seed_prompts import seed_prompts  # noqa: E402
 from athena.database.operations import upsert_source  # noqa: E402
 from athena.core.schemas import SourceCreate  # noqa: E402
 from athena.core.models import SourceType, SourceCategory  # noqa: E402
+from athena.pipeline.scoring import populate_default_authority_scores  # noqa: E402
 
 
 def setup():
@@ -24,7 +25,7 @@ def setup():
         url="https://export.arxiv.org/api/query",
         type=SourceType.API,
         category=SourceCategory.PAPER,
-        fetch_config={"query": "cat:cs.AI OR cat:cs.LG", "max_results": 20}
+        fetch_config={}  # athena.scrapers.arxiv's query and per-sync limit; a "query" or "max_results" replaces them
     ))
 
     # OpenAI Blog
@@ -43,11 +44,11 @@ def setup():
         category=SourceCategory.COMPANY
     ))
 
-    # Meta AI RSS
+    # Meta AI: its RSS feed (/blog/rss/) gives nothing, so the blog page is scraped
     upsert_source(SourceCreate(
         name="Meta AI Blog",
-        url="https://ai.meta.com/blog/rss/",
-        type=SourceType.RSS,
+        url="https://ai.meta.com/blog",
+        type=SourceType.SCRAPE,
         category=SourceCategory.COMPANY
     ))
 
@@ -67,11 +68,11 @@ def setup():
         category=SourceCategory.COMPANY
     ))
 
-    # Anthropic News
+    # Anthropic News: it has no RSS feed (/feed.xml gives nothing), so the news page is scraped
     upsert_source(SourceCreate(
         name="Anthropic News",
-        url="https://www.anthropic.com/feed.xml",
-        type=SourceType.RSS,
+        url="https://www.anthropic.com/news",
+        type=SourceType.SCRAPE,
         category=SourceCategory.COMPANY
     ))
 
@@ -86,7 +87,7 @@ def setup():
     # Community Blogs (Playwright Headless Scraping)
     upsert_source(SourceCreate(
         name="The Gradient",
-        url="https://thegradient.pub/rss/",
+        url="https://thegradient.pub/",
         type=SourceType.SCRAPE,
         category=SourceCategory.BLOG,
         fetch_config={"use_playwright": True}
@@ -107,6 +108,7 @@ def setup():
         category=SourceCategory.BLOG,
         fetch_config={"use_playwright": True}
     ))
+    populate_default_authority_scores()  # known publishers get their authority; values set by hand stay
 
     print("Setup Complete.")
 

@@ -47,7 +47,7 @@ services:
   summary:
     image: ghcr.io/thisen-ekanayake/athena/worker:latest
     restart: unless-stopped
-    command: celery -A athena.pipeline.tasks worker --loglevel=info --pool=solo -c 1 -n summary@%h -Q summary_urgent,summary_standard,summary_lazy,summary_cluster,summary_trend
+    command: celery -A athena.pipeline.tasks worker --loglevel=info --pool=solo -c 1 -n summary@%h -Q summary_urgent,summary_standard,summary_lazy,summary_cluster
     env_file: ../.env
     environment:
       DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db

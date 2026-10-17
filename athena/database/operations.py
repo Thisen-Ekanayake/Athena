@@ -88,21 +88,6 @@ def get_scoring_config(category: str):
         return config
 
 
-def save_metric_snapshot(item_id, citation_count: int, engagement_raw: float):
-    """Save a daily metric snapshot for velocity computation."""
-    from athena.core.models import MetricSnapshot
-    from datetime import datetime, timezone
-    with SessionLocal() as session:
-        snapshot = MetricSnapshot(
-            item_id=item_id,
-            citation_count=citation_count,
-            engagement_raw=engagement_raw,
-            snapshot_date=datetime.now(timezone.utc),
-        )
-        session.add(snapshot)
-        session.commit()
-
-
 def fetch_durations(source_ids: list) -> dict[str, float]:
     """Each source's usual fetch time in seconds: the median of its last five successful fetches."""
     from statistics import median

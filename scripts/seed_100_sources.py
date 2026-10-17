@@ -80,7 +80,6 @@ SOURCES = [
     {"name": "Import AI – Jack Clark",      "url": "https://jack-clark.net/feed/",                    "category": SourceCategory.BLOG, "authority": 0.9},
     {"name": "Import AI Substack",          "url": "https://importai.substack.com/feed",              "category": SourceCategory.BLOG, "authority": 0.9},
     {"name": "Interconnects – Nathan Lambert", "url": "https://www.interconnects.ai/feed",            "category": SourceCategory.BLOG, "authority": 0.9},
-    {"name": "The Gradient",                "url": "https://thegradient.pub/rss/",                    "category": SourceCategory.BLOG, "authority": 0.9},
     {"name": "SemiAnalysis",                "url": "https://www.semianalysis.com/feed",               "category": SourceCategory.BLOG, "authority": 0.9},
     {"name": "The Sequence",                "url": "https://thesequence.substack.com/feed",           "category": SourceCategory.BLOG, "authority": 0.85},
     {"name": "The Algorithmic Bridge",      "url": "https://thealgorithmicbridge.substack.com/feed",  "category": SourceCategory.BLOG, "authority": 0.8},

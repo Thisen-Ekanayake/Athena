@@ -5,13 +5,14 @@ import type { Source } from '../api/client'
 import { apiErrorMessage } from '../api/error'
 import { useCreateUser, useCurrentUser, useIsAdmin, useResetPassword, useSetOnboarded, useUpdateUser, useUsers, type AuthUser, type IssuedUser, type Role } from '../api/queries/auth'
 import { useApiKeys, useDeleteApiKey, useSetApiKey } from '../api/queries/app_settings'
-import { useClusters, useFetchHealth, useScoringHealth } from '../api/queries/phase4'
+import { useClusters, useFetchHealth, useScoringHealth, useSummaryStatus } from '../api/queries/phase4'
 import { useAddSource, useSources, useToggleSource, useUpdateSource, type PreviewResponse } from '../api/queries/sources'
 import { timeAgo } from '../components/items/format'
 import { SyncLog } from '../components/layout/SyncLog'
 import { useStartSync } from '../api/queries/sync'
 import { SharingSettings } from '../features/evolution/SharingSettings'
 import { ModelsCard } from '../features/settings/ModelsCard'
+import { FeedMixSettings } from '../features/settings/FeedMixSettings'
 import { ScoringSettings } from '../features/settings/ScoringSettings'
 import { PersonalisationSettings } from '../features/personalisation/PersonalisationSettings'
 import { NotificationsSettings } from '../features/inbox/NotificationsSettings'
@@ -98,7 +99,7 @@ export function SettingsPage() {
           {active === 'keys' && <KeysSection />}
           {active === 'users' && <UsersSection />}
           {active === 'sharing' && <SharingSettings />}
-          {active === 'scoring' && <ScoringSettings />}
+          {active === 'scoring' && <div className="grid gap-6"><ScoringSettings /><FeedMixSettings /></div>}
           {active === 'account' && <AccountSection />}
           {active === 'notifications' && <NotificationsSettings />}
           {active === 'personalisation' && <PersonalisationSettings />}
@@ -598,7 +599,7 @@ function ClustersSection() {
         <div className="grid gap-3 sm:grid-cols-3">
           <Stat label="Items" value={health.total_items.toLocaleString()} />
           <Stat label="Clusters" value={clusters?.length ?? '—'} />
-          <Stat label="Trending" value={health.trending_items} sub={`${health.trending_percentage}% of items`} />
+          <Stat label="Scored" value={health.scored_items.toLocaleString()} />
         </div>
       )}
       {isLoading ? (
@@ -636,6 +637,7 @@ function ClustersSection() {
 function HealthSection() {
   const { data: scoring, isLoading: scoringLoading } = useScoringHealth()
   const { data: fetches, isLoading: fetchLoading } = useFetchHealth()
+  const { data: summaries, isLoading: summariesLoading } = useSummaryStatus()
   return (
     <section className="grid gap-6">
       <div>
@@ -657,6 +659,36 @@ function HealthSection() {
             <Stat label="Succeeded" value={fetches.successful_fetches.toLocaleString()} />
             <Stat label="Failed" value={fetches.failed_fetches.toLocaleString()} />
             <Stat label="Success rate" value={`${fetches.success_rate}%`} />
+          </div>
+        )}
+      </div>
+      <div>
+        <SectionTitle title="Summaries" description="Model-written summaries. Low-scored items are summarised when someone opens them; an item with too little text is skipped rather than summarised from its title." />
+        {summariesLoading ? <Spinner /> : summaries && (
+          <div className="grid gap-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <Stat label="Written" value={(summaries.counts.complete ?? 0).toLocaleString()} />
+              <Stat label="Waiting" value={(summaries.counts.pending ?? 0).toLocaleString()} />
+              <Stat label="When opened" value={(summaries.counts.lazy ?? 0).toLocaleString()} />
+              <Stat label="Skipped" value={(summaries.counts.skipped ?? 0).toLocaleString()} sub="too little text" />
+              <Stat label="Failed" value={(summaries.counts.failed ?? 0).toLocaleString()} />
+            </div>
+            {summaries.skipped.length > 0 && (
+              <table className="w-full text-left text-[13px]">
+                <thead className="text-[12px] text-fg-3">
+                  <tr><th className="py-1.5 font-normal">Skipped from</th><th className="py-1.5 font-normal">Why</th><th className="py-1.5 text-right font-normal">Items</th></tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {summaries.skipped.map((s) => (
+                    <tr key={`${s.source}:${s.reason}`}>
+                      <td className="py-1.5 text-fg">{s.source}</td>
+                      <td className="py-1.5 text-fg-2">{s.reason}</td>
+                      <td className="py-1.5 text-right font-mono tabular-nums text-fg-2">{s.count.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         )}
       </div>

@@ -4,32 +4,22 @@ Unit tests for Athena Layer 3 Scoring & Ranking.
 Covers:
 - Log normalisation formula correctness
 - Engagement extraction per platform
-- Sentiment score with mock embeddings
 - Recency exponential decay formula
 - Weight application and score clipping
-- Trending boost logic
 - Composite score computation
-- Velocity score computation
 - Authority score pass-through
-- Cosine similarity
 """
 import math
 from datetime import datetime, timezone, timedelta
 import pytest
-import numpy as np
 
 from athena.pipeline.signals import (
     compute_citation_score,
     compute_engagement_score,
-    compute_sentiment_score,
     compute_recency_score,
-    compute_velocity_score,
     compute_authority_score,
     compute_composite_score,
-    apply_trending_boost,
-    check_trending_criteria,
     _extract_engagement_signals,
-    _cosine_similarity,
 )
 
 
@@ -133,46 +123,6 @@ class TestEngagementScore:
 
 
 # ─────────────────────────────────────────────────────────
-# Sentiment Score Tests
-# ─────────────────────────────────────────────────────────
-
-class TestSentimentScore:
-    def test_no_comments_returns_neutral(self):
-        assert compute_sentiment_score({}) == 0.5
-
-    def test_no_embedder_returns_neutral(self):
-        metadata = {"comments": [{"body": "Great paper!"}]}
-        assert compute_sentiment_score(metadata, embed=None) == 0.5
-
-    def test_empty_comments_list(self):
-        assert compute_sentiment_score({"comments": []}) == 0.5
-
-    def test_with_mock_embedder(self):
-        """Comments closer to the positive poles score above neutral, closer to the negative ones below."""
-        pos_embedding = np.array([1.0, 0.0, 0.0] * 341 + [0.0])  # 1024-dim
-        neg_embedding = np.array([0.0, 1.0, 0.0] * 341 + [0.0])
-
-        def embedder(comment_embedding):
-            def embed(texts):
-                if texts == signals_mod.POSITIVE_POLES:
-                    return np.array([pos_embedding] * len(texts))
-                if texts == signals_mod.NEGATIVE_POLES:
-                    return np.array([neg_embedding] * len(texts))
-                return np.array([comment_embedding] * len(texts))
-            return embed
-
-        import athena.pipeline.signals as signals_mod
-        metadata = {"comments": [{"body": "Excellent breakthrough!"}]}
-        for comment, above in ((np.array([0.8, 0.2, 0.0] * 341 + [0.0]), True),
-                               (np.array([0.2, 0.8, 0.0] * 341 + [0.0]), False)):
-            signals_mod._cached_positive_embeddings = None  # reset the cache
-            signals_mod._cached_negative_embeddings = None
-            score = compute_sentiment_score(metadata, embedder(comment))
-            assert 0.0 <= score <= 1.0
-            assert (score > 0.5) is above
-
-
-# ─────────────────────────────────────────────────────────
 # Recency Score Tests
 # ─────────────────────────────────────────────────────────
 
@@ -221,41 +171,6 @@ class TestRecencyScore:
 
 
 # ─────────────────────────────────────────────────────────
-# Velocity Score Tests
-# ─────────────────────────────────────────────────────────
-
-class TestVelocityScore:
-    def test_no_change(self):
-        assert compute_velocity_score(10, 0.5, 10, 0.5) == 0.0
-
-    def test_citation_increase(self):
-        score = compute_velocity_score(60, 0.5, 10, 0.5)
-        assert score > 0.0
-
-    def test_engagement_increase(self):
-        score = compute_velocity_score(10, 0.8, 10, 0.5)
-        assert score > 0.0
-
-    def test_max_velocity(self):
-        score = compute_velocity_score(100, 1.0, 0, 0.0)
-        assert score == pytest.approx(1.0, abs=0.01)
-
-    def test_negative_delta_treated_as_zero(self):
-        """Decreasing metrics shouldn't produce negative velocity."""
-        score = compute_velocity_score(5, 0.3, 10, 0.5)
-        assert score == 0.0
-
-    def test_60_40_split(self):
-        """Citation velocity is weighted 60%, engagement 40%."""
-        # Only citation change
-        s_cit = compute_velocity_score(50, 0.0, 0, 0.0)
-        # Only engagement change
-        s_eng = compute_velocity_score(0, 0.3, 0, 0.0)
-        # Citation should contribute more per unit
-        assert s_cit > s_eng
-
-
-# ─────────────────────────────────────────────────────────
 # Authority Score Tests
 # ─────────────────────────────────────────────────────────
 
@@ -279,104 +194,36 @@ class TestAuthorityScore:
 
 class TestCompositeScore:
     def test_all_zeros(self):
-        weights = {"citation": 0.3, "engagement": 0.15, "sentiment": 0.15,
-                   "recency": 0.2, "authority": 0.2}
-        assert compute_composite_score(0, 0, 0, 0, 0, weights) == 0.0
+        weights = {"citation": 0.35, "engagement": 0.15, "recency": 0.25, "authority": 0.25}
+        assert compute_composite_score(0, 0, 0, 0, weights) == 0.0
 
     def test_all_ones(self):
-        weights = {"citation": 0.3, "engagement": 0.15, "sentiment": 0.15,
-                   "recency": 0.2, "authority": 0.2}
-        score = compute_composite_score(1.0, 1.0, 1.0, 1.0, 1.0, weights)
+        weights = {"citation": 0.35, "engagement": 0.15, "recency": 0.25, "authority": 0.25}
+        score = compute_composite_score(1.0, 1.0, 1.0, 1.0, weights)
         assert score == pytest.approx(1.0, abs=0.01)
 
     def test_clipped_to_unit_range(self):
-        weights = {"citation": 0.5, "engagement": 0.5, "sentiment": 0.5,
-                   "recency": 0.5, "authority": 0.5}
-        # Sum of weights is 2.5, all signals at 1.0 = 2.5, but should clip to 1.0
-        score = compute_composite_score(1.0, 1.0, 1.0, 1.0, 1.0, weights)
+        weights = {"citation": 0.5, "engagement": 0.5, "recency": 0.5, "authority": 0.5}
+        # Sum of weights is 2.0, all signals at 1.0 = 2.0, but should clip to 1.0
+        score = compute_composite_score(1.0, 1.0, 1.0, 1.0, weights)
         assert score == 1.0
 
     def test_weights_affect_ranking(self):
         """An item with high citation but low recency should rank differently
         depending on the weight profile."""
-        paper_weights = {"citation": 0.30, "engagement": 0.15, "sentiment": 0.15,
-                         "recency": 0.20, "authority": 0.20}
-        blog_weights = {"citation": 0.10, "engagement": 0.30, "sentiment": 0.20,
-                        "recency": 0.25, "authority": 0.15}
+        paper_weights = {"citation": 0.40, "engagement": 0.0, "recency": 0.35, "authority": 0.25}
+        blog_weights = {"citation": 0.0, "engagement": 0.40, "recency": 0.35, "authority": 0.25}
 
         # Item with high citation, low engagement
-        s_paper = compute_composite_score(0.9, 0.2, 0.5, 0.3, 0.8, paper_weights)
-        s_blog = compute_composite_score(0.9, 0.2, 0.5, 0.3, 0.8, blog_weights)
+        s_paper = compute_composite_score(0.9, 0.2, 0.3, 0.8, paper_weights)
+        s_blog = compute_composite_score(0.9, 0.2, 0.3, 0.8, blog_weights)
         # Paper weights favor citation more, so should score higher for this item
         assert s_paper > s_blog
 
-    def test_default_weights_used(self):
-        """Empty weights dict should use defaults."""
-        score = compute_composite_score(0.5, 0.5, 0.5, 0.5, 0.5, {})
-        expected = 0.3 * 0.5 + 0.15 * 0.5 + 0.15 * 0.5 + 0.2 * 0.5 + 0.2 * 0.5
-        assert score == pytest.approx(expected, abs=0.01)
-
-
-# ─────────────────────────────────────────────────────────
-# Trending Tests
-# ─────────────────────────────────────────────────────────
-
-class TestTrending:
-    def test_boost_not_applied_when_not_trending(self):
-        assert apply_trending_boost(0.8, False) == 0.8
-
-    def test_boost_applied(self):
-        assert apply_trending_boost(0.8, True) == 0.88
-
-    def test_boost_capped_at_095(self):
-        assert apply_trending_boost(0.92, True) == 0.95
-
-    def test_boost_exactly_at_cap(self):
-        assert apply_trending_boost(0.87, True) == 0.95
-
-    def test_trending_criteria_met(self):
-        published = datetime.now(timezone.utc) - timedelta(days=5)
-        assert check_trending_criteria(0.8, published, 5) is True
-
-    def test_trending_low_velocity(self):
-        published = datetime.now(timezone.utc) - timedelta(days=5)
-        assert check_trending_criteria(0.5, published, 5) is False
-
-    def test_trending_too_old(self):
-        published = datetime.now(timezone.utc) - timedelta(days=60)
-        assert check_trending_criteria(0.8, published, 5) is False
-
-    def test_trending_too_few_signals(self):
-        published = datetime.now(timezone.utc) - timedelta(days=5)
-        assert check_trending_criteria(0.8, published, 1) is False
-
-    def test_trending_none_published_at(self):
-        assert check_trending_criteria(0.8, None, 5) is False
-
-
-# ─────────────────────────────────────────────────────────
-# Cosine Similarity Tests
-# ─────────────────────────────────────────────────────────
-
-class TestCosineSimilarity:
-    def test_identical_vectors(self):
-        v = np.array([1.0, 2.0, 3.0])
-        assert _cosine_similarity(v, v) == pytest.approx(1.0, abs=1e-6)
-
-    def test_orthogonal_vectors(self):
-        v1 = np.array([1.0, 0.0, 0.0])
-        v2 = np.array([0.0, 1.0, 0.0])
-        assert _cosine_similarity(v1, v2) == pytest.approx(0.0, abs=1e-6)
-
-    def test_zero_vector(self):
-        v1 = np.array([1.0, 2.0, 3.0])
-        v2 = np.array([0.0, 0.0, 0.0])
-        assert _cosine_similarity(v1, v2) == 0.0
-
-    def test_opposite_vectors(self):
-        v1 = np.array([1.0, 0.0])
-        v2 = np.array([-1.0, 0.0])
-        assert _cosine_similarity(v1, v2) == pytest.approx(-1.0, abs=1e-6)
+    def test_missing_weight_counts_for_nothing(self):
+        """A signal without a weight adds nothing to the score."""
+        assert compute_composite_score(0.5, 0.5, 0.5, 0.5, {}) == 0.0
+        assert compute_composite_score(0.5, 1.0, 0.5, 0.5, {"engagement": 0.4}) == pytest.approx(0.4)
 
 
 # ─────────────────────────────────────────────────────────

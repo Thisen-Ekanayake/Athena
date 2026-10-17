@@ -31,7 +31,6 @@ class Settings:
     # Cache TTLs (seconds)
     CACHE_FEED_SCORE_TTL: int = 300       # 5 minutes
     CACHE_FEED_DATE_TTL: int = 900        # 15 minutes
-    CACHE_TRENDING_TTL: int = 1800        # 30 minutes
     CACHE_CLUSTERS_TTL: int = 3600        # 1 hour
     CACHE_CLUSTER_DETAIL_TTL: int = 900   # 15 minutes
     CACHE_ITEM_TTL: int = 86400           # 24 hours

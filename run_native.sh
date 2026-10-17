@@ -181,7 +181,7 @@ start_proc worker   celery -A athena.pipeline.tasks worker -l info --pool=thread
                       -B --schedule "$RUN_DIR/celerybeat-schedule"
 # Summaries and cluster labels: their own queues, one at a time (the model server answers one request at a time).
 start_proc summary  celery -A athena.pipeline.tasks worker -l info --pool=solo -c 1 -n "summary@%h" \
-                      -Q summary_urgent,summary_standard,summary_lazy,summary_cluster,summary_trend
+                      -Q summary_urgent,summary_standard,summary_lazy,summary_cluster
 # Research-evolution topic builds: own queue, one at a time (later phases share a single GPU).
 start_proc evolution celery -A athena.pipeline.tasks worker -l info -Q evolution -c 1 --pool=solo \
                       -n "evolution@%h"

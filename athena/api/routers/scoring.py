@@ -2,7 +2,7 @@
 Scoring health and rescoring (Settings → Health and Clusters).
 
 POST /api/v1/admin/rescore-all   — queue a full re-score (admin)
-GET  /api/v1/health/scoring      — how many items are scored, trending and queued, and the average score
+GET  /api/v1/health/scoring      — how many items are scored and queued, and the average score
 GET  /api/v1/health/fetch        — fetch successes and failures over all fetch logs
 """
 from fastapi import APIRouter, Depends
@@ -31,9 +31,6 @@ def scoring_health(db: Session = Depends(get_db)):
     scored_items = db.execute(
         select(func.count(ContentItem.id)).where(ContentItem.scored_at.isnot(None))
     ).scalar()
-    trending_items = db.execute(
-        select(func.count(ContentItem.id)).where(ContentItem.is_trending .is_(True))
-    ).scalar()
     avg_score = db.execute(
         select(func.avg(ContentItem.score)).where(ContentItem.score > 0)
     ).scalar()
@@ -47,12 +44,8 @@ def scoring_health(db: Session = Depends(get_db)):
         "total_items": total_items or 0,
         "scored_items": scored_items or 0,
         "unscored_items": (total_items or 0) - (scored_items or 0),
-        "trending_items": trending_items or 0,
         "average_score": round(avg_score, 4) if avg_score else 0,
         "scoring_queue_depth": queue_depth,
-        "trending_percentage": round(
-            (trending_items or 0) / max(1, total_items or 1) * 100, 2
-        ),
     }
 
 
