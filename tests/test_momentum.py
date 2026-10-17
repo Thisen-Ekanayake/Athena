@@ -344,7 +344,7 @@ def add_topic(s):
 
 
 def test_topic_rising_ranks_by_growth(Session, monkeypatch):
-    monkeypatch.setattr(evo_db, "method_names", lambda session, papers: {})
+    monkeypatch.setattr("athena.database.evolution.graph.method_names", lambda session, papers: {})
     with Session() as s:
         topic, papers = add_topic(s)
         rising = evo_db.topic_rising(s, topic, now=datetime(2026, 10, 1, tzinfo=timezone.utc))
