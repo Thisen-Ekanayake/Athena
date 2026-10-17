@@ -67,10 +67,10 @@ class TestArXivScraper:
         e2 = self._make_entry()
         assert scraper.parse(e1).content_hash == scraper.parse(e2).content_hash
 
-    def test_arxiv_uses_all_4_categories(self):
-        """Hardcoded default query must include all 4 required categories."""
+    def test_arxiv_uses_all_5_categories(self):
+        """The default query includes every category the feed follows."""
         from athena.scrapers.arxiv import ARXIV_DEFAULT_QUERY
-        for cat in ["cs.AI", "cs.LG", "cs.CL", "stat.ML"]:
+        for cat in ["cs.AI", "cs.LG", "cs.CL", "cs.CV", "stat.ML"]:
             assert cat in ARXIV_DEFAULT_QUERY, f"Missing category: {cat}"
 
     def test_arxiv_max_results_at_least_50(self):

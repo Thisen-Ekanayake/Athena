@@ -16,7 +16,8 @@ from athena.api.deps import get_db, get_redis
 from athena.api.main import app
 from athena.core.models import (
     Cluster, ContentCategory, ContentItem, ContentScore, InterestProfile, ItemFeedback, ItemLink, ItemRead,
-    SavedList, SavedListItem, ScoringConfig, Source, SourceCategory, SourceType, TrendingBrief, User, UserHighlight,
+    MetricSnapshot,
+    SavedList, SavedListItem, ScoringConfig, Source, SourceCategory, SourceType, User, UserHighlight,
     UserNote, UserSession,
 )
 from athena.database import feedback
@@ -51,7 +52,7 @@ class FakeQdrant:
 def env(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     for model in (User, UserSession, SavedList, SavedListItem, Source, Cluster, ContentItem, ContentScore, ItemLink,
-                  ItemRead, UserNote, UserHighlight, ItemFeedback, InterestProfile, ScoringConfig, TrendingBrief):
+                  ItemRead, UserNote, UserHighlight, ItemFeedback, InterestProfile, ScoringConfig, MetricSnapshot):
         model.__table__.create(engine)
     Session = sessionmaker(bind=engine)
 
@@ -76,7 +77,7 @@ def env(monkeypatch):
             s.execute(ContentItem.__table__.insert().values(
                 id=ids[name], source_id=source_id, title=name, url=f"https://example.org/{name}", score=score,
                 published_at=datetime(2026, 10, 10, tzinfo=timezone.utc), category=ContentCategory.PAPER,
-                content_hash=name, authors=None, extra_data={}, is_trending=True))
+                content_hash=name, authors=None, extra_data={}, citation_gain_7d=3))
         s.commit()
     qdrant = FakeQdrant({str(ids[name]): vec for name, (vec, _) in ITEMS.items()})
     monkeypatch.setattr(interests, "_qdrant", lambda: qdrant)
@@ -173,8 +174,8 @@ def test_for_you_lifts_what_you_like_and_leaves_out_what_you_hid(env):
     assert order.index("v3") < order.index("n1")               # a liked kind beats a disliked one with more score
     assert all(0 <= i["interest"] <= 1 for i in body["items"])
     with Session() as s:  # the admin makes interests count for most of the order
-        s.add(ScoringConfig(version=1, category=ContentCategory.PAPER, weight_citation=0.3, weight_engagement=0.15,
-                            weight_sentiment=0.15, weight_recency=0.2, weight_authority=0.2, weight_preference=0.8,
+        s.add(ScoringConfig(version=1, category=ContentCategory.PAPER, weight_citation=0.35, weight_engagement=0.15,
+                            weight_recency=0.25, weight_authority=0.25, weight_preference=0.8,
                             half_life_days=60, is_active=True))
         s.commit()
     interests.bump(env[3])
@@ -187,8 +188,9 @@ def test_hidden_items_leave_the_users_lists_only(env):
     assert len(titles(bo, "/api/v1/feed")) == 6  # warms the shared cache
     react(admin, ids["n3"], "hide")
     assert "n3" not in titles(admin, "/api/v1/feed") and "n3" not in titles(admin, "/api/v1/feed?sort=date")
-    assert "n3" not in titles(admin, "/api/v1/trending")
-    assert "n3" in titles(bo, "/api/v1/feed") and "n3" in titles(bo, "/api/v1/trending")
+    rising = "/api/v1/momentum/rising?window=7d&limit=50"
+    assert "n3" not in titles(admin, rising)
+    assert "n3" in titles(bo, "/api/v1/feed") and "n3" in titles(bo, rising)
     hidden = admin.get("/api/v1/me/feedback?reaction=hide").json()["items"]
     assert [i["title"] for i in hidden] == ["n3"]
     admin.delete(f"/api/v1/items/{ids['n3']}/feedback")  # undo
@@ -228,7 +230,7 @@ def test_reset_forgets_reactions_but_saves_still_count(env):
 def test_the_breakdown_adds_your_interests(env):
     admin, ids, Session, _ = env
     with Session() as s:
-        s.add(ContentScore(item_id=ids["v3"], citation_score=0.1, engagement_score=0.5, sentiment_score=0.5,
+        s.add(ContentScore(item_id=ids["v3"], citation_score=0.1, engagement_score=0.5,
                            recency_score=0.6, authority_score=0.85, composite_score=0.15, score_version=1,
                            computed_at=datetime(2026, 10, 12, tzinfo=timezone.utc)))
         s.commit()

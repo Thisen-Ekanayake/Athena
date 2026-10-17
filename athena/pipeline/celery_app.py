@@ -17,7 +17,6 @@ celery_app.conf.update(
     task_routes={
         'athena.pipeline.summarisation_tasks.summarise_item_worker': {'queue': 'summary_standard'},
         'athena.pipeline.summarisation_tasks.label_cluster_worker': {'queue': 'summary_cluster'},
-        'athena.pipeline.summarisation_tasks.generate_trending_brief_worker': {'queue': 'summary_trend'},
         # Topic builds run on their own single-concurrency worker (run_native.sh starts it).
         'athena.evolution.tasks.build_topic': {'queue': 'evolution'},
         'athena.evolution.tasks.build_search_topic': {'queue': 'evolution'},

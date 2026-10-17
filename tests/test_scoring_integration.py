@@ -12,7 +12,6 @@ from athena.pipeline.signals import (
     compute_recency_score,
     compute_authority_score,
     compute_composite_score,
-    apply_trending_boost,
 )
 
 
@@ -20,7 +19,7 @@ class TestScoringPipelineIntegration:
     """Test the full scoring pipeline logic without a real database."""
 
     def test_full_score_computation(self):
-        """Simulate scoring an item through all 5 signals."""
+        """Simulate scoring an item through all 4 signals."""
         # Mock item data
         citation_count = 150
         metadata = {"karma": 80, "commentCount": 15}
@@ -31,18 +30,12 @@ class TestScoringPipelineIntegration:
         # Compute signals
         citation = compute_citation_score(citation_count)
         engagement = compute_engagement_score(metadata, source_url)
-        sentiment = 0.5  # Default (no comments for this test)
         recency = compute_recency_score(published_at, half_life_days=30)
         auth_score = compute_authority_score(authority)
 
         # Composite
-        weights = {
-            "citation": 0.30, "engagement": 0.15, "sentiment": 0.15,
-            "recency": 0.20, "authority": 0.20,
-        }
-        composite = compute_composite_score(
-            citation, engagement, sentiment, recency, auth_score, weights
-        )
+        weights = {"citation": 0.35, "engagement": 0.15, "recency": 0.25, "authority": 0.25}
+        composite = compute_composite_score(citation, engagement, recency, auth_score, weights)
 
         assert 0.0 <= composite <= 1.0
         # A recent LessWrong post with 150 citations and 0.75 authority should score well
@@ -66,53 +59,33 @@ class TestScoringPipelineIntegration:
         )
         blog_authority = compute_authority_score(0.50)
 
-        weights = {
-            "citation": 0.30, "engagement": 0.15, "sentiment": 0.15,
-            "recency": 0.20, "authority": 0.20,
-        }
+        weights = {"citation": 0.35, "engagement": 0.15, "recency": 0.25, "authority": 0.25}
 
         nature_score = compute_composite_score(
-            nature_citation, nature_engagement, 0.5, nature_recency, nature_authority, weights
+            nature_citation, nature_engagement, nature_recency, nature_authority, weights
         )
         blog_score = compute_composite_score(
-            blog_citation, blog_engagement, 0.5, blog_recency, blog_authority, weights
+            blog_citation, blog_engagement, blog_recency, blog_authority, weights
         )
 
         assert nature_score > blog_score
 
-    def test_trending_boost_surfaces_new_items(self):
-        """A trending new item should outscore a non-trending equivalent."""
-        base_score = 0.55
-        boosted = apply_trending_boost(base_score, True)
-        unboosted = apply_trending_boost(base_score, False)
-        assert boosted > unboosted
-        assert boosted == 0.63
-
     def test_different_category_weights_differentiate(self):
         """Same item scored with paper vs blog weights should differ."""
-        paper_weights = {
-            "citation": 0.30, "engagement": 0.15, "sentiment": 0.15,
-            "recency": 0.20, "authority": 0.20,
-        }
-        blog_weights = {
-            "citation": 0.10, "engagement": 0.30, "sentiment": 0.20,
-            "recency": 0.25, "authority": 0.15,
-        }
+        paper_weights = {"citation": 0.40, "engagement": 0.0, "recency": 0.35, "authority": 0.25}
+        blog_weights = {"citation": 0.0, "engagement": 0.40, "recency": 0.35, "authority": 0.25}
 
         # Item with high citation, moderate other signals
-        s_paper = compute_composite_score(0.8, 0.3, 0.5, 0.4, 0.7, paper_weights)
-        s_blog = compute_composite_score(0.8, 0.3, 0.5, 0.4, 0.7, blog_weights)
+        s_paper = compute_composite_score(0.8, 0.3, 0.4, 0.7, paper_weights)
+        s_blog = compute_composite_score(0.8, 0.3, 0.4, 0.7, blog_weights)
 
         # Different category weights should produce different scores
         assert s_paper != s_blog
 
     def test_default_signals_produce_reasonable_score(self):
         """With all signals at 0.5, the composite should be 0.5."""
-        weights = {
-            "citation": 0.30, "engagement": 0.15, "sentiment": 0.15,
-            "recency": 0.20, "authority": 0.20,
-        }
-        score = compute_composite_score(0.5, 0.5, 0.5, 0.5, 0.5, weights)
+        weights = {"citation": 0.35, "engagement": 0.15, "recency": 0.25, "authority": 0.25}
+        score = compute_composite_score(0.5, 0.5, 0.5, 0.5, weights)
         assert score == pytest.approx(0.5, abs=0.01)
 
 
@@ -121,11 +94,9 @@ class TestScoringConfigDefaults:
 
     def test_default_weights_sum_to_one(self):
         from athena.pipeline.scoring import DEFAULT_WEIGHTS
+        from athena.pipeline.scoring import BASE_SIGNALS
         for category, weights in DEFAULT_WEIGHTS.items():
-            total = (
-                weights["citation"] + weights["engagement"] + weights["sentiment"]
-                + weights["recency"] + weights["authority"]
-            )
+            total = sum(weights[k] for k in BASE_SIGNALS)
             assert total == pytest.approx(1.0, abs=0.01), (
                 f"{category} weights sum to {total}, expected 1.0"
             )
@@ -142,3 +113,51 @@ class TestScoringConfigDefaults:
         assert DEFAULT_AUTHORITY["arxiv"] == 0.85
         assert DEFAULT_AUTHORITY["neurips"] == 1.0
         assert DEFAULT_AUTHORITY["openai"] == 0.90
+
+
+class TestDefaultAuthority:
+    """Sources get their publisher's authority at setup and when added (ROADMAP_v2 T1)."""
+
+    @pytest.mark.parametrize("url, expected", [
+        ("https://export.arxiv.org/api/query", 0.85),
+        ("https://openai.com/news/rss.xml", 0.90),
+        ("https://ai.meta.com/blog", 0.90),
+        ("https://www.microsoft.com/en-us/research/feed/", 0.85),
+        ("https://huggingface.co/blog/feed.xml", 0.80),
+        ("https://blogs.nvidia.com/feed/", 0.70),
+        ("https://x.ai/news", 0.70),
+        ("https://thegradient.pub/", 0.75),
+        ("https://metaculus.com/feed", None),  # "meta" alone no longer matches
+        ("https://max.ai/blog", None),  # a domain key matches that host, not any host ending in it
+        ("https://example.com/", None),
+    ])
+    def test_default_authority_by_url(self, url, expected):
+        from athena.pipeline.scoring import default_authority
+        assert default_authority(url) == expected
+
+    def test_populate_keeps_values_set_by_hand(self, monkeypatch):
+        from uuid import uuid4
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+        from athena.core.models import Source, SourceCategory, SourceType
+        from athena.pipeline import scoring
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Source.__table__.create(engine)
+        Session = sessionmaker(bind=engine)
+        monkeypatch.setattr(scoring, "SessionLocal", Session)
+        urls = {"neutral": "https://huggingface.co/blog/feed.xml", "hand": "https://openai.com/news/rss.xml",
+                "unknown": "https://example.com/feed", "later": "https://blogs.nvidia.com/feed/"}
+        ids = {k: uuid4() for k in urls}
+        with Session() as s:
+            for key, url in urls.items():
+                s.add(Source(id=ids[key], name=key, url=url, type=SourceType.RSS, category=SourceCategory.COMPANY,
+                             authority_score=0.3 if key == "hand" else 0.5))
+            s.commit()
+
+        assert scoring.populate_default_authority_scores(ids["neutral"]) == 1  # only the one asked for
+        assert scoring.populate_default_authority_scores() == 1  # then the rest: nvidia
+        with Session() as s:
+            got = {src.name: src.authority_score for src in s.query(Source).all()}
+        assert got == {"neutral": 0.80, "hand": 0.3, "unknown": 0.5, "later": 0.70}

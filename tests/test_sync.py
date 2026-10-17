@@ -227,7 +227,19 @@ async def test_lesswrong_is_asked_for_posts_however_the_crawl_calls_it():
 
 def test_arxiv_asks_for_each_category_by_category():
     from athena.scrapers.arxiv import ARXIV_DEFAULT_QUERY
-    assert ARXIV_DEFAULT_QUERY.split(" OR ") == ["cat:cs.AI", "cat:cs.LG", "cat:cs.CL", "cat:stat.ML"]
+    assert ARXIV_DEFAULT_QUERY.split(" OR ") == ["cat:cs.AI", "cat:cs.LG", "cat:cs.CL", "cat:cs.CV", "cat:stat.ML"]
+
+
+def test_an_arxiv_sync_uses_the_sources_config_and_looks_back_two_days():
+    from datetime import datetime, timezone
+    from athena.scrapers.arxiv import ARXIV_DEFAULT_QUERY, ARXIV_MAX_PER_SYNC, sync_args
+    newest = datetime(2026, 10, 14, 17, 59)  # naive, as SQLite gives it
+    assert sync_args({}, newest) == {"search_query": ARXIV_DEFAULT_QUERY, "max_results": ARXIV_MAX_PER_SYNC,
+                                     "since": datetime(2026, 10, 12, 17, 59, tzinfo=timezone.utc)}
+    assert sync_args(None, None)["since"] is None  # a new source: just the newest page
+    mine = sync_args({"query": "cat:cs.RO", "max_results": "300"}, newest)
+    assert mine["search_query"] == "cat:cs.RO" and mine["max_results"] == 300
+    assert sync_args({"max_results": "lots"}, newest)["max_results"] == ARXIV_MAX_PER_SYNC
 
 
 def _entry(day: int):

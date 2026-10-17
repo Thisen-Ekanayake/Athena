@@ -8,7 +8,7 @@ import { FeedPage } from './FeedPage'
 
 const item = (id: string, title: string): FeedItem => ({
   id, title, url: `https://example.com/${id}`, summary: null, score: 0.8, published_at: '2026-10-16T12:00:00Z',
-  category: 'paper', is_trending: false, source: { name: 'arXiv', type: 'arxiv', authority: 0.9 }, related_count: 0,
+  category: 'paper', source: { name: 'arXiv', type: 'arxiv', authority: 0.9 }, related_count: 0,
 })
 
 const page = (items: FeedItem[]): FeedResponse => ({

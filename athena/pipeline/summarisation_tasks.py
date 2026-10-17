@@ -25,8 +25,6 @@ ITEM_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["su
                                             "minItems": 3, "maxItems": 5}}}
 CLUSTER_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["label", "description"],
                   "properties": {"label": {"type": "string"}, "description": {"type": "string"}}}
-BRIEF_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["brief", "theme"],
-                "properties": {"brief": {"type": "string"}, "theme": {"type": "string"}}}
 
 
 MIN_SUMMARY_WORDS = 80    # below this a summary (3-5 takeaways, a concrete number) would have to be invented
@@ -143,7 +141,7 @@ def summarise_item_worker(self, item_id: str, tier: int = 2):
         text_content = _text_to_summarise(item, staged)
         if text_content is None:
             logger.warning(f"Too little text to summarise {item_id} without inventing details; skipped.")
-            item.summary_status = SummaryStatus.FAILED
+            item.summary_status = SummaryStatus.SKIPPED
             item.extra_data = {**(item.extra_data or {}), "summary_skipped": "too little text"}
             session.commit()
             return
@@ -310,96 +308,4 @@ def label_cluster_worker(self, cluster_id: str):
 
         except Exception as e:
             logger.error(f"Model error for cluster {cluster_id}: {e}")
-            raise self.retry(exc=e)
-
-
-@shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def generate_trending_brief_worker(self, category: str):
-    """
-    Generate daily trending brief for a specific category based on top trending items.
-    """
-    from athena.core.models import ContentCategory, TrendingBrief
-    import json
-
-    if not check_budget_before_call(JobType.TRENDING_BRIEF.value):
-        logger.warning(f"Budget exceeded. Skipping trending brief for {category}.")
-        return
-
-    with SessionLocal() as session:
-        active_prompt = get_active_prompt_version(JobType.TRENDING_BRIEF, session)
-        if not active_prompt:
-            logger.error("No active prompt version for TRENDING_BRIEF.")
-            return
-
-        cat_enum = ContentCategory(category)
-
-        # Get top 5 trending items
-        top_items = session.execute(
-            select(ContentItem)
-            .where(ContentItem.category == cat_enum)
-            .where(ContentItem.is_trending .is_(True))
-            .order_by(ContentItem.score.desc())
-            .limit(5)
-        ).scalars().all()
-
-        if len(top_items) < 3:
-            logger.warning(f"Not enough trending items in {category} for a brief.")
-            return
-
-        items_str_list = []
-        for i, item in enumerate(top_items, 1):
-            items_str_list.append(f"Title: {item.title}\nSummary: {item.summary or item.abstract or 'N/A'}")
-
-        user_msg = active_prompt.user_prompt_tpl.format(
-            category=category,
-            items_str="\n\n".join(items_str_list)
-        )
-
-        try:
-            start_time = time.time()
-            res, model = _complete(active_prompt.system_prompt, user_msg, "trending_brief", BRIEF_SCHEMA)
-            raw_response = res.choices[0].message.content
-            latency = int((time.time() - start_time) * 1000)
-
-            try:
-                clean = raw_response.strip().lstrip('```json').rstrip('```').strip()
-                data = json.loads(clean)
-                brief = data.get("brief", "")
-                theme = data.get("theme", "")
-                success = True
-                err_msg = None
-            except Exception as pe:
-                success = False
-                err_msg = str(pe)
-
-            log_usage_and_update_spend(
-                session=session,
-                job_type=JobType.TRENDING_BRIEF,
-                prompt_version=active_prompt.version,
-                input_tokens=res.usage.prompt_tokens,
-                output_tokens=res.usage.completion_tokens,
-                latency_ms=latency,
-                success=success,
-                error_message=err_msg,
-                model=model
-            )
-
-            if success:
-                trend_brief = TrendingBrief(
-                    category=cat_enum,
-                    brief=brief,
-                    theme=theme,
-                    prompt_version=active_prompt.version,
-                    source_item_ids=[item.id for item in top_items]
-                )
-                session.add(trend_brief)
-                session.commit()
-                logger.info(f"Generated trending brief for {category} successfully.")
-            else:
-                session.commit()
-                logger.error(f"Validation failed for trending brief {category}: {err_msg}")
-                raise self.retry(exc=Exception(f"Trending Brief Error: {err_msg}"))
-
-        except Exception as e:
-            logger.error(f"Model error for trending brief in {category}: {e}")
             raise self.retry(exc=e)

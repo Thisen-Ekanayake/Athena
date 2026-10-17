@@ -85,7 +85,7 @@ export const useTestModels = () =>
 
 // ── Scoring weights (admin) ───────────────────────────────────────────
 
-export const BASE_SIGNALS = ['citation', 'engagement', 'sentiment', 'recency', 'authority'] as const
+export const BASE_SIGNALS = ['citation', 'engagement', 'recency', 'authority'] as const
 export type BaseSignal = (typeof BASE_SIGNALS)[number]
 
 export type CategoryWeights = Record<BaseSignal, number> & { preference: number; half_life_days: number }
@@ -110,6 +110,31 @@ export const useUpdateScoring = () => {
     onSuccess: (data) => {
       queryClient.setQueryData(['scoring-settings'], data)
       queryClient.invalidateQueries({ queryKey: ['score-breakdown'] })
+      queryClient.invalidateQueries({ queryKey: ['feed'] })
+    },
+  })
+}
+
+// ── Feed mix (admin) ──────────────────────────────────────────────────
+
+export interface FeedSettings {
+  /** The most of a Score or For-you page one source may fill, 0–1 (1: no cap) */
+  source_share: number
+  default_source_share: number
+}
+
+export const useFeedSettings = () =>
+  useQuery({
+    queryKey: ['feed-settings'],
+    queryFn: async () => (await apiClient.get<FeedSettings>('/settings/feed')).data,
+  })
+
+export const useUpdateFeedSettings = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (source_share: number) => (await apiClient.put<FeedSettings>('/settings/feed', { source_share })).data,
+    onSuccess: (data) => {
+      queryClient.setQueryData(['feed-settings'], data)
       queryClient.invalidateQueries({ queryKey: ['feed'] })
     },
   })

@@ -11,7 +11,6 @@ interface ApiScoreBreakdown {
   composite_score: number
   signals: Record<string, ApiSignal>
   computed_at: string
-  is_trending: boolean
 }
 
 export interface ScoreBreakdown {
@@ -24,14 +23,12 @@ export interface ScoreBreakdown {
     weight: number
   }[]
   computed_at: string
-  is_trending: boolean
 }
 
 const SIGNAL_LABELS: Record<string, string> = {
   citation_impact: 'Citations',
   engagement: 'Engagement',
-  community_sentiment: 'Community sentiment',
-  recency_velocity: 'Recency',
+  recency: 'Recency',
   source_authority: 'Source authority',
   your_interests: 'Your interests',
 }
@@ -52,7 +49,6 @@ export const useScoreBreakdown = (itemId: string, enabled: boolean) => {
         score: data.composite_score,
         signals,
         computed_at: data.computed_at,
-        is_trending: data.is_trending,
       }
     },
     enabled,
@@ -124,10 +120,8 @@ export interface ScoringHealth {
   total_items: number
   scored_items: number
   unscored_items: number
-  trending_items: number
   average_score: number
   scoring_queue_depth: number
-  trending_percentage: number
 }
 
 export const useScoringHealth = () => {
@@ -158,3 +152,17 @@ export const useFetchHealth = () => {
     staleTime: 60 * 1000,
   })
 }
+
+export interface SummaryStatus {
+  /** Items at each summary status: pending, complete, failed, lazy (written when opened), skipped */
+  counts: Record<string, number>
+  /** Items skipped for too little text, by source and reason, most first */
+  skipped: { source: string; reason: string; count: number }[]
+}
+
+export const useSummaryStatus = () =>
+  useQuery({
+    queryKey: ['health-summaries'],
+    queryFn: async () => (await apiClient.get<SummaryStatus>('/admin/summaries/status')).data,
+    staleTime: 60 * 1000,
+  })

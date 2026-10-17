@@ -19,7 +19,7 @@ from athena.core.redis_client import get_redis
 
 redis = get_redis()
 SUMMARY_DAILY_BUDGET_USD = float(os.getenv("SUMMARY_DAILY_BUDGET_USD", "5.00"))
-USAGE_FEATURES = {"item_summary": "summary", "cluster_label": "cluster_label", "trending_brief": "trending_brief"}
+USAGE_FEATURES = {"item_summary": "summary", "cluster_label": "cluster_label"}
 
 
 class SummaryOutput(BaseModel):
@@ -61,7 +61,7 @@ def today_date() -> str:
 def check_budget_before_call(job_type: str, tier: int = 2) -> bool:
     """
     Check if we have exceeded the daily summary budget.
-    Tier 1 (urgent/trending) is exempt from the 80% threshold.
+    Tier 1 (urgent: a score of 0.75 or more) is exempt from the 80% threshold.
     Tier 2/3 pauses at 80% of daily budget to reserve capacity for urgent items.
     """
     if usage.app_over_budget():

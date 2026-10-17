@@ -37,7 +37,6 @@ FEATURES = {
     "reading_notes": "Reading-path notes",
     "summary": "Summaries",
     "cluster_label": "Cluster labels",
-    "trending_brief": "Trending briefs",
     "map_proposal": "Map proposals",
     "map_build": "Map building",
     "map_embed": "Map embeddings",

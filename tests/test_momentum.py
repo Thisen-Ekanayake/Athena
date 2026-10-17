@@ -24,7 +24,6 @@ from athena.database import evolution as evo_db
 from athena.database import operations
 from athena.evolution import momentum as map_momentum
 from athena.pipeline import momentum, scoring
-from athena.pipeline.signals import compute_velocity_score
 from tests.fakes import FakeRedis
 
 NOW = datetime(2026, 10, 14, 9, 0, tzinfo=timezone.utc)
@@ -105,26 +104,6 @@ def test_metrics_update_merges_into_extra_data(Session, monkeypatch):
         assert got.citation_count == 4  # a failed lookup's 0 doesn't erase what was known
 
 
-def test_previous_snapshot_is_the_latest_a_week_old_even_with_many(Session):
-    with Session() as s:
-        item = add_item(s, add_source(s))
-        for days in range(20, 0, -1):
-            snap(s, item, datetime.now(timezone.utc) - timedelta(days=days), 100 - days)
-        assert scoring._get_prev_snapshot(item.id, s) == (93, 0.0)  # 7 days ago; no MultipleResultsFound
-
-
-def test_without_a_week_old_snapshot_old_items_count_as_unchanged_and_new_ones_as_new(Session):
-    with Session() as s:
-        source = add_source(s)
-        old = add_item(s, source, days_old=40, citations=80, arxiv="2608.00002")
-        old.published_at = datetime.now(timezone.utc) - timedelta(days=40)
-        new = add_item(s, source, days_old=0, citations=5, arxiv="2608.00003")
-        new.published_at = datetime.now(timezone.utc) - timedelta(days=2)
-        s.commit()
-        assert scoring._week_ago_metrics(old, s, 0.0) == (80, 0.0)
-        assert scoring._week_ago_metrics(new, s, 0.0) == (0, 0.0)
-
-
 def test_full_corpus_runs_stream_every_item_id(Session, monkeypatch):
     monkeypatch.setattr(scoring, "SessionLocal", Session)
     with Session() as s:
@@ -144,17 +123,17 @@ def test_rescoring_leaves_finished_summaries_alone(Session, monkeypatch):
         done = add_item(s, source, arxiv="done", summary="Already written", summary_status=SummaryStatus.COMPLETE).id
         todo = add_item(s, source, arxiv="todo").id
     for item_id in (done, todo):
-        scoring.enqueue_summary_tier(str(item_id), 0.9, False)
-        scoring.enqueue_summary_tier(str(item_id), 0.1, False)
+        scoring.enqueue_summary_tier(str(item_id), 0.9)
+        scoring.enqueue_summary_tier(str(item_id), 0.1)
     with Session() as s:
         assert s.get(ContentItem, done).summary_status == SummaryStatus.COMPLETE
         assert s.get(ContentItem, todo).summary_status == SummaryStatus.LAZY
     assert [q["args"] for q in queued] == [[str(todo)]]
 
 
-def test_no_engagement_data_means_no_engagement_velocity():
+def test_no_engagement_data_snapshots_as_zero():
     assert scoring.engagement_raw([]) == 0.0
-    assert compute_velocity_score(0, scoring.engagement_raw([]), 0, 0.0) == 0.0
+    assert scoring.engagement_raw([0.2, 0.4]) == pytest.approx(0.3)
 
 
 # ── the daily run ────────────────────────────────────────────────────

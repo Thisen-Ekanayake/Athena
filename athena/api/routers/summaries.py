@@ -2,6 +2,7 @@
 Item summaries and the admin summary tools.
 
 GET  /api/v1/items/{item_id}/summary                    — an item's summary; written on demand when it is lazy or stale
+GET  /api/v1/admin/summaries/status                     — items by summary status, and why items were skipped (admin)
 GET  /api/v1/admin/summaries/cost                       — today's and the last 7 days' summary spend (admin)
 GET  /api/v1/admin/summaries/sample                     — 10 random summaries to spot-check (admin)
 POST /api/v1/admin/items/{item_id}/regenerate-summary   — queue one item for a new summary (admin)
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from athena.api.auth import require_admin
 from athena.api.deps import get_db
-from athena.core.models import ContentItem, SummaryStatus, SummaryUsageLog
+from athena.core.models import ContentItem, Source, SummaryStatus, SummaryUsageLog
 
 router = APIRouter(prefix="/api/v1", tags=["Summarisation"])
 
@@ -43,6 +44,8 @@ def get_item_summary(item_id: str, db: Session = Depends(get_db)):
     if active_prompt and _does_item_need_resummary(item, active_prompt.version):
         needs_resummary = True
 
+    if item.summary_status == SummaryStatus.SKIPPED:
+        needs_resummary = False  # the same thin text would be skipped again
     if item.summary_status == SummaryStatus.LAZY or needs_resummary:
         item = summarise_on_demand_sync(item_id)
         if not item or item.summary_status != SummaryStatus.COMPLETE:
@@ -54,8 +57,27 @@ def get_item_summary(item_id: str, db: Session = Depends(get_db)):
         "summary": item.summary,
         "takeaways": item.takeaways,
         "version": item.summary_version,
-        "summarised_at": item.summarised_at.isoformat() if item.summarised_at else None
+        "summarised_at": item.summarised_at.isoformat() if item.summarised_at else None,
+        "skipped": (item.extra_data or {}).get("summary_skipped"),
     }
+
+
+@router.get("/admin/summaries/status")
+def summary_status(db: Session = Depends(get_db), user=Depends(require_admin)):
+    """How many items are at each summary status, and the skipped ones by source and reason, most first."""
+    counts = {s.value: 0 for s in SummaryStatus}
+    for status, n in db.execute(select(ContentItem.summary_status, func.count())
+                                .group_by(ContentItem.summary_status)).all():
+        if status is not None:
+            counts[status.value] += n
+    skipped: dict[tuple, int] = {}
+    for name, extra in db.execute(select(Source.name, ContentItem.extra_data)
+                                  .join(Source, Source.id == ContentItem.source_id, isouter=True)
+                                  .where(ContentItem.summary_status == SummaryStatus.SKIPPED)).all():
+        key = (name or "Unknown", (extra or {}).get("summary_skipped") or "no reason given")
+        skipped[key] = skipped.get(key, 0) + 1
+    return {"counts": counts, "skipped": [{"source": s, "reason": reason, "count": n}
+                                          for (s, reason), n in sorted(skipped.items(), key=lambda kv: -kv[1])]}
 
 
 @router.get("/admin/summaries/cost")

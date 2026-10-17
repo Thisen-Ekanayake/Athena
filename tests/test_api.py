@@ -104,9 +104,6 @@ class MockSession:
         # 3. Regular model queries
         if 'content_items' in stmt_str or 'contentitem' in stmt_str:
             return Result(self._data.get('items', []))
-        elif 'trending_briefs' in stmt_str or 'trendingbrief' in stmt_str:
-            brief = self._data.get('brief')
-            return Result([brief] if brief else [])
         elif 'content_scores' in stmt_str or 'contentscore' in stmt_str:
             return Result(self._data.get('scores', []))
         elif 'item_links' in stmt_str or 'itemlink' in stmt_str:
@@ -160,7 +157,6 @@ def mock_db():
         published_at=datetime.now(timezone.utc),
         category=ContentCategory.COMPANY_BLOG,
         score=0.95,
-        is_trending=True,
         summary_status=SummaryStatus.COMPLETE,
         source_id=source_id,
         cluster_id=cluster_id,
@@ -174,7 +170,6 @@ def mock_db():
         composite_score=0.95,
         citation_score=0.9,
         engagement_score=0.8,
-        sentiment_score=0.7,
         recency_score=0.9,
         authority_score=0.8,
         score_version=1,
@@ -186,7 +181,6 @@ def mock_db():
         'sources': [source],
         'clusters': [cluster],
         'scores': [score],
-        'brief': None,
     }
 
     session = MockSession(mock_data)
@@ -209,7 +203,9 @@ def test_health_check():
     assert response.json()["status"] == "ok"
 
 
-def test_feed_endpoint(mock_db):
+def test_feed_endpoint(mock_db, monkeypatch):
+    from athena.api.routers import feed
+    monkeypatch.setattr(feed, "get_setting", lambda key, default="": "1")  # the plain order: the mock runs no SQL
     response = client.get("/api/v1/feed?sort=score&limit=10")
     assert response.status_code == 200
     data = response.json()
@@ -219,15 +215,6 @@ def test_feed_endpoint(mock_db):
     assert data["items"][0]["title"] == "Test Item"
     assert data["items"][0]["source"]["name"] == "Test Source"
     assert data["items"][0]["cluster"]["label"] == "Test Cluster"
-
-
-def test_trending_endpoint(mock_db):
-    response = client.get("/api/v1/trending")
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
-    assert len(data["items"]) == 1
-    assert data["items"][0]["is_trending"] is True
 
 
 def test_clusters_endpoint(mock_db):
@@ -265,8 +252,8 @@ def test_item_score_breakdown(mock_db):
     with patch(
         "athena.pipeline.scoring._get_weights",
         return_value={
-            "citation": 0.3, "engagement": 0.15, "sentiment": 0.15,
-            "recency": 0.2, "authority": 0.2
+            "citation": 0.35, "engagement": 0.15,
+            "recency": 0.25, "authority": 0.25
         }
     ):
         response = client.get(f"/api/v1/items/{item_id}/score-breakdown")

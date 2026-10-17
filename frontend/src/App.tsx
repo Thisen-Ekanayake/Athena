@@ -12,7 +12,7 @@ import { InboxPage } from './pages/InboxPage'
 import { LibraryPage } from './pages/LibraryPage'
 import { SearchPage } from './pages/SearchPage'
 import { SettingsPage } from './pages/SettingsPage'
-import { TrendingPage } from './pages/TrendingPage'
+import { RisingPage } from './pages/RisingPage'
 import { Spinner } from './ui/Spinner'
 
 // Lazy so the graph library (cytoscape) only loads on the Evolution page.
@@ -53,7 +53,9 @@ function App() {
           <Route index element={<HomePage />} />
           <Route path="feed" element={<FeedPage />} />
           <Route path="sources/:sourceId" element={<FeedPage />} />
-          <Route path="trending" element={<TrendingPage />} />
+          <Route path="rising" element={<RisingPage />} />
+          {/* Trending became Rising: citation momentum is the one "rising" measure. */}
+          <Route path="trending" element={<Navigate to="/rising" replace />} />
           <Route path="clusters" element={<ClustersPage />} />
           <Route path="clusters/:id" element={<ClusterPage />} />
           <Route path="evolution" element={evolution} />

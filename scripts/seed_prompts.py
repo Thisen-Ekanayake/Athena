@@ -79,35 +79,7 @@ Do not use the word 'cluster' or 'group' in the label or description.'''
             notes="Initial seed"
         )
 
-        # 3. Trending Brief
-        sys_trend = '''You are writing a daily trend digest for an AI research discovery platform.
-# Task
-Given the summaries of the top 5 trending items in a content category today,
-write a 3-sentence digest that captures the overall trend or theme emerging.
-Speak like a sharp, informed colleague, not a press release.
-# Format
-Return ONLY valid JSON.
-{
-  "brief": "string (3 sentences, present tense, specific)",
-  "theme": "string (3-6 word theme label)"
-}
-If the items have no clear common theme, say so honestly in the brief.
-Do not invent connections that are not there.'''
-
-        user_trend = '''Top 5 trending items in {category} today:
-
-{items_str}'''
-
-        p3 = PromptVersion(
-            job_type=JobType.TRENDING_BRIEF,
-            version=1,
-            system_prompt=sys_trend,
-            user_prompt_tpl=user_trend,
-            is_active=True,
-            notes="Initial seed"
-        )
-
-        session.add_all([p1, p2, p3])
+        session.add_all([p1, p2])
         session.commit()
         print("Successfully seeded prompts.")
 

@@ -21,7 +21,6 @@ export interface DigestPayload {
   citations: { title: string; link: string | null; items: InboxItem[] }[]
   new_items: number
   top_papers: InboxItem[]
-  briefs: { category: string; theme: string; brief: string; generated_at: string }[]
 }
 
 export interface InboxEvent {

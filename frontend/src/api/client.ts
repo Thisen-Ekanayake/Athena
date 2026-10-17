@@ -61,7 +61,6 @@ export interface FeedItem {
   score: number
   published_at: string
   category: string
-  is_trending: boolean
   authors?: string[]
   citation_count?: number
   source: {
@@ -102,13 +101,4 @@ export interface FeedResponse {
   }
   /** The For-you order was used (false: it fell back to relevance) */
   personalised?: boolean
-}
-
-export interface TrendingResponse {
-  brief?: {
-    theme: string
-    brief: string
-    generated_at: string
-  }
-  items: FeedItem[]
 }

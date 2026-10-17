@@ -1,4 +1,4 @@
-import { Flame, GitBranch, Heart, NotebookPen, ThumbsDown, ThumbsUp, TrendingUp } from 'lucide-react'
+import { GitBranch, Heart, NotebookPen, ThumbsDown, ThumbsUp, TrendingUp } from 'lucide-react'
 import type { FeedItem } from '../../api/client'
 import { usePanelStore } from '../../store/panelStore'
 import { Chip } from '../../ui/Chip'
@@ -39,7 +39,6 @@ export function ItemRow({ item, showSummary = true, collapseHidden = true }: { i
           <span aria-hidden="true">·</span>
           <time dateTime={item.published_at}>{timeAgo(item.published_at)}</time>
           {CATEGORY_LABELS[item.category] && <Chip>{CATEGORY_LABELS[item.category]}</Chip>}
-          {item.is_trending && <Chip tone="accent"><Flame aria-hidden="true" />Trending</Chip>}
           {item.match === 'exact' && <span title="Its title names what you searched for"><Chip tone="accent">Exact match</Chip></span>}
           {!!item.milestones_cited && (
             <span title="Cites milestones of your evolution maps; open it to see which">

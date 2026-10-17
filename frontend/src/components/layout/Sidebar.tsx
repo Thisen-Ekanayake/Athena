@@ -10,7 +10,7 @@ import { SyncPanel } from './SyncPanel'
 const NAV: { to: string; label: string; icon: LucideIcon; end?: boolean }[] = [
   { to: '/', label: 'Home', icon: House, end: true },
   { to: '/feed', label: 'Feed', icon: Newspaper },
-  { to: '/trending', label: 'Trending', icon: TrendingUp },
+  { to: '/rising', label: 'Rising', icon: TrendingUp },
   { to: '/clusters', label: 'Clusters', icon: Layers },
   { to: '/evolution', label: 'Evolution', icon: GitBranch },
   { to: '/library', label: 'Library', icon: Library },

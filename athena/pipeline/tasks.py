@@ -75,8 +75,6 @@ def setup_periodic_tasks(sender, **kwargs):
     sender.add_periodic_task(3600.0, athena.pipeline.momentum.daily_momentum.s(), name='daily citation momentum')
     # Hourly summaries: every item without one, highest score first
     sender.add_periodic_task(3600.0, enqueue_tier2_summaries.s(), name='hourly tier 2 summaries')
-    # Daily trending briefs per category
-    sender.add_periodic_task(86400.0, generate_all_trending_briefs.s(), name='daily trending briefs')
     # Feed papers that are in a map, or cite a map's milestones
     sender.add_periodic_task(21600.0, athena.evolution.tasks.link_feed.s(), name='link the feed to the maps')
     # Nightly: refresh the evolution maps whose last build is older than their interval
@@ -102,18 +100,6 @@ def check_model_budget():
         threshold = usage.budget_alerts(session)
         session.commit()
     return threshold
-
-
-@celery_app.task
-def generate_all_trending_briefs():
-    """Trigger daily trending brief generation for all categories."""
-    import athena.pipeline.summarisation_tasks
-    from athena.core.models import ContentCategory
-
-    for cat in ContentCategory:
-        athena.pipeline.summarisation_tasks.generate_trending_brief_worker.apply_async(
-            args=[cat.value], queue='summary_trend'
-        )
 
 
 SUMMARY_BATCH = 500                 # the hourly run tops the queue up to this many jobs, highest score first
@@ -148,7 +134,7 @@ def enqueue_tier2_summaries():
     queued = 0
     with SessionLocal() as session:
         items = session.query(ContentItem).filter(
-            ContentItem.summary_status != SummaryStatus.COMPLETE,
+            ContentItem.summary_status.notin_([SummaryStatus.COMPLETE, SummaryStatus.SKIPPED]),
             or_(ContentItem.extra_data.is_(None), ~ContentItem.extra_data.has_key("summary_skipped")),
         ).order_by(ContentItem.score.desc().nulls_last()).limit(room * 2).all()
 
@@ -309,8 +295,8 @@ async def _crawl_source_async(source_id: str, is_retry: bool = False) -> tuple[i
             # Parse per item, so one record failing validation is quarantined instead of failing the source
             if isinstance(scraper, ArXivScraper):
                 from athena.database.operations import latest_published
-                from athena.scrapers.arxiv import ARXIV_MAX_PER_SYNC
-                raw_items = await scraper.fetch(since=latest_published(source.id), max_results=ARXIV_MAX_PER_SYNC)
+                from athena.scrapers.arxiv import sync_args
+                raw_items = await scraper.fetch(**sync_args(source.fetch_config, latest_published(source.id)))
             else:
                 raw_items = await scraper.fetch(source.url)
             # Scrapers that skip pages already stored say how many they listed; the rest return all of them

@@ -160,6 +160,9 @@ def add_user_source(url: str, name: Optional[str] = None, category: str = "blog"
         source = session.execute(select(Source).where(Source.url == data['url'])).scalar_one()
         source_id = str(source.id)
 
+    from athena.pipeline.scoring import populate_default_authority_scores
+    populate_default_authority_scores(source_id)  # a known publisher starts with its authority, not 0.5
+
     # Queue first crawl immediately. A broker outage shouldn't fail the add —
     # the source is saved and the periodic crawl will pick it up regardless.
     queued = True
