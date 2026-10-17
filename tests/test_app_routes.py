@@ -1,4 +1,5 @@
 """The app's route table (ROADMAP_v2 B1): one handler per path, no stray docs, and the routes Settings uses."""
+import secrets
 from collections import Counter
 from uuid import uuid4
 
@@ -78,32 +79,34 @@ def test_fetch_health_uses_the_shared_session():
 # ── API docs (B2): off by default; Basic Auth when a password is set ──
 
 DOC_PATHS = ["/docs", "/redoc", "/openapi.json"]
+DOCS_USER = "athena"
+DOCS_PASS = secrets.token_urlsafe(16)  # made each run, so no credential sits in the repo
 
 
 def _app_with_docs(monkeypatch, enabled: bool, password: str = ""):
     from athena.api import main
     monkeypatch.setattr(main.settings, "DOCS_ENABLED", enabled)
-    monkeypatch.setattr(main.settings, "DOCS_USERNAME", "athena")
+    monkeypatch.setattr(main.settings, "DOCS_USERNAME", DOCS_USER)
     monkeypatch.setattr(main.settings, "DOCS_PASSWORD", password)
     return main.create_app()
 
 
 @pytest.mark.parametrize("path", DOC_PATHS)
 def test_docs_are_off_unless_enabled(monkeypatch, path):
-    assert TestClient(_app_with_docs(monkeypatch, False, "s3cret")).get(path).status_code == 404
+    assert TestClient(_app_with_docs(monkeypatch, False, DOCS_PASS)).get(path).status_code == 404
 
 
 @pytest.mark.parametrize("path", DOC_PATHS)
 def test_docs_with_a_password_ask_for_it(monkeypatch, path):
-    client = TestClient(_app_with_docs(monkeypatch, True, "s3cret"))
+    client = TestClient(_app_with_docs(monkeypatch, True, DOCS_PASS))
     assert client.get(path).status_code == 401
-    assert client.get(path, auth=("athena", "wrong")).status_code == 401
-    assert client.get(path, auth=("athena", "s3cret")).status_code == 200
+    assert client.get(path, auth=(DOCS_USER, DOCS_PASS + "-wrong")).status_code == 401
+    assert client.get(path, auth=(DOCS_USER, DOCS_PASS)).status_code == 200
 
 
 def test_the_schema_lists_the_api(monkeypatch):
-    client = TestClient(_app_with_docs(monkeypatch, True, "s3cret"))
-    schema = client.get("/openapi.json", auth=("athena", "s3cret")).json()
+    client = TestClient(_app_with_docs(monkeypatch, True, DOCS_PASS))
+    schema = client.get("/openapi.json", auth=(DOCS_USER, DOCS_PASS)).json()
     assert "/api/v1/health/fetch" in schema["paths"]
 
 
