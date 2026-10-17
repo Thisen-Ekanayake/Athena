@@ -4,7 +4,7 @@ Keeping maps up to date (ROADMAP E4).
 A refresh runs, in order: the method-name fetch (Semantic Scholar, network
 only, on the default queue), a rebuild that keeps the old map readable while
 it runs, the full-text pass for new Tier 2 papers, the GPU lane (labels,
-embeddings, gap themes, loose and cross-map links), and finally a snapshot,
+embeddings, gap themes, loose links), and finally a snapshot,
 which records what changed. Every step but the rebuild logs a failure and
 lets the chain go on, so a GROBID or model-server outage still ends in a
 rebuilt map and a changelog entry.

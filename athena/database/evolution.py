@@ -17,7 +17,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, aliased
 
 from athena.core.models import (
-    EvoChunk, EvoCitation, EvoCitationContext, EvoCrossLink, EvoGapStatement, EvoGapTheme, EvoGapThemeMember,
+    EvoChunk, EvoCitation, EvoCitationContext, EvoGapStatement, EvoGapTheme, EvoGapThemeMember,
     EvoIdeaCheck, EvoLooseLink, EvoMainPathEdge, EvoMapQuestion, EvoMilestoneOverride, EvoPaper, EvoPaperNote,
     EvoReadingProgress, EvoSection, EvoSnapshot, EvoTopic, EvoTopicPaper,
 )
@@ -747,35 +747,8 @@ def maps_version(session: Session) -> str:
     return f"{int(latest.timestamp()) if latest else 0}-{count}"
 
 
-def pending_cross(session: Session, limit: int) -> list[tuple[EvoGapStatement, int | None]]:
-    """Embedded gap statements not yet searched against other maps' papers, with the stating paper's year."""
-    source = aliased(EvoPaper)
-    return session.execute(
-        select(EvoGapStatement, source.year).join(source, EvoGapStatement.source_paper_id == source.id)
-        .where(EvoGapStatement.label == "gap", EvoGapStatement.embedded_at.isnot(None),
-               EvoGapStatement.cross_checked_at.is_(None)).limit(limit)).all()
-
-
-def paper_topic_kinds(session: Session, paper_ids: list[UUID]) -> dict[UUID, dict[str, str]]:
-    """Paper -> {topic id: kind} for every topic it is in, read fresh (the chunks' topic payload can be stale)."""
-    out: dict[UUID, dict[str, str]] = defaultdict(dict)
-    for pid, tid, kind in session.execute(select(EvoTopicPaper.paper_id, EvoTopicPaper.topic_id, EvoTopicPaper.kind)
-                                          .where(EvoTopicPaper.paper_id.in_(paper_ids))):
-        out[pid][str(tid)] = kind
-    return out
-
-
-def save_cross_links(session: Session, gap_id: UUID, links: list[dict]) -> None:
-    """Replace a gap statement's cross-map links. ``links``: [{paper_id, chunk_id, score}]."""
-    session.execute(delete(EvoCrossLink).where(EvoCrossLink.gap_id == gap_id))
-    if links:
-        session.execute(insert(EvoCrossLink).values([{"id": uuid4(), "gap_id": gap_id, **link} for link in links]))
-
-
 def topic_links(session: Session, topic: EvoTopic, limit: int = 40) -> dict:
-    """How this map connects to the others: papers they share, and milestones one borrows from the other.
-
-    Gaps another map's papers address are not included: see ``athena.evolution.gpu.cross_links``."""
+    """How this map connects to the others: papers they share, and milestones one borrows from the other."""
     overrides = _overrides(session, topic.id)
     rows = {p.id: (tp, p) for tp, p in _topic_rows(session, topic.id)}
     weight = TopicConfig.from_dict(topic.config).weights.relevance
@@ -1581,15 +1554,14 @@ def mark_abstracts(session: Session, paper_ids: list[UUID]) -> None:
 
 
 def forget_vectors(session: Session) -> None:
-    """Mark every chunk, gap statement and abstract as not embedded, and drop the loose and cross-map links.
+    """Mark every chunk, gap statement and abstract as not embedded, and drop the loose links.
 
     For a switch of embedding model: the next GPU lane embeds everything again and rebuilds the themes.
     """
     session.execute(update(EvoChunk).values(embedded_at=None))
-    session.execute(update(EvoGapStatement).values(embedded_at=None, loose_checked_at=None, cross_checked_at=None))
+    session.execute(update(EvoGapStatement).values(embedded_at=None, loose_checked_at=None))
     session.execute(update(EvoPaper).values(abstract_embedded_at=None))
     session.execute(delete(EvoLooseLink))
-    session.execute(delete(EvoCrossLink))
     session.commit()
 
 

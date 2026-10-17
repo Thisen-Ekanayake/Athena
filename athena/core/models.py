@@ -569,7 +569,6 @@ class EvoGapStatement(Base):
     labelled_at = Column(DateTime(timezone=True), nullable=True)
     embedded_at = Column(DateTime(timezone=True), nullable=True)      # vector in Qdrant's gap_statements
     loose_checked_at = Column(DateTime(timezone=True), nullable=True)  # loose links searched
-    cross_checked_at = Column(DateTime(timezone=True), nullable=True)  # other maps' papers searched (E7)
 
 
 class EvoGapTheme(Base):
@@ -616,28 +615,6 @@ class EvoLooseLink(Base):
     chunk_id = Column(PG_UUID(as_uuid=True), nullable=False)
     score = Column(Float, nullable=False)            # cosine similarity of the best matching chunk
     cites = Column(Boolean, default=False)           # whether the later paper cites the gap's paper anyway
-
-
-class EvoCrossLink(Base):
-    """A paper in another map whose text matches a gap statement: a loose link across maps.
-
-    Like ``EvoLooseLink``, ``chunk_id`` is not a foreign key; a link to a chunk that is gone drops out of reads.
-    """
-    __tablename__ = "evo_cross_links"
-    __table_args__ = (
-        UniqueConstraint("gap_id", "paper_id", name="uq_evo_cross_link"),
-    )
-
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    gap_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_gap_statements.id", ondelete="CASCADE"),
-                    nullable=False, index=True)
-    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
-                      nullable=False, index=True)
-    chunk_id = Column(PG_UUID(as_uuid=True), nullable=False)
-    score = Column(Float, nullable=False)
-
-
-# ── Research evolution: reading, questions and history ───────────────
 
 
 class EvoPaperNote(Base):

@@ -1,10 +1,9 @@
 """
 Athena — research evolution tools migration (ROADMAP E1-E9)
 
-Creates the tables the reading path, idea checks, map questions, snapshots,
-cross-map links and the inbox need, and adds the columns they read: OpenAlex authorships
-(people view), the name citing papers use (a milestone-score feature) and when
-a gap statement was searched against other maps. Each built topic without a
+Creates the tables the reading path, idea checks, map questions, snapshots
+and the inbox need, and adds the columns they read: OpenAlex authorships
+(people view) and the name citing papers use. Each built topic without a
 snapshot gets a baseline one, so its first refresh has something to compare
 with. Safe to run more than once; scripts/setup_project.py runs it.
 """
@@ -12,16 +11,14 @@ from loguru import logger
 from sqlalchemy import text
 
 from athena.core.models import (
-    EvoCrossLink, EvoIdeaCheck, EvoMapQuestion, EvoPaperNote, EvoReadingProgress, EvoSnapshot, InboxEvent, InboxState,
+    EvoIdeaCheck, EvoMapQuestion, EvoPaperNote, EvoReadingProgress, EvoSnapshot, InboxEvent, InboxState,
 )
 from athena.database.db import engine
 
-TABLES = [EvoCrossLink, EvoPaperNote, EvoReadingProgress, EvoIdeaCheck, EvoMapQuestion, EvoSnapshot, InboxEvent,
-          InboxState]
+TABLES = [EvoPaperNote, EvoReadingProgress, EvoIdeaCheck, EvoMapQuestion, EvoSnapshot, InboxEvent, InboxState]
 STATEMENTS = [
     "ALTER TABLE evo_papers ADD COLUMN IF NOT EXISTS authorships JSONB DEFAULT '[]'::jsonb;",
     "ALTER TABLE evo_papers ADD COLUMN IF NOT EXISTS cited_name JSONB;",
-    "ALTER TABLE evo_gap_statements ADD COLUMN IF NOT EXISTS cross_checked_at TIMESTAMPTZ;",
 ]
 
 
