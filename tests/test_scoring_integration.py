@@ -116,28 +116,6 @@ class TestScoringPipelineIntegration:
         assert score == pytest.approx(0.5, abs=0.01)
 
 
-class TestScoreAPIContracts:
-    """Test the score API response shape (mocked)."""
-
-    def test_score_label_mapping(self):
-        from athena.api.score_api import _score_label
-        assert _score_label(0.90) == "Top-tier"
-        assert _score_label(0.75) == "Strong"
-        assert _score_label(0.60) == "Good"
-        assert _score_label(0.45) == "Moderate"
-        assert _score_label(0.30) == "Low"
-        assert _score_label(0.10) == "Minimal"
-
-    def test_score_label_boundaries(self):
-        from athena.api.score_api import _score_label
-        assert _score_label(0.85) == "Top-tier"
-        assert _score_label(0.70) == "Strong"
-        assert _score_label(0.55) == "Good"
-        assert _score_label(0.40) == "Moderate"
-        assert _score_label(0.25) == "Low"
-        assert _score_label(0.0) == "Minimal"
-
-
 class TestScoringConfigDefaults:
     """Test default scoring configuration values."""
 

@@ -14,11 +14,9 @@ from loguru import logger
 
 from athena.api.routers import (
     feed, items, clusters, trending, search, sources, sync, app_settings, saved, evolution, inbox, auth as auth_routes,
-    users, watches, usage, share, momentum, personal, interests, reviews,
+    users, watches, usage, share, momentum, personal, interests, reviews, scoring, summaries,
 )
 from athena.api import qa_api
-from athena.api import score_api
-from athena.api import summary_api
 from athena.api.auth import active_user, require_admin
 from athena.api.config import settings
 
@@ -117,14 +115,8 @@ def create_app() -> FastAPI:
     app.include_router(usage.router, dependencies=login)  # the admin views add require_admin themselves
     app.include_router(share.router)  # read-only maps behind a share link; the token is the access
     app.include_router(qa_api.router, prefix="/api/v1", tags=["QA"], dependencies=login)
-    app.include_router(
-        score_api.app.router, prefix="/api/v1",
-        tags=["Scoring"], dependencies=login,
-    )
-    app.include_router(
-        summary_api.app.router, prefix="/api/v1",
-        tags=["Summarisation"], dependencies=login,
-    )
+    app.include_router(scoring.router, dependencies=login)  # rescore-all adds require_admin itself
+    app.include_router(summaries.router, dependencies=login)  # the admin views add require_admin themselves
 
     # ── Health check ────────────────────────────────────
     @app.get("/health", tags=["Health"])
