@@ -174,7 +174,6 @@ def mock_db():
         composite_score=0.95,
         citation_score=0.9,
         engagement_score=0.8,
-        sentiment_score=0.7,
         recency_score=0.9,
         authority_score=0.8,
         score_version=1,
@@ -265,8 +264,8 @@ def test_item_score_breakdown(mock_db):
     with patch(
         "athena.pipeline.scoring._get_weights",
         return_value={
-            "citation": 0.3, "engagement": 0.15, "sentiment": 0.15,
-            "recency": 0.2, "authority": 0.2
+            "citation": 0.35, "engagement": 0.15,
+            "recency": 0.25, "authority": 0.25
         }
     ):
         response = client.get(f"/api/v1/items/{item_id}/score-breakdown")

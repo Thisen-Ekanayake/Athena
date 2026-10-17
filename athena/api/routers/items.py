@@ -156,11 +156,6 @@ def get_score_breakdown(
             "label": _label(score_record.engagement_score),
             "weight": weights.get("engagement", 0.15),
         },
-        "community_sentiment": {
-            "score": round(score_record.sentiment_score, 4),
-            "label": _label(score_record.sentiment_score),
-            "weight": weights.get("sentiment", 0.15),
-        },
         "recency_velocity": {
             "score": round(score_record.recency_score, 4),
             "label": _label(score_record.recency_score),

@@ -202,7 +202,6 @@ def test_models():
 class CategoryWeights(BaseModel):
     citation: float = Field(..., ge=0, le=1)
     engagement: float = Field(..., ge=0, le=1)
-    sentiment: float = Field(..., ge=0, le=1)
     recency: float = Field(..., ge=0, le=1)
     authority: float = Field(..., ge=0, le=1)
     preference: float = Field(..., ge=0, le=0.8)
@@ -261,7 +260,7 @@ def update_scoring(body: ScoringUpdate, db: Session = Depends(get_db), r=Depends
                    .values(is_active=False))
         db.add(ScoringConfig(
             version=version, category=cat, weight_citation=w.citation, weight_engagement=w.engagement,
-            weight_sentiment=w.sentiment, weight_recency=w.recency, weight_authority=w.authority,
+            weight_recency=w.recency, weight_authority=w.authority,
             weight_preference=w.preference, half_life_days=w.half_life_days, is_active=True,
             notes="Settings → Scoring"))
     db.commit()

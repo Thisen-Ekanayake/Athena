@@ -165,7 +165,6 @@ class ContentScore(Base):
     item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
     citation_score = Column(Float, default=0.0)
     engagement_score = Column(Float, default=0.5)
-    sentiment_score = Column(Float, default=0.5)
     recency_score = Column(Float, default=0.5)
     authority_score = Column(Float, default=0.5)
     composite_score = Column(Float, default=0.0)
@@ -185,10 +184,9 @@ class ScoringConfig(Base):
     category = Column(SQLEnum(ContentCategory), nullable=False)
     weight_citation = Column(Float, default=0.30)
     weight_engagement = Column(Float, default=0.15)
-    weight_sentiment = Column(Float, default=0.15)
     weight_recency = Column(Float, default=0.20)
     weight_authority = Column(Float, default=0.20)
-    # The "For you" order's share for a user's interests (athena.pipeline.interests); the five above sum to 1
+    # The "For you" order's share for a user's interests (athena.pipeline.interests); the four above sum to 1
     weight_preference = Column(Float, default=0.30)
     half_life_days = Column(Integer, default=30)
     is_active = Column(Boolean, default=True)
@@ -361,17 +359,6 @@ class SavedListItem(Base):
 
     list = relationship("SavedList", back_populates="items")
     content_item = relationship("ContentItem")
-
-
-class ReferenceEmbedding(Base):
-    """Stores positive/negative reference embeddings for semantic scoring."""
-    __tablename__ = "reference_embeddings"
-
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    label = Column(String, nullable=False)  # 'positive' or 'negative'
-    text_content = Column(String, nullable=False)
-    embedding = Column(ARRAY(Float), nullable=False)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
 
 class ScoreAuditLog(Base):

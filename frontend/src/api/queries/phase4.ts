@@ -30,7 +30,6 @@ export interface ScoreBreakdown {
 const SIGNAL_LABELS: Record<string, string> = {
   citation_impact: 'Citations',
   engagement: 'Engagement',
-  community_sentiment: 'Community sentiment',
   recency_velocity: 'Recency',
   source_authority: 'Source authority',
   your_interests: 'Your interests',

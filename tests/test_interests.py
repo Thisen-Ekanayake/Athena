@@ -173,8 +173,8 @@ def test_for_you_lifts_what_you_like_and_leaves_out_what_you_hid(env):
     assert order.index("v3") < order.index("n1")               # a liked kind beats a disliked one with more score
     assert all(0 <= i["interest"] <= 1 for i in body["items"])
     with Session() as s:  # the admin makes interests count for most of the order
-        s.add(ScoringConfig(version=1, category=ContentCategory.PAPER, weight_citation=0.3, weight_engagement=0.15,
-                            weight_sentiment=0.15, weight_recency=0.2, weight_authority=0.2, weight_preference=0.8,
+        s.add(ScoringConfig(version=1, category=ContentCategory.PAPER, weight_citation=0.35, weight_engagement=0.15,
+                            weight_recency=0.25, weight_authority=0.25, weight_preference=0.8,
                             half_life_days=60, is_active=True))
         s.commit()
     interests.bump(env[3])
@@ -228,7 +228,7 @@ def test_reset_forgets_reactions_but_saves_still_count(env):
 def test_the_breakdown_adds_your_interests(env):
     admin, ids, Session, _ = env
     with Session() as s:
-        s.add(ContentScore(item_id=ids["v3"], citation_score=0.1, engagement_score=0.5, sentiment_score=0.5,
+        s.add(ContentScore(item_id=ids["v3"], citation_score=0.1, engagement_score=0.5,
                            recency_score=0.6, authority_score=0.85, composite_score=0.15, score_version=1,
                            computed_at=datetime(2026, 10, 12, tzinfo=timezone.utc)))
         s.commit()

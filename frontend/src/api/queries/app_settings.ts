@@ -85,7 +85,7 @@ export const useTestModels = () =>
 
 // ── Scoring weights (admin) ───────────────────────────────────────────
 
-export const BASE_SIGNALS = ['citation', 'engagement', 'sentiment', 'recency', 'authority'] as const
+export const BASE_SIGNALS = ['citation', 'engagement', 'recency', 'authority'] as const
 export type BaseSignal = (typeof BASE_SIGNALS)[number]
 
 export type CategoryWeights = Record<BaseSignal, number> & { preference: number; half_life_days: number }

@@ -21,7 +21,6 @@ from athena.core.redis_client import get_redis
 from athena.pipeline.signals import (
     compute_citation_score,
     compute_engagement_score,
-    compute_sentiment_score,
     compute_recency_score,
     compute_velocity_score,
     compute_authority_score,
@@ -43,22 +42,22 @@ CHUNK_SIZE = 500
 # Default scoring config weights per category
 # ──────────────────────────────────────────────────────────
 
-# The five signal weights sum to 1. "preference" is not part of the score: it is the share a user's interests
+# The four signal weights sum to 1. "preference" is not part of the score: it is the share a user's interests
 # get in their "For you" order (athena.pipeline.interests).
-BASE_SIGNALS = ("citation", "engagement", "sentiment", "recency", "authority")
+BASE_SIGNALS = ("citation", "engagement", "recency", "authority")
 DEFAULT_PREFERENCE = 0.30
 DEFAULT_WEIGHTS = {
     "paper": {
-        "citation": 0.30, "engagement": 0.15, "sentiment": 0.15,
-        "recency": 0.20, "authority": 0.20, "half_life_days": 60, "preference": DEFAULT_PREFERENCE,
+        "citation": 0.35, "engagement": 0.18,
+        "recency": 0.235, "authority": 0.235, "half_life_days": 60, "preference": DEFAULT_PREFERENCE,
     },
     "company_blog": {
-        "citation": 0.10, "engagement": 0.25, "sentiment": 0.20,
-        "recency": 0.30, "authority": 0.15, "half_life_days": 14, "preference": DEFAULT_PREFERENCE,
+        "citation": 0.125, "engagement": 0.3125,
+        "recency": 0.375, "authority": 0.1875, "half_life_days": 14, "preference": DEFAULT_PREFERENCE,
     },
     "community_blog": {
-        "citation": 0.10, "engagement": 0.30, "sentiment": 0.20,
-        "recency": 0.25, "authority": 0.15, "half_life_days": 21, "preference": DEFAULT_PREFERENCE,
+        "citation": 0.125, "engagement": 0.375,
+        "recency": 0.3125, "authority": 0.1875, "half_life_days": 21, "preference": DEFAULT_PREFERENCE,
     },
 }
 
@@ -71,12 +70,6 @@ DEFAULT_AUTHORITY = {
     "lesswrong": 0.75, "alignmentforum": 0.75,
     "substack": 0.55,
 }
-
-
-def _embed(texts: list[str]):
-    """The shared embedding model (athena.core.llm), loaded lazily."""
-    from athena.core import llm
-    return llm.embed(texts, feature="scoring")
 
 
 def _get_weights(category: str, session) -> Dict[str, Any]:
@@ -93,7 +86,6 @@ def _get_weights(category: str, session) -> Dict[str, Any]:
             return {
                 "citation": config.weight_citation,
                 "engagement": config.weight_engagement,
-                "sentiment": config.weight_sentiment,
                 "recency": config.weight_recency,
                 "authority": config.weight_authority,
                 "half_life_days": config.half_life_days,
@@ -182,14 +174,11 @@ def score_item(item_id: str, session=None) -> Optional[float]:
         engagement = compute_engagement_score(metadata, source_url)
         engagement_signals = _extract_engagement_signals(metadata, source_url)
 
-        # 3. Sentiment (uses the embedding model — may return 0.5 if unavailable)
-        sentiment = compute_sentiment_score(metadata, _embed)
-
-        # 4. Recency
+        # 3. Recency
         half_life = weights.get("half_life_days", 30)
         recency = compute_recency_score(item.published_at, half_life)
 
-        # 5. Velocity (from metric snapshots). Compared like with like: the raw engagement mean that snapshots
+        # 4. Velocity (from metric snapshots). Compared like with like: the raw engagement mean that snapshots
         # store, so an item without engagement data has none to gain (the 0.5 neutral score is not a reading).
         eng_now = engagement_raw(engagement_signals)
         prev_citations, prev_engagement = _week_ago_metrics(item, session, eng_now)
@@ -201,23 +190,21 @@ def score_item(item_id: str, session=None) -> Optional[float]:
         # Combined recency signal = 60% recency + 40% velocity
         recency_combined = 0.6 * recency + 0.4 * velocity
 
-        # 6. Authority
+        # 5. Authority
         authority = compute_authority_score(source.authority_score if source else None)
 
-        # 7. Composite
-        composite = compute_composite_score(
-            citation, engagement, sentiment, recency_combined, authority, weights
-        )
+        # 6. Composite
+        composite = compute_composite_score(citation, engagement, recency_combined, authority, weights)
 
-        # 8. Trending check
+        # 7. Trending check
         is_trending = check_trending_criteria(
             velocity, item.published_at, len(engagement_signals)
         )
 
-        # 9. Apply trending boost
+        # 8. Apply trending boost
         final_score = apply_trending_boost(composite, is_trending)
 
-        # 9.5 Log significant changes (> 0.1)
+        # 8.5 Log significant changes (> 0.1)
         old_score = item.score or 0.0
         delta = final_score - old_score
         # Only log if it's not the initial 0.0 -> score jump, meaning scored_at is not None
@@ -232,7 +219,7 @@ def score_item(item_id: str, session=None) -> Optional[float]:
             )
             session.add(audit_log)
 
-        # 10. Persist ContentScore
+        # 9. Persist ContentScore
         version = weights.get("version", 1)
         now = datetime.now(timezone.utc)
 
@@ -240,7 +227,6 @@ def score_item(item_id: str, session=None) -> Optional[float]:
             item_id=item.id,
             citation_score=citation,
             engagement_score=engagement,
-            sentiment_score=sentiment,
             recency_score=recency_combined,
             authority_score=authority,
             composite_score=final_score,
@@ -249,7 +235,7 @@ def score_item(item_id: str, session=None) -> Optional[float]:
         )
         session.add(score_record)
 
-        # 11. Update ContentItem
+        # 10. Update ContentItem
         session.execute(
             update(ContentItem).where(ContentItem.id == item.id).values(
                 score=final_score,
@@ -265,7 +251,7 @@ def score_item(item_id: str, session=None) -> Optional[float]:
 
         logger.info(
             f"Scored item {item_id}: composite={final_score:.3f} "
-            f"(C={citation:.2f} E={engagement:.2f} S={sentiment:.2f} "
+            f"(C={citation:.2f} E={engagement:.2f} "
             f"R={recency_combined:.2f} A={authority:.2f}) trending={is_trending}"
         )
         return final_score
@@ -462,35 +448,6 @@ def enqueue_summary_tier(item_id: str, score: float, is_trending: bool):
         # Tier 1 - Urgent
         summarise_item_worker.apply_async(args=[item_id], queue='summary_urgent')
     logger.info(f"Item {item_id} enqueued to {tier}")
-
-
-def populate_default_scoring_config():
-    """Populate the scoring_config table with default weight profiles."""
-    with SessionLocal() as session:
-        existing = session.execute(select(ScoringConfig)).scalars().all()
-        if existing:
-            logger.info("Scoring config already populated, skipping.")
-            return
-
-        version = 1
-        for category, weights in DEFAULT_WEIGHTS.items():
-            config = ScoringConfig(
-                version=version,
-                category=category,
-                weight_citation=weights["citation"],
-                weight_engagement=weights["engagement"],
-                weight_sentiment=weights["sentiment"],
-                weight_recency=weights["recency"],
-                weight_authority=weights["authority"],
-                weight_preference=weights["preference"],
-                half_life_days=weights["half_life_days"],
-                is_active=True,
-                notes="Default config",
-            )
-            session.add(config)
-            version += 1
-        session.commit()
-        logger.info("Default scoring config populated.")
 
 
 def populate_default_authority_scores():

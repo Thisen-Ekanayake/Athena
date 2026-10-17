@@ -13,7 +13,6 @@ const CATEGORY_LABEL: Record<string, string> = { paper: 'Papers', company_blog: 
 const SIGNAL_LABEL: Record<BaseSignal, { label: string; hint: string }> = {
   citation: { label: 'Citations', hint: 'How often it is cited (papers)' },
   engagement: { label: 'Engagement', hint: 'Votes, comments, stars where a source has them' },
-  sentiment: { label: 'Community sentiment', hint: 'How discussion of it reads' },
   recency: { label: 'Recency', hint: 'How new it is, and how fast it gathers citations' },
   authority: { label: 'Source authority', hint: 'How much the source is trusted' },
 }
@@ -48,7 +47,7 @@ export function ScoringSettings() {
     <section className="grid gap-6">
       <Title
         title="Scoring"
-        description="Each item's relevance score is a weighted sum of five signals, with weights per kind of item that add up to 1. Saving a change rescores every item in the background."
+        description="Each item's relevance score is a weighted sum of four signals, with weights per kind of item that add up to 1. Saving a change rescores every item in the background."
       />
       {Object.entries(form).map(([category, w]) => {
         const total = sumOf(w)
@@ -63,7 +62,7 @@ export function ScoringSettings() {
                 {off ? `adds up to ${total.toFixed(2)}, not 1.00` : 'adds up to 1.00'}
               </span>
             </header>
-            <div className="grid gap-3 sm:grid-cols-5">
+            <div className="grid gap-3 sm:grid-cols-4">
               {BASE_SIGNALS.map((k) => (
                 <label key={k} className="grid content-start gap-1" title={SIGNAL_LABEL[k].hint}>
                   <span className="text-[12px] text-fg-3">{SIGNAL_LABEL[k].label}</span>

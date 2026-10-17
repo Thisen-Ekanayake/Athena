@@ -59,7 +59,8 @@ def test_defaults_until_saved(env):
 def test_signal_weights_must_add_up_to_one(env):
     admin, *_ = env
     bad = admin.put("/api/v1/settings/scoring", json={"categories": {"paper": weights(citation=0.5)}})
-    assert bad.status_code == 422 and "add up to 1.200" in bad.json()["detail"]
+    total = 1 + 0.5 - DEFAULT_WEIGHTS["paper"]["citation"]
+    assert bad.status_code == 422 and f"add up to {total:.3f}" in bad.json()["detail"]
     assert admin.put("/api/v1/settings/scoring",
                      json={"categories": {"paper": weights(preference=0.9)}}).status_code == 422
     assert admin.put("/api/v1/settings/scoring",
@@ -68,18 +69,19 @@ def test_signal_weights_must_add_up_to_one(env):
 
 def test_a_change_is_a_new_version_and_rescores(env):
     admin, Session, _, rescore = env
+    c, r = DEFAULT_WEIGHTS["paper"]["citation"], DEFAULT_WEIGHTS["paper"]["recency"]  # moved between them: still 1
     first = admin.put("/api/v1/settings/scoring",
-                      json={"categories": {"paper": weights(citation=0.20, recency=0.30)}}).json()
+                      json={"categories": {"paper": weights(citation=c - 0.10, recency=r + 0.10)}}).json()
     assert first["rescoring"] is True and rescore.call_count == 1
     assert first["categories"]["paper"]["source"] == "saved" and first["categories"]["paper"]["version"] == 1
     assert first["categories"]["company_blog"]["source"] == "default"
     second = admin.put("/api/v1/settings/scoring",
-                       json={"categories": {"paper": weights(citation=0.25, recency=0.25)}}).json()
+                       json={"categories": {"paper": weights(citation=c - 0.05, recency=r + 0.05)}}).json()
     assert second["categories"]["paper"]["version"] == 2
     with Session() as s:
         rows = s.execute(select(ScoringConfig.version, ScoringConfig.is_active).order_by(ScoringConfig.version)).all()
         assert rows == [(1, False), (2, True)]
-        assert _get_weights("paper", s)["citation"] == 0.25
+        assert _get_weights("paper", s)["citation"] == pytest.approx(c - 0.05)
 
 
 def test_an_unchanged_category_is_not_saved_again(env):

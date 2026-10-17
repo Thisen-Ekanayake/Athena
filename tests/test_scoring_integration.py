@@ -20,7 +20,7 @@ class TestScoringPipelineIntegration:
     """Test the full scoring pipeline logic without a real database."""
 
     def test_full_score_computation(self):
-        """Simulate scoring an item through all 5 signals."""
+        """Simulate scoring an item through all 4 signals."""
         # Mock item data
         citation_count = 150
         metadata = {"karma": 80, "commentCount": 15}
@@ -31,18 +31,12 @@ class TestScoringPipelineIntegration:
         # Compute signals
         citation = compute_citation_score(citation_count)
         engagement = compute_engagement_score(metadata, source_url)
-        sentiment = 0.5  # Default (no comments for this test)
         recency = compute_recency_score(published_at, half_life_days=30)
         auth_score = compute_authority_score(authority)
 
         # Composite
-        weights = {
-            "citation": 0.30, "engagement": 0.15, "sentiment": 0.15,
-            "recency": 0.20, "authority": 0.20,
-        }
-        composite = compute_composite_score(
-            citation, engagement, sentiment, recency, auth_score, weights
-        )
+        weights = {"citation": 0.35, "engagement": 0.15, "recency": 0.25, "authority": 0.25}
+        composite = compute_composite_score(citation, engagement, recency, auth_score, weights)
 
         assert 0.0 <= composite <= 1.0
         # A recent LessWrong post with 150 citations and 0.75 authority should score well
@@ -66,16 +60,13 @@ class TestScoringPipelineIntegration:
         )
         blog_authority = compute_authority_score(0.50)
 
-        weights = {
-            "citation": 0.30, "engagement": 0.15, "sentiment": 0.15,
-            "recency": 0.20, "authority": 0.20,
-        }
+        weights = {"citation": 0.35, "engagement": 0.15, "recency": 0.25, "authority": 0.25}
 
         nature_score = compute_composite_score(
-            nature_citation, nature_engagement, 0.5, nature_recency, nature_authority, weights
+            nature_citation, nature_engagement, nature_recency, nature_authority, weights
         )
         blog_score = compute_composite_score(
-            blog_citation, blog_engagement, 0.5, blog_recency, blog_authority, weights
+            blog_citation, blog_engagement, blog_recency, blog_authority, weights
         )
 
         assert nature_score > blog_score
@@ -90,29 +81,20 @@ class TestScoringPipelineIntegration:
 
     def test_different_category_weights_differentiate(self):
         """Same item scored with paper vs blog weights should differ."""
-        paper_weights = {
-            "citation": 0.30, "engagement": 0.15, "sentiment": 0.15,
-            "recency": 0.20, "authority": 0.20,
-        }
-        blog_weights = {
-            "citation": 0.10, "engagement": 0.30, "sentiment": 0.20,
-            "recency": 0.25, "authority": 0.15,
-        }
+        paper_weights = {"citation": 0.40, "engagement": 0.0, "recency": 0.35, "authority": 0.25}
+        blog_weights = {"citation": 0.0, "engagement": 0.40, "recency": 0.35, "authority": 0.25}
 
         # Item with high citation, moderate other signals
-        s_paper = compute_composite_score(0.8, 0.3, 0.5, 0.4, 0.7, paper_weights)
-        s_blog = compute_composite_score(0.8, 0.3, 0.5, 0.4, 0.7, blog_weights)
+        s_paper = compute_composite_score(0.8, 0.3, 0.4, 0.7, paper_weights)
+        s_blog = compute_composite_score(0.8, 0.3, 0.4, 0.7, blog_weights)
 
         # Different category weights should produce different scores
         assert s_paper != s_blog
 
     def test_default_signals_produce_reasonable_score(self):
         """With all signals at 0.5, the composite should be 0.5."""
-        weights = {
-            "citation": 0.30, "engagement": 0.15, "sentiment": 0.15,
-            "recency": 0.20, "authority": 0.20,
-        }
-        score = compute_composite_score(0.5, 0.5, 0.5, 0.5, 0.5, weights)
+        weights = {"citation": 0.35, "engagement": 0.15, "recency": 0.25, "authority": 0.25}
+        score = compute_composite_score(0.5, 0.5, 0.5, 0.5, weights)
         assert score == pytest.approx(0.5, abs=0.01)
 
 
@@ -121,11 +103,9 @@ class TestScoringConfigDefaults:
 
     def test_default_weights_sum_to_one(self):
         from athena.pipeline.scoring import DEFAULT_WEIGHTS
+        from athena.pipeline.scoring import BASE_SIGNALS
         for category, weights in DEFAULT_WEIGHTS.items():
-            total = (
-                weights["citation"] + weights["engagement"] + weights["sentiment"]
-                + weights["recency"] + weights["authority"]
-            )
+            total = sum(weights[k] for k in BASE_SIGNALS)
             assert total == pytest.approx(1.0, abs=0.01), (
                 f"{category} weights sum to {total}, expected 1.0"
             )

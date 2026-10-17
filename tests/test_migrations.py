@@ -64,3 +64,24 @@ def test_a_new_database_skips_the_old_migrations(sqlite_engine, monkeypatch):
     monkeypatch.setattr(migrate, "from_before_alembic", lambda conn: pytest.fail("ran the old migrations"))
     migrate.upgrade()
     assert "content_items" in inspect(sqlite_engine).get_table_names()
+
+
+def test_sentiment_weight_is_spread_over_the_other_signals(sqlite_engine):
+    """0002: an active saved profile with a sentiment share gets a new version without it, still adding up to 1."""
+    from alembic import command
+    with sqlite_engine.connect() as conn:
+        command.upgrade(migrate.alembic_config(conn), "0001")
+        conn.execute(text(
+            "INSERT INTO scoring_config (id, version, category, weight_citation, weight_engagement, weight_sentiment,"
+            " weight_recency, weight_authority, weight_preference, half_life_days, is_active)"
+            " VALUES ('a', 7, 'PAPER', 0.3, 0.15, 0.15, 0.2, 0.2, 0.4, 60, 1)"))
+        conn.commit()
+    migrate.upgrade()
+    with sqlite_engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT version, is_active, weight_citation, weight_engagement, weight_recency, weight_authority,"
+            " weight_preference, half_life_days FROM scoring_config ORDER BY version")).all()
+    assert [(r[0], bool(r[1])) for r in rows] == [(7, False), (8, True)]
+    new = rows[1]
+    assert new[2:6] == pytest.approx((0.3 / 0.85, 0.15 / 0.85, 0.2 / 0.85, 0.2 / 0.85))
+    assert sum(new[2:6]) == pytest.approx(1) and new[6:] == (0.4, 60)
