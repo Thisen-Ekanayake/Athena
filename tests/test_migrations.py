@@ -85,3 +85,28 @@ def test_sentiment_weight_is_spread_over_the_other_signals(sqlite_engine):
     new = rows[1]
     assert new[2:6] == pytest.approx((0.3 / 0.85, 0.15 / 0.85, 0.2 / 0.85, 0.2 / 0.85))
     assert sum(new[2:6]) == pytest.approx(1) and new[6:] == (0.4, 60)
+
+
+def test_empty_duplicate_sources_are_removed_and_the_gradient_switched_back_on(sqlite_engine):
+    """0007: a duplicate goes only while it has no items; its fetch log goes with it."""
+    from alembic import command
+    rows = {"a-rss": ("https://www.anthropic.com/feed.xml", 1), "m-rss": ("https://ai.meta.com/blog/rss/", 1),
+            "g-rss": ("https://thegradient.pub/rss/", 1), "g": ("https://thegradient.pub/", 0)}
+    with sqlite_engine.connect() as conn:
+        command.upgrade(migrate.alembic_config(conn), "0006")
+        for sid, (url, active) in rows.items():
+            conn.execute(text("INSERT INTO sources (id, name, url, type, category, is_active, created_at)"
+                              " VALUES (:id, :id, :url, 'RSS', 'COMPANY', :active, CURRENT_TIMESTAMP)"),
+                         {"id": sid, "url": url, "active": active})
+        conn.execute(text("INSERT INTO fetch_logs (id, source_id, status, duration_ms)"
+                          " VALUES ('f', 'a-rss', 'error', 1)"))
+        for item, sid in (("i1", "m-rss"), ("i2", "g")):  # the Meta RSS row has an item here, so it stays
+            conn.execute(text("INSERT INTO content_items (id, source_id, title, url, published_at, category,"
+                              " content_hash) VALUES (:id, :sid, 't', :url, CURRENT_TIMESTAMP, 'COMPANY_BLOG', :id)"),
+                         {"id": item, "sid": sid, "url": f"https://example.org/{item}"})
+        conn.commit()
+    migrate.upgrade()
+    with sqlite_engine.connect() as conn:
+        left = dict(conn.execute(text("SELECT id, is_active FROM sources")).all())
+        logs = conn.execute(text("SELECT count(*) FROM fetch_logs")).scalar()
+    assert {k: bool(v) for k, v in left.items()} == {"m-rss": True, "g": True} and logs == 0
