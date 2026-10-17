@@ -134,7 +134,7 @@ def enqueue_tier2_summaries():
     queued = 0
     with SessionLocal() as session:
         items = session.query(ContentItem).filter(
-            ContentItem.summary_status != SummaryStatus.COMPLETE,
+            ContentItem.summary_status.notin_([SummaryStatus.COMPLETE, SummaryStatus.SKIPPED]),
             or_(ContentItem.extra_data.is_(None), ~ContentItem.extra_data.has_key("summary_skipped")),
         ).order_by(ContentItem.score.desc().nulls_last()).limit(room * 2).all()
 

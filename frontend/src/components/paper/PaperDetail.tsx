@@ -114,7 +114,11 @@ export function PaperDetail({ itemId, initial, layout }: { itemId: string; initi
             <p className="flex items-center gap-1.5 text-[11.5px] text-fg-3"><Sparkles className="h-3 w-3 text-accent" aria-hidden="true" /> Written by AI from the item's text</p>
           </div>
         ) : (
-          <p className="text-[13px] text-fg-3">{item.summary_status === 'pending' ? 'The summary is being written.' : 'No summary yet.'}</p>
+          <p className="text-[13px] text-fg-3">
+            {item.summary_status === 'pending' ? 'The summary is being written.'
+              : item.summary_status === 'skipped' ? 'Too little text to summarise without inventing details. Open the original to read it.'
+                : 'No summary yet.'}
+          </p>
         )}
         {abstract && (
           <div>

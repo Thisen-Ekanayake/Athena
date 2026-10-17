@@ -16,6 +16,8 @@ class SummaryStatus(str, enum.Enum):
     COMPLETE = "complete"
     FAILED = "failed"
     LAZY = "lazy"
+    # Too little text to summarise without inventing details (extra_data.summary_skipped says why); not an error
+    SKIPPED = "skipped"
 
 
 class JobType(str, enum.Enum):

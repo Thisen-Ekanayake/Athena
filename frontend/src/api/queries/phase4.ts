@@ -152,3 +152,17 @@ export const useFetchHealth = () => {
     staleTime: 60 * 1000,
   })
 }
+
+export interface SummaryStatus {
+  /** Items at each summary status: pending, complete, failed, lazy (written when opened), skipped */
+  counts: Record<string, number>
+  /** Items skipped for too little text, by source and reason, most first */
+  skipped: { source: string; reason: string; count: number }[]
+}
+
+export const useSummaryStatus = () =>
+  useQuery({
+    queryKey: ['health-summaries'],
+    queryFn: async () => (await apiClient.get<SummaryStatus>('/admin/summaries/status')).data,
+    staleTime: 60 * 1000,
+  })

@@ -141,7 +141,7 @@ def summarise_item_worker(self, item_id: str, tier: int = 2):
         text_content = _text_to_summarise(item, staged)
         if text_content is None:
             logger.warning(f"Too little text to summarise {item_id} without inventing details; skipped.")
-            item.summary_status = SummaryStatus.FAILED
+            item.summary_status = SummaryStatus.SKIPPED
             item.extra_data = {**(item.extra_data or {}), "summary_skipped": "too little text"}
             session.commit()
             return

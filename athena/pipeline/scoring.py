@@ -375,8 +375,8 @@ def score_new_item(item_id: str):
 def enqueue_summary_tier(item_id: str, score: float):
     """Emits the item to the correct Celery queue based on Layer 3 score.
 
-    An item whose summary is already complete is left alone: rescoring (every six hours for recency) must not
-    send finished summaries back to the queue.
+    An item whose summary is already complete, or that was skipped for too little text, is left alone: rescoring
+    (every six hours for recency) must not send it back to the queue.
     """
     from athena.pipeline.summarisation_tasks import summarise_item_worker
     from athena.core.models import SummaryStatus
@@ -384,7 +384,7 @@ def enqueue_summary_tier(item_id: str, score: float):
     item_uuid = UUID(str(item_id))
     with SessionLocal() as session:
         status = session.execute(select(ContentItem.summary_status).where(ContentItem.id == item_uuid)).scalar()
-        if status == SummaryStatus.COMPLETE:
+        if status in (SummaryStatus.COMPLETE, SummaryStatus.SKIPPED):
             return
         if score >= 0.75:
             tier, new_status = "summary_urgent", None
