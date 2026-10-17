@@ -136,9 +136,10 @@ Two Celery pipelines, one for the feed and one for the research maps, write to P
 ## Development
 
 ```bash
-DATABASE_URL="sqlite:///test.db" pytest tests/test_scoring.py tests/test_preprocessing.py tests/test_connectors.py -v
+pip install -r requirements.txt -r requirements-dev.txt
+DATABASE_URL="sqlite:///test.db" pytest tests/ -m "not network"
 flake8 . --max-line-length=120 --exclude=".venv,venv,frontend/node_modules,alembic/versions"
-cd frontend && npm run lint && npm run build
+cd frontend && npm run lint && npm test && npm run build
 ```
 
 **Schema changes.** Edit the models in `athena/core/models.py`, then write a revision and apply it:

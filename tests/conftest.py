@@ -39,6 +39,7 @@ def logged_in_admin(request):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_auth: use real sessions instead of the logged-in admin")
+    config.addinivalue_line("markers", "network: needs the internet; CI runs -m 'not network'")
 
 
 @pytest.fixture(autouse=True)

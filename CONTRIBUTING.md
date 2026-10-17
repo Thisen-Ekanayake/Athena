@@ -74,20 +74,22 @@ python3 scripts/run_crawl.py
 ## Running Tests
 
 ```bash
-# Unit + integration tests (no live services needed)
-pytest tests/test_scoring.py tests/test_scoring_integration.py tests/test_preprocessing.py -v
+# Every test, as CI runs them (no live services needed: SQLite, fakes and recorded responses)
+DATABASE_URL="sqlite:///test.db" pytest tests/ -m "not network"
 
-# Connector tests
+# One file
 pytest tests/test_connectors.py -v
 
-# All tests
-pytest -v
+# Frontend: lint, Vitest, then the type-checked build
+cd frontend && npm run lint && npm test && npm run build
 ```
+
+Mark a test that needs the internet with `@pytest.mark.network`; CI leaves those out. Prefer a recorded response in `tests/fixtures/`.
 
 ## Linting
 
 ```bash
-flake8 . --max-line-length=120 --exclude="__pycache__,*.pyc,.venv,venv,.git,frontend/node_modules"
+flake8 . --max-line-length=120 --exclude="__pycache__,*.pyc,.venv,venv,.git,frontend/node_modules,alembic/versions"
 ```
 
 ## Project Layout
@@ -99,7 +101,7 @@ athena/
   database/     SQLAlchemy DB session and operations
   pipeline/     Celery tasks: embedding, scoring, summarisation, clustering
   scrapers/     Source-specific scrapers (ArXiv, RSS, Playwright, etc.)
-frontend/       Vue 3 + Vite UI
+frontend/       React 19 + TypeScript + Vite UI
 scripts/        One-off admin and setup scripts
 tests/          Pytest test suite
 diagrams/       Architecture diagrams
@@ -109,5 +111,5 @@ diagrams/       Architecture diagrams
 
 1. Fork the repo and create a feature branch: `git checkout -b feature/your-feature`
 2. Keep commits focused and use [Conventional Commits](https://www.conventionalcommits.org/) style (`feat:`, `fix:`, `chore:`, etc.)
-3. Ensure `flake8` passes and relevant tests are green before opening a PR
+3. Ensure `flake8`, the tests and the frontend checks pass before opening a PR (CI runs all of them)
 4. Open a PR against `main` with a clear description of what changed and why

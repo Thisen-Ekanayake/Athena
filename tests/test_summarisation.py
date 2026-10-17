@@ -2,14 +2,15 @@ from datetime import datetime, timezone
 import pytest
 
 from athena.core.models import ContentItem, JobType
+from athena.pipeline import summarisation
 from athena.pipeline.summarisation import (
     SummaryOutput,
     parse_and_validate,
     check_budget_before_call,
     today_date,
-    redis
 )
 from athena.pipeline.summarisation_tasks import build_item_summary_prompt
+from tests.fakes import FakeRedis
 
 
 def test_summary_output_validation():
@@ -77,10 +78,11 @@ def test_build_item_summary_prompt():
     assert "Text: Some abstract text here." in result
 
 
-def test_redis_budgeting():
-    # Clear the key first
+def test_redis_budgeting(monkeypatch):
+    redis = FakeRedis()
+    monkeypatch.setattr(summarisation, "redis", redis)
+    monkeypatch.setattr(summarisation.usage, "app_over_budget", lambda: False)
     key = 'summary_spend:' + today_date()
-    redis.delete(key)
 
     assert check_budget_before_call(JobType.ITEM_SUMMARY.value) is True
 
@@ -88,6 +90,3 @@ def test_redis_budgeting():
     # Default is 5.00
     redis.set(key, "5.01")
     assert check_budget_before_call(JobType.ITEM_SUMMARY.value) is False
-
-    # Cleanup
-    redis.delete(key)

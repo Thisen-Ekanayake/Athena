@@ -75,6 +75,9 @@ class MockSession:
 
                     def all(self):
                         return self._items
+
+                    def first(self):
+                        return self._items[0] if self._items else None
                 return Scalars(self._items)
 
             def all(self):
