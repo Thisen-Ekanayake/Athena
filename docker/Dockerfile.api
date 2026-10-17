@@ -21,4 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /install /usr/local
 WORKDIR /app
 COPY . .
-CMD ["uvicorn", "athena.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Behind nginx (the frontend image), uvicorn takes the client address and scheme from X-Forwarded-For and
+# X-Forwarded-Proto, so the session cookie is Secure over HTTPS. It trusts those headers only from the
+# addresses in FORWARDED_ALLOW_IPS, which uvicorn reads itself; the release compose file sets it.
+ENV FORWARDED_ALLOW_IPS=127.0.0.1
+CMD ["uvicorn", "athena.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
