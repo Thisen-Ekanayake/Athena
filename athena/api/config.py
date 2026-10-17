@@ -23,8 +23,8 @@ class Settings:
     CORS_ORIGINS: list[str] = [o.strip().rstrip("/") for o in os.getenv(
         "CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",") if o.strip()]
 
-    # Swagger / ReDoc access control
-    DOCS_ENABLED: bool = os.getenv("DOCS_ENABLED", "true").lower() == "true"
+    # Swagger / ReDoc and the OpenAPI schema: off unless switched on; DOCS_PASSWORD puts them behind Basic Auth
+    DOCS_ENABLED: bool = os.getenv("DOCS_ENABLED", "false").lower() == "true"
     DOCS_USERNAME: str = os.getenv("DOCS_USERNAME", "athena")
     DOCS_PASSWORD: str = os.getenv("DOCS_PASSWORD", "")
 

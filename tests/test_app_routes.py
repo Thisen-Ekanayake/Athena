@@ -73,3 +73,47 @@ def test_fetch_health_uses_the_shared_session():
         app.dependency_overrides.pop(get_db, None)
     assert r.status_code == 200
     assert r.json() == {"total_fetches": 2, "successful_fetches": 1, "failed_fetches": 1, "success_rate": 50.0}
+
+
+# ── API docs (B2): off by default; Basic Auth when a password is set ──
+
+DOC_PATHS = ["/docs", "/redoc", "/openapi.json"]
+
+
+def _app_with_docs(monkeypatch, enabled: bool, password: str = ""):
+    from athena.api import main
+    monkeypatch.setattr(main.settings, "DOCS_ENABLED", enabled)
+    monkeypatch.setattr(main.settings, "DOCS_USERNAME", "athena")
+    monkeypatch.setattr(main.settings, "DOCS_PASSWORD", password)
+    return main.create_app()
+
+
+@pytest.mark.parametrize("path", DOC_PATHS)
+def test_docs_are_off_unless_enabled(monkeypatch, path):
+    assert TestClient(_app_with_docs(monkeypatch, False, "s3cret")).get(path).status_code == 404
+
+
+@pytest.mark.parametrize("path", DOC_PATHS)
+def test_docs_with_a_password_ask_for_it(monkeypatch, path):
+    client = TestClient(_app_with_docs(monkeypatch, True, "s3cret"))
+    assert client.get(path).status_code == 401
+    assert client.get(path, auth=("athena", "wrong")).status_code == 401
+    assert client.get(path, auth=("athena", "s3cret")).status_code == 200
+
+
+def test_the_schema_lists_the_api(monkeypatch):
+    client = TestClient(_app_with_docs(monkeypatch, True, "s3cret"))
+    schema = client.get("/openapi.json", auth=("athena", "s3cret")).json()
+    assert "/api/v1/health/fetch" in schema["paths"]
+
+
+def test_docs_without_a_password_are_open_and_warn(monkeypatch):
+    from loguru import logger
+    warnings = []
+    sink = logger.add(lambda m: warnings.append(m.record["message"]), level="WARNING")
+    try:
+        client = TestClient(_app_with_docs(monkeypatch, True))
+    finally:
+        logger.remove(sink)
+    assert all(client.get(p).status_code == 200 for p in DOC_PATHS)
+    assert any("DOCS_PASSWORD" in w for w in warnings)
