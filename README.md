@@ -41,7 +41,7 @@ the milestones, the reading order and the open problems, all on your own GPU or 
 
 **Feed and reading**
 
-- Ingests ArXiv, Semantic Scholar, Papers With Code, RSS, Substack, LessWrong and scraped lab blogs.
+- Ingests ArXiv, Semantic Scholar, RSS, Substack, LessWrong and scraped lab blogs.
 - Ranks items on citations, engagement, recency and source authority (each kind of item weighs only the signals it has data for), with a personal **For you** order learned from your reactions and saves. No one source fills more than a quarter of a page.
 - Citation momentum (the **Rising** page), topic clusters, AI summaries and Q&A on any paper.
 - Reading lists, read marks, notes and highlights.

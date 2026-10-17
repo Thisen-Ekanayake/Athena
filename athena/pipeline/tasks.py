@@ -226,8 +226,7 @@ async def _enrich_paper_async(url: str, arxiv_id: str):
     base_arxiv_id = re.sub(r'v\d+$', '', arxiv_id)
 
     logger.info(f"Enriching paper: {base_arxiv_id} (original: {arxiv_id})")
-    # Papers With Code shut down in 2025 (its API redirects to Hugging Face), so only Semantic Scholar is asked;
-    # repositories it found earlier stay in extra_data and still count towards engagement.
+    # Papers With Code shut down in 2025 (its API redirects to Hugging Face), so only Semantic Scholar is asked.
     ss_data = await ss_enricher.fetch_paper_metrics(base_arxiv_id)
 
     citation_count = ss_data.get("citation_count", 0) if ss_data else 0
