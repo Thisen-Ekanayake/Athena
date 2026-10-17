@@ -1,73 +1,35 @@
-# React + TypeScript + Vite
+# Athena frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The React app for Athena: React 19, TypeScript and Vite, with TanStack Query for server state, Zustand for the
+little state kept in the browser, and Tailwind CSS 4. Pages, layout and design tokens are described in
+[`docs/ui.md`](../docs/ui.md).
 
-Currently, two official plugins are available:
+## Commands
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Node 22.12 or newer (Vitest and jsdom need it; the image builds on Node 24).
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev          # http://localhost:5173
+npm run lint
+npm test             # Vitest + React Testing Library in jsdom; npm run test:watch re-runs on save
+npm run build        # type-checks (tsc -b), then builds into dist/
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## The API
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+The app calls the API on its own origin, at `/api/v1`. In development Vite's proxy (`vite.config.ts`) passes it
+to uvicorn on `127.0.0.1:8000`. In the image, nginx (`nginx.conf`) passes it to the API service. Set
+`VITE_API_URL` at build time to call an API elsewhere; that API then needs the app's origin in `CORS_ORIGINS`.
+Every page except login, setup and shared maps needs a session: the API sets an httpOnly cookie when you log in.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Layout
+
+- `src/App.tsx`: the routes
+- `src/pages/`: one file per top-level page
+- `src/features/`: one folder per feature (evolution, search, reviews, reading, inbox, momentum, settings, ...)
+- `src/components/`: the shell, item rows, the paper panel and the command palette
+- `src/ui/`: small shared building blocks
+- `src/api/`: the axios client and the query hooks
+- `src/test/utils.tsx`: `mockApi` fakes the API under the app's axios client, and `renderWithProviders`
+  renders with a query cache and a router. Tests sit next to the code as `*.test.tsx`.
