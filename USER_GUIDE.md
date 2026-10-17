@@ -219,17 +219,17 @@ The frontend will be available at `http://localhost:5173` (or another port speci
 
 ## 9. Running Tests
 
-The project uses `pytest` for the backend test suite. Make sure your virtual environment is active and your infrastructure containers are running.
+The backend uses `pytest`, the frontend Vitest. The tests need no running services: they use SQLite, fakes and recorded responses.
 
 ```bash
-# Run all tests
-pytest tests/
-
-# Run tests with verbose output
-pytest -v tests/
+# Run all backend tests, as CI does
+DATABASE_URL="sqlite:///test.db" pytest tests/ -m "not network"
 
 # Run a specific test file
-pytest tests/test_api.py
+pytest tests/test_api.py -v
+
+# Frontend tests
+cd frontend && npm test
 ```
 
 ## 10. Troubleshooting
