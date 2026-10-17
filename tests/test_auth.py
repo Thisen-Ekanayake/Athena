@@ -226,7 +226,7 @@ class TestPerUserData:
         setup_admin(admin)
         _, bo = make_user(admin)
         empty = {"id": "f" * 32, "query": "x", "candidates": []}
-        with patch("athena.api.routers.evolution.proposals.propose", side_effect=lambda q: dict(empty)):
+        with patch("athena.api.routers.evolution.topics.proposals.propose", side_effect=lambda q: dict(empty)):
             codes = [bo.post("/api/v1/evolution/proposals", json={"query": "object tracking"}).status_code
                      for _ in range(3)]
             assert codes == [200, 200, 429]

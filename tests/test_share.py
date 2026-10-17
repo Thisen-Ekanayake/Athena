@@ -121,7 +121,7 @@ def test_only_admins_switch_sharing_and_switched_off_means_no_new_links(env):
     _, settings, _ = env
     admin = admin_client()
     _, bo = make_user(admin)
-    with patch("athena.api.routers.evolution.set_setting", side_effect=settings.__setitem__):
+    with patch("athena.api.routers.evolution.sharing.set_setting", side_effect=settings.__setitem__):
         assert bo.put("/api/v1/evolution/sharing", json={"enabled": False}).status_code == 403
         assert admin.put("/api/v1/evolution/sharing", json={"enabled": False}).status_code == 200
     assert bo.get("/api/v1/evolution/sharing").json() == {"enabled": False}
@@ -181,7 +181,7 @@ def test_a_dead_link_is_not_found(env, change):
 def test_the_map_routes_answer_as_the_map_does_without_private_fields(env):
     token = make_link(admin_client()).json()["token"]
     graph = {"topic": {"slug": "peft", "created_by": "someone", "build_stats": {}}, "nodes": [1], "edges": []}
-    with patch.object(share_routes.maps, "topic_graph", return_value=graph) as built:
+    with patch.object(share_routes.graph, "topic_graph", return_value=graph) as built:
         body = anonymous().get(f"/api/v1/share/{token}/graph", params={"limit": 600}).json()
     assert built.call_args.args[:2] == ("peft", 600)
     assert body["nodes"] == [1] and body["topic"] == {"slug": "peft"}
@@ -209,7 +209,7 @@ def test_changes_leave_out_the_upkeep_settings(env):
 
 def test_exports_need_no_reader(env):
     token = make_link(admin_client()).json()["token"]
-    with patch.object(share_routes.maps, "export_file", return_value={"ok": True}) as export:
+    with patch.object(share_routes.reading, "export_file", return_value={"ok": True}) as export:
         anonymous().get(f"/api/v1/share/{token}/export", params={"what": "milestones", "format": "bib"})
     assert export.call_args.args[2:] == ("milestones", "bib", 10)  # no user
 

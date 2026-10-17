@@ -29,18 +29,12 @@ if TYPE_CHECKING:
 
 
 OVERRIDE_ACTIONS = {"pin", "unpin", "reset"}
-
-
 # Loose links below this cosine similarity are not shown. Stored links go down to the lane's floor (0.3),
 # so the cutoff can change without recomputing them. Set by eye on samples of the first run: below 0.55
 # matches were mostly unrelated, 0.65-0.70 about half right, 0.70 and above mostly right.
 LOOSE_MIN_SCORE = float(os.getenv("EVOLUTION_LOOSE_MIN_SCORE", "0.68"))
-
-
 # Citing-sentence labels that state a limitation of the cited paper; with ``attributed`` they make a strict link.
 LIMITATION_LABELS = ("addresses_limitation", "criticises")
-
-
 _BATCH = 500
 
 

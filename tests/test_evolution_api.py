@@ -13,12 +13,12 @@ from athena.api.deps import get_db, get_redis
 from athena.api.main import app
 from tests.conftest import ADMIN
 
-ROUTER_DB = "athena.api.routers.evolution.db"
+ROUTER_DB = "athena.database.evolution"
 TOPIC = SimpleNamespace(slug="object-detection", name="Object detection", built_at=None, status="ready",
                         origin="curated", status_detail=None)
 SEARCH_TOPIC = SimpleNamespace(id=uuid4(), slug="object-tracking", name="Object tracking", built_at=None,
                                status="ready", origin="search", status_detail=None)
-ROUTER = "athena.api.routers.evolution"
+ROUTER = "athena.api.routers.evolution.topics"
 SUMMARY = {"slug": "object-detection", "name": "Object detection", "status": "ready"}
 
 
@@ -63,7 +63,7 @@ def test_search_falls_back_to_the_papers_content(client):
     c, _ = client
     match = {"method": "text", "matching_papers": 40, "ranking": []}
     with patch(f"{ROUTER_DB}.find_topic", return_value=None), \
-            patch("athena.api.routers.evolution.find_topic_by_content", return_value=(TOPIC, match)), \
+            patch(f"{ROUTER}.find_topic_by_content", return_value=(TOPIC, match)), \
             patch(f"{ROUTER_DB}.topic_summary", return_value=SUMMARY):
         body = c.get("/api/v1/evolution/search", params={"q": "anchor-free detectors"}).json()
     assert body["found"] is True and body["match"]["method"] == "text"
@@ -72,7 +72,7 @@ def test_search_falls_back_to_the_papers_content(client):
 def test_search_says_when_a_topic_is_not_in_the_system(client):
     c, _ = client
     with patch(f"{ROUTER_DB}.find_topic", return_value=None), \
-            patch("athena.api.routers.evolution.find_topic_by_content", return_value=(None, {"method": "text"})), \
+            patch(f"{ROUTER}.find_topic_by_content", return_value=(None, {"method": "text"})), \
             patch(f"{ROUTER_DB}.list_topics", return_value=[SUMMARY]):
         body = c.get("/api/v1/evolution/search", params={"q": "protein folding"}).json()
     assert body["found"] is False
