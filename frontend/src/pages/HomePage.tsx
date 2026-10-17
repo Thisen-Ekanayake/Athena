@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import { ArrowRight, Compass, GitBranch, Newspaper, Sparkles, TrendingUp } from 'lucide-react'
-import { useFeed, useTrending } from '../api/queries'
+import { useFeed } from '../api/queries'
 import { useRising } from '../api/queries/momentum'
 import { RisingList } from '../features/momentum/RisingList'
 import { topicGapsQuery, useEvolutionTopics } from '../features/evolution/api'
@@ -54,7 +54,6 @@ export function HomePage() {
   const { hello, date } = greeting()
   const today = useFeed('date', null, '24h', null, 1)
   const top = useFeed('score', null, '7d', null, 5)
-  const trending = useTrending(null)
   const rising = useRising('7d', 5)
   const topics = useEvolutionTopics()
   const ready = (topics.data ?? []).filter((t) => t.status === 'ready')
@@ -80,7 +79,6 @@ export function HomePage() {
               : newToday === 0
                 ? 'Nothing new in the last day yet. Sync your sources to fetch the latest.'
                 : `${newToday} new ${newToday === 1 ? 'item' : 'items'} in the last day.`}
-            {trending.data?.brief?.theme && <> Rising now: {trending.data.brief.theme}.</>}
           </p>
           <div className="flex flex-wrap gap-2 pt-1">
             <ButtonLink to="/feed" variant="primary">Open feed <ArrowRight /></ButtonLink>
@@ -104,11 +102,6 @@ export function HomePage() {
             <RisingList items={rising.data} period="7d" bare />
           ) : (
             <TileEmpty>No paper gained citations this week. Counts are checked once a day.</TileEmpty>
-          )}
-          {trending.data?.brief && (
-            <Link to="/trending" className="flex items-center gap-1.5 border-t border-line px-4 py-2.5 text-[12.5px] text-fg-2 hover:text-fg">
-              <Sparkles className="h-3 w-3 text-accent" aria-hidden="true" /> Trending: {trending.data.brief.theme}
-            </Link>
           )}
         </Card>
 

@@ -120,19 +120,6 @@ class ClusterDetailResponse(BaseModel):
     pagination: PaginationInfo
 
 
-# ── Trending ────────────────────────────────────────────
-
-class TrendingBriefResponse(BaseModel):
-    theme: Optional[str] = None
-    brief: Optional[str] = None
-    generated_at: Optional[datetime] = None
-
-
-class TrendingResponse(BaseModel):
-    brief: Optional[TrendingBriefResponse] = None
-    items: List[FeedItemResponse]
-
-
 # ── Search ──────────────────────────────────────────────
 
 class SearchResultItem(FeedItemResponse):

@@ -21,7 +21,6 @@ class SummaryStatus(str, enum.Enum):
 class JobType(str, enum.Enum):
     ITEM_SUMMARY = "item_summary"
     CLUSTER_LABEL = "cluster_label"
-    TRENDING_BRIEF = "trending_brief"
     QA = "qa"
 
 
@@ -244,19 +243,6 @@ class SummaryUsageLog(Base):
     success = Column(Boolean, default=True)
     error_message = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-
-class TrendingBrief(Base):
-    """Daily generated trend digest per category."""
-    __tablename__ = "trending_briefs"
-
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    category = Column(SQLEnum(ContentCategory), nullable=False)
-    brief = Column(String, nullable=False)
-    theme = Column(String, nullable=False)
-    generated_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    prompt_version = Column(Integer, nullable=False)
-    source_item_ids = Column(ARRAY(PG_UUID(as_uuid=True)), default=[])
 
 
 class QAFetchCache(Base):

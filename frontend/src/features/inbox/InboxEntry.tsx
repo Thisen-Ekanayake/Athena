@@ -96,8 +96,6 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-const CATEGORY: Record<string, string> = { paper: 'Papers', company_blog: 'Company blogs', community_blog: 'Community blogs' }
-
 function Digest({ event: e }: { event: InboxEvent }) {
   const d = e.payload
   return (
@@ -154,15 +152,6 @@ function Digest({ event: e }: { event: InboxEvent }) {
       {!!d.top_papers?.length && (
         <Section title={`Top new in the feed${d.new_items ? ` (of ${d.new_items.toLocaleString()})` : ''}`}>
           <Items items={d.top_papers} />
-        </Section>
-      )}
-      {!!d.briefs?.length && (
-        <Section title="Trending">
-          {d.briefs.map((b) => (
-            <p key={b.category} className="text-[12.5px] text-fg-2">
-              <span className="font-medium text-fg">{CATEGORY[b.category] ?? b.category}: {b.theme}.</span> {b.brief}
-            </p>
-          ))}
         </Section>
       )}
     </div>

@@ -19,7 +19,7 @@ from athena.core.redis_client import get_redis
 
 redis = get_redis()
 SUMMARY_DAILY_BUDGET_USD = float(os.getenv("SUMMARY_DAILY_BUDGET_USD", "5.00"))
-USAGE_FEATURES = {"item_summary": "summary", "cluster_label": "cluster_label", "trending_brief": "trending_brief"}
+USAGE_FEATURES = {"item_summary": "summary", "cluster_label": "cluster_label"}
 
 
 class SummaryOutput(BaseModel):

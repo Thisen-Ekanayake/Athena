@@ -16,7 +16,7 @@ from athena.api.deps import get_db, get_redis
 from athena.api.main import app
 from athena.core.models import (
     Cluster, ContentCategory, ContentItem, ContentScore, InterestProfile, ItemFeedback, ItemLink, ItemRead,
-    SavedList, SavedListItem, ScoringConfig, Source, SourceCategory, SourceType, TrendingBrief, User, UserHighlight,
+    SavedList, SavedListItem, ScoringConfig, Source, SourceCategory, SourceType, User, UserHighlight,
     UserNote, UserSession,
 )
 from athena.database import feedback
@@ -51,7 +51,7 @@ class FakeQdrant:
 def env(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     for model in (User, UserSession, SavedList, SavedListItem, Source, Cluster, ContentItem, ContentScore, ItemLink,
-                  ItemRead, UserNote, UserHighlight, ItemFeedback, InterestProfile, ScoringConfig, TrendingBrief):
+                  ItemRead, UserNote, UserHighlight, ItemFeedback, InterestProfile, ScoringConfig):
         model.__table__.create(engine)
     Session = sessionmaker(bind=engine)
 

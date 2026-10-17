@@ -1,7 +1,7 @@
 """
 Athena Layer 5 — Trending Router
 
-GET /api/v1/trending — trending items + daily brief.
+GET /api/v1/trending — trending items.
 """
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, desc
@@ -14,7 +14,7 @@ from athena.api.config import settings
 from athena.api.auth import active_user
 from athena.api.routers.feed import _build_feed_item, _for_user
 from athena.database import feedback
-from athena.core.models import ContentItem, Source, TrendingBrief, User
+from athena.core.models import ContentItem, Source, User
 
 router = APIRouter(prefix="/api/v1", tags=["Trending"])
 
@@ -27,7 +27,7 @@ def get_trending(
     user: User = Depends(active_user),
 ):
     """
-    Returns currently trending items and the daily trending brief.
+    Returns currently trending items.
     """
     cache_key = f"trending:{category}"
     cached = cache_get(r, cache_key)
@@ -46,26 +46,7 @@ def get_trending(
 
     items = db.execute(query).scalars().all()
 
-    # Fetch latest trending brief
-    brief_query = (
-        select(TrendingBrief)
-        .order_by(desc(TrendingBrief.generated_at))
-    )
-    if category:
-        brief_query = brief_query.where(TrendingBrief.category == category)
-    brief = db.execute(brief_query.limit(1)).scalar_one_or_none()
-
-    response = {
-        "brief": {
-            "theme": brief.theme if brief else None,
-            "brief": brief.brief if brief else None,
-            "generated_at": (
-                brief.generated_at.isoformat()
-                if brief and brief.generated_at else None
-            ),
-        } if brief else None,
-        "items": [_build_feed_item(item) for item in items],
-    }
+    response = {"items": [_build_feed_item(item) for item in items]}
 
     cache_set(r, cache_key, response, settings.CACHE_TRENDING_TTL)
     return _for_user(db, user, _without_hidden(db, user, response))

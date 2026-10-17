@@ -105,10 +105,5 @@ export interface FeedResponse {
 }
 
 export interface TrendingResponse {
-  brief?: {
-    theme: string
-    brief: string
-    generated_at: string
-  }
   items: FeedItem[]
 }

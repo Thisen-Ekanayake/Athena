@@ -104,9 +104,6 @@ class MockSession:
         # 3. Regular model queries
         if 'content_items' in stmt_str or 'contentitem' in stmt_str:
             return Result(self._data.get('items', []))
-        elif 'trending_briefs' in stmt_str or 'trendingbrief' in stmt_str:
-            brief = self._data.get('brief')
-            return Result([brief] if brief else [])
         elif 'content_scores' in stmt_str or 'contentscore' in stmt_str:
             return Result(self._data.get('scores', []))
         elif 'item_links' in stmt_str or 'itemlink' in stmt_str:
@@ -185,7 +182,6 @@ def mock_db():
         'sources': [source],
         'clusters': [cluster],
         'scores': [score],
-        'brief': None,
     }
 
     session = MockSession(mock_data)
