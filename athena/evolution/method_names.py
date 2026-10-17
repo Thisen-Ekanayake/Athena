@@ -1,5 +1,5 @@
 """
-Named methods from Semantic Scholar's citing sentences: a milestone-score feature (ROADMAP E9).
+Named methods from Semantic Scholar's citing sentences (ROADMAP E9, parked).
 
 A paper that introduced a named method is cited by that name ("LoRA [15]",
 "Faster R-CNN (Ren et al., 2015)"). Tier 2 full text already yields such
@@ -11,8 +11,18 @@ one request per paper for its newest 1,000 citing papers. Without an API key
 that is one request every 3 seconds or so, about ten minutes per topic, and
 responses are cached for 30 days.
 
-The result is stored per paper in ``evo_papers.cited_name`` and read by the
-next build (``athena.evolution.build``).
+The result is stored per paper in ``evo_papers.cited_name``. Run it by hand
+(``scripts/evolution_method_names.py``); refreshes no longer fetch it.
+
+Parked (ROADMAP_v2 D4): as a milestone-score feature it never earned a weight.
+Evaluated 2026-10-13 (``scripts/evolution_bench/eval_named_method.py``, replayed
+on the four curated topics): reference milestones picked at w = 0 / 0.05 /
+0.10 / 0.15 were object detection 9/9/9/8 of 11, PEFT 8/8/9/9 of 12, diffusion
+7/6/5/4 of 12, RAG 7/6/5/1 of 10. A name is found for 55-75% of each topic's top
+150 candidates, so the feature mostly reshuffles them (RAG lost RETRO,
+Contriever and Active RAG to R3 and BERTserini). No weight gains on a topic
+without losing on another, so builds no longer score it; the stored names stay
+for the eval and for display.
 """
 from __future__ import annotations
 

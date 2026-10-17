@@ -24,7 +24,6 @@ const SCORE_LABELS: Record<string, string> = {
   flow: 'Citation paths through it',
   relevance: 'Topic keywords',
   specificity: 'Share of citations from the topic',
-  named_method: 'Named method',
 }
 
 const YEAR_SOURCE: Record<string, string> = {

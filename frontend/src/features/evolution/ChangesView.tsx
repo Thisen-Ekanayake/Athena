@@ -42,7 +42,7 @@ export function ChangesView({ slug, busy, onSelect }: ChangesViewProps) {
   if (error || !data) return <Notice tone="error" title="The changes could not be loaded">Check that the API is running.</Notice>
   return (
     <div className="grid max-w-4xl gap-5">
-      {readOnly ? null : isAdmin ? <UpkeepPanel slug={slug} refreshDays={data.refresh_days} namedMethod={data.named_method} namedMethodInScores={data.named_method_in_scores} busy={busy} /> : (
+      {readOnly ? null : isAdmin ? <UpkeepPanel slug={slug} refreshDays={data.refresh_days} busy={busy} /> : (
         <p className="text-[13px] text-fg-2">
           {data.refresh_days > 0 ? `This map is refreshed every ${data.refresh_days} days: new papers, new full text and new gaps.` : 'This map is not refreshed on a schedule.'}
         </p>
@@ -62,12 +62,10 @@ export function ChangesView({ slug, busy, onSelect }: ChangesViewProps) {
 interface UpkeepPanelProps {
   slug: string
   refreshDays: number
-  namedMethod: boolean
-  namedMethodInScores: boolean
   busy: boolean
 }
 
-function UpkeepPanel({ slug, refreshDays, namedMethod, namedMethodInScores, busy }: UpkeepPanelProps) {
+function UpkeepPanel({ slug, refreshDays, busy }: UpkeepPanelProps) {
   const refresh = useRefreshTopic(slug)
   const fullText = useReadFullText(slug)
   const interval = useTopicSettings(slug)
@@ -94,20 +92,6 @@ function UpkeepPanel({ slug, refreshDays, namedMethod, namedMethodInScores, busy
       <p className="text-[12.5px] leading-relaxed text-fg-2">
         A refresh finds new papers and rebuilds the map (it stays readable meanwhile), reads the open full text of new milestones and their followers, then labels and embeds it on the GPU to update the open problems. It runs at night when due; the first full-text read of a map can keep the GPU busy for an hour or two.
       </p>
-      <label className="flex items-start gap-2 text-[12.5px] leading-relaxed text-fg-2">
-        <input
-          type="checkbox"
-          checked={namedMethod}
-          disabled={interval.isPending}
-          onChange={(e) => interval.mutate({ named_method: e.target.checked })}
-          className="mt-1 accent-[var(--accent)]"
-        />
-        <span>
-          Favour papers that later work cites by a method name (“LoRA”, “Faster R-CNN”) when picking milestones.
-          Off by default: across the curated maps it lost known milestones on diffusion models and RAG, and gained one on PEFT.
-          {namedMethod !== namedMethodInScores && <span className="text-fg-3"> Applies from the next build or refresh.</span>}
-        </span>
-      </label>
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="secondary" size="sm" disabled={busy || refresh.isPending} onClick={() => refresh.mutate(undefined, { onSuccess: () => setQueued('A refresh is queued.') })}>
           <RefreshCw /> Refresh now

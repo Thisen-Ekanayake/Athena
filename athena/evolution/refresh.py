@@ -1,8 +1,7 @@
 """
 Keeping maps up to date (ROADMAP E4).
 
-A refresh runs, in order: the method-name fetch (Semantic Scholar, network
-only, on the default queue), a rebuild that keeps the old map readable while
+A refresh runs, in order: a rebuild that keeps the old map readable while
 it runs, the full-text pass for new Tier 2 papers, the GPU lane (labels,
 embeddings, gap themes, loose links), and finally a snapshot,
 which records what changed. Every step but the rebuild logs a failure and
@@ -30,11 +29,11 @@ def _step(name: str, *args, queue: str = "evolution"):
 
 
 def refresh_chain(slug: str, rebuild: bool = True, full_text: bool = True, reason: str = "refresh"):
-    """The Celery chain for one topic: names, rebuild, full text, GPU lane, then a snapshot."""
+    """The Celery chain for one topic: rebuild, full text, GPU lane, then a snapshot."""
     from celery import chain
     steps = []
     if rebuild:
-        steps += [_step("fetch_method_names_step", slug, queue="celery"), _step("refresh_build", slug)]
+        steps.append(_step("refresh_build", slug))
     if full_text:
         steps += [_step("refresh_full_text", slug), _step("refresh_gpu_lane")]
     steps.append(_step("snapshot_topic", slug, reason))

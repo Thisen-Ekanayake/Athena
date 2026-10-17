@@ -364,20 +364,17 @@ def test_refresh_interval_is_bounded(client):
 def test_refresh_chain_order():
     from athena.evolution.refresh import refresh_chain
     names = [t.task.rsplit(".", 1)[1] for t in refresh_chain("peft").tasks]
-    assert names == ["fetch_method_names_step", "refresh_build", "refresh_full_text", "refresh_gpu_lane",
-                     "snapshot_topic"]
+    assert names == ["refresh_build", "refresh_full_text", "refresh_gpu_lane", "snapshot_topic"]
     assert [t.task.rsplit(".", 1)[1] for t in refresh_chain("peft", rebuild=False).tasks] == [
         "refresh_full_text", "refresh_gpu_lane", "snapshot_topic"]
-    assert refresh_chain("peft").tasks[0].options["queue"] == "celery"
+    assert refresh_chain("peft").tasks[0].options["queue"] == "evolution"
 
 
-def test_named_method_switch_sets_the_map_weight_and_keeps_others(client):
+def test_settings_set_the_refresh_interval_and_keep_the_weights(client):
     c, _ = client
     topic = SimpleNamespace(**{**vars(TOPIC), "config": {"refresh_days": 14, "weights": {"citations": 0.3}}})
     app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=lambda: None)
     with patch(f"{ROUTER_DB}.get_topic", return_value=topic):
-        on = c.patch("/api/v1/evolution/topics/object-detection/settings", json={"named_method": True}).json()
-        assert topic.config["weights"] == {"citations": 0.3, "named_method": 0.1} and topic.config["refresh_days"] == 14
-        off = c.patch("/api/v1/evolution/topics/object-detection/settings", json={"named_method": False}).json()
-    assert on == {"slug": "object-detection", "refresh_days": 14, "named_method": True}
-    assert off["named_method"] is False and topic.config["weights"] == {"citations": 0.3}
+        body = c.patch("/api/v1/evolution/topics/object-detection/settings", json={"refresh_days": 30}).json()
+    assert body == {"slug": "object-detection", "refresh_days": 30}
+    assert topic.config == {"refresh_days": 30, "weights": {"citations": 0.3}}

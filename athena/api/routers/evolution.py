@@ -103,8 +103,6 @@ class AskRequest(BaseModel):
 
 class TopicSettingsRequest(BaseModel):
     refresh_days: int | None = Field(None, ge=0, le=365)
-    # The named-method milestone feature (E9) for this map; applies at the next build.
-    named_method: bool | None = None
 
 
 class ProposalRequest(BaseModel):
@@ -679,21 +677,16 @@ def read_full_text(slug: str, session: Session = Depends(get_db)):
 
 @router.patch("/topics/{slug}/settings", dependencies=[Depends(auth.require_admin)])
 def topic_settings(slug: str, body: TopicSettingsRequest, session: Session = Depends(get_db)):
-    """How often the map is refreshed, and whether its milestone scores use cited method names."""
-    from athena.evolution.config import NAMED_METHOD_ON, TopicConfig
+    """How often the map is refreshed."""
+    from athena.evolution.config import TopicConfig
     topic = _topic_or_404(session, slug)
     config = dict(topic.config or {})
     if body.refresh_days is not None:
         config["refresh_days"] = body.refresh_days
-    if body.named_method is not None:
-        weights = {k: v for k, v in (config.get("weights") or {}).items() if k != "named_method"}
-        if body.named_method:
-            weights["named_method"] = NAMED_METHOD_ON
-        config["weights"] = weights
     topic.config = config
     session.commit()
     current = TopicConfig.from_dict(config)
-    return {"slug": slug, "refresh_days": current.refresh_days, "named_method": current.weights.named_method > 0}
+    return {"slug": slug, "refresh_days": current.refresh_days}
 
 
 # ── share links (R2) ───────────────────────────────────────────────────
