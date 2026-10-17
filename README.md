@@ -130,7 +130,7 @@ Two Celery pipelines, one for the feed and one for the research maps, write to P
 | `athena/pipeline/` | Celery workers: embedding, scoring, clustering, summaries, momentum |
 | `athena/evolution/` | Research maps: topic search, citation graph, milestones, gaps, full text, reviews |
 | `athena/api/` | FastAPI app, routers and auth |
-| `frontend/` | React 19 + TypeScript + Vite (TanStack Query, Zustand, three.js) |
+| `frontend/` | React 19 + TypeScript + Vite (TanStack Query, Zustand, three.js); pages and layout in [docs/ui.md](docs/ui.md) |
 | `docker/` | Dockerfiles and Compose files; images publish to GHCR on push to `main` |
 
 ## Development
