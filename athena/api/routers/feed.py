@@ -218,3 +218,9 @@ def _for_user(db: Session, user: User, response: dict) -> dict:
     ids = [UUID(str(i["id"])) for i in response["items"]]
     reactions = feedback.reactions_for(db, user.id, ids)
     return response | {"items": personal.overlay(db, user.id, response["items"], reactions)}
+
+
+def without_hidden(db: Session, user: User, response: dict) -> dict:
+    """A short shared list (Rising) without the user's "not interested" items, taken out after the cache read."""
+    hidden = {str(i) for i in feedback.hidden_ids(db, user.id)}
+    return response | {"items": [i for i in response["items"] if str(i["id"]) not in hidden]} if hidden else response

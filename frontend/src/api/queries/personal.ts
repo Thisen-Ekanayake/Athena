@@ -44,7 +44,7 @@ const base = (kind: MeKind, id: string) => (kind === 'item' ? `/items/${id}` : `
 const meKey = (kind: MeKind, id: string) => ['me', kind, id]
 
 // Feed-card lists hold each item's `me`; these are the caches a change to one item shows up in.
-const LIST_KEYS = [['feed'], ['trending'], ['list-items'], ['search'], ['cluster'], ['rising']]
+const LIST_KEYS = [['feed'], ['list-items'], ['search'], ['cluster'], ['rising']]
 
 type Patch = Partial<ItemMeSummary>
 

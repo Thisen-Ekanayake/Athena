@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from athena.api.auth import active_user
 from athena.api.cache import cache_get, cache_set
 from athena.api.deps import get_db, get_redis
-from athena.api.routers.feed import _build_feed_item, _for_user
+from athena.api.routers.feed import _build_feed_item, _for_user, without_hidden
 from athena.core.models import ContentCategory, ContentItem, User
 from athena.pipeline import momentum
 
@@ -48,7 +48,7 @@ def rising(window: str = Query("7d", pattern="^(7d|30d)$"), limit: int = Query(1
     key = f"rising:{window}:{limit}"
     cached = cache_get(r, key)
     if cached:
-        return _for_user(db, user, cached)
+        return _for_user(db, user, without_hidden(db, user, cached))
     column = ContentItem.citation_gain_7d if window == "7d" else ContentItem.citation_gain_30d
     items = db.execute(select(ContentItem).where(column > 0)
                        .order_by(desc(column), desc(ContentItem.citation_count)).limit(limit)).scalars().all()
@@ -59,4 +59,4 @@ def rising(window: str = Query("7d", pattern="^(7d|30d)$"), limit: int = Query(1
             "series": [p["citations"] for p in momentum.series(db, item, now, SPARK_DAYS[window])],
         } for item in items]}
     cache_set(r, key, payload, RISING_TTL)
-    return _for_user(db, user, payload)
+    return _for_user(db, user, without_hidden(db, user, payload))

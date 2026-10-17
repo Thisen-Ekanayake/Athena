@@ -103,7 +103,3 @@ export interface FeedResponse {
   /** The For-you order was used (false: it fell back to relevance) */
   personalised?: boolean
 }
-
-export interface TrendingResponse {
-  items: FeedItem[]
-}

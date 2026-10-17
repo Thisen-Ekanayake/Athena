@@ -1,5 +1,5 @@
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
-import { apiClient, type FeedItem, type FeedResponse, type TrendingResponse, type ClusterInfo } from './client'
+import { apiClient, type FeedItem, type FeedResponse, type ClusterInfo } from './client'
 
 export type FeedSort = 'score' | 'date' | 'trending' | 'foryou'
 
@@ -22,18 +22,6 @@ export const useFeed = (
     getNextPageParam: (lastPage) => 
       lastPage.pagination.has_next ? lastPage.pagination.page + 1 : undefined,
     initialPageParam: 1,
-  })
-}
-
-export const useTrending = (category: string | null = null) => {
-  return useQuery({
-    queryKey: ['trending', category],
-    queryFn: async () => {
-      const { data } = await apiClient.get<TrendingResponse>('/trending', {
-        params: { category }
-      })
-      return data
-    }
   })
 }
 

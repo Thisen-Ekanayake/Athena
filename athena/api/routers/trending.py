@@ -12,8 +12,7 @@ from athena.api.deps import get_db, get_redis
 from athena.api.cache import cache_get, cache_set
 from athena.api.config import settings
 from athena.api.auth import active_user
-from athena.api.routers.feed import _build_feed_item, _for_user
-from athena.database import feedback
+from athena.api.routers.feed import _build_feed_item, _for_user, without_hidden
 from athena.core.models import ContentItem, Source, User
 
 router = APIRouter(prefix="/api/v1", tags=["Trending"])
@@ -32,7 +31,7 @@ def get_trending(
     cache_key = f"trending:{category}"
     cached = cache_get(r, cache_key)
     if cached:
-        return _for_user(db, user, _without_hidden(db, user, cached))
+        return _for_user(db, user, without_hidden(db, user, cached))
 
     # Fetch trending items
     query = (
@@ -49,10 +48,4 @@ def get_trending(
     response = {"items": [_build_feed_item(item) for item in items]}
 
     cache_set(r, cache_key, response, settings.CACHE_TRENDING_TTL)
-    return _for_user(db, user, _without_hidden(db, user, response))
-
-
-def _without_hidden(db: Session, user: User, response: dict) -> dict:
-    """Trending is one short shared list: the user's "not interested" items come out after the cache."""
-    hidden = {str(i) for i in feedback.hidden_ids(db, user.id)}
-    return response | {"items": [i for i in response["items"] if str(i["id"]) not in hidden]} if hidden else response
+    return _for_user(db, user, without_hidden(db, user, response))

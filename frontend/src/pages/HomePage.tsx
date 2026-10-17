@@ -95,7 +95,7 @@ export function HomePage() {
         </Card>
 
         <Card className="lg:col-span-2">
-          <CardHeader icon={TrendingUp} title="Rising fast" action={<TileLink to="/trending">All</TileLink>} />
+          <CardHeader icon={TrendingUp} title="Rising fast" action={<TileLink to="/rising">All</TileLink>} />
           {rising.isLoading ? (
             <TileSkeleton />
           ) : rising.data?.length ? (
