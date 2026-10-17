@@ -1,0 +1,5 @@
+# Tests and lint, on top of requirements.txt (not in any image). Compile with -c requirements.txt
+# (commands in requirements.in). Install: pip install -r requirements.txt -r requirements-dev.txt
+pytest
+pytest-asyncio
+flake8

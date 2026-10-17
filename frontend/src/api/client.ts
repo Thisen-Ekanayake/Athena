@@ -1,8 +1,10 @@
 import axios from 'axios'
 import { queryClient } from './queryClient'
 
-/** Base URL of the v1 API, shared by axios and the streaming endpoints (Q&A, sync events). */
-export const API_BASE: string = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+/** Base URL of the v1 API, shared by axios and the streaming endpoints (Q&A, sync events). The API is on the
+ *  app's own origin (nginx in the image, Vite's proxy in development); VITE_API_URL points it elsewhere, which
+ *  then needs that origin in the API's CORS_ORIGINS. */
+export const API_BASE: string = import.meta.env.VITE_API_URL || '/api/v1'
 
 // Create a configured axios instance. The session lives in an httpOnly cookie, so requests carry credentials.
 export const apiClient = axios.create({

@@ -5,12 +5,16 @@ from typing import Callable, List, Optional, Set
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
 import time
+import warnings
 import feedparser
 import httpx
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-from newspaper import Article
 from loguru import logger
+
+with warnings.catch_warnings():  # newspaper4k warns without nltk, which only Article.nlp() needs
+    warnings.filterwarnings("ignore", message="nltk is not installed")
+    from newspaper import Article
 
 from athena.scrapers.base import BaseScraper
 from athena.core.schemas import ContentItemCreate
@@ -112,7 +116,7 @@ _FEED_FALLBACK_PATHS = (
 class PlaywrightScraper(BaseScraper):
     """
     Scraper that fetches RSS feeds to find URLs, and then uses a headless browser
-    (Playwright) and Newspaper3k to bypass paywalls/JS blocks and extract the full
+    (Playwright) and newspaper4k to bypass paywalls/JS blocks and extract the full
     clean body text of the articles.
     """
 
@@ -273,14 +277,14 @@ class PlaywrightScraper(BaseScraper):
 
     def parse(self, raw: dict) -> ContentItemCreate:
         """
-        Extract the article body from the raw HTML using Newspaper3k.
+        Extract the article body from the raw HTML using newspaper4k.
         """
         link = raw['link']
         title = raw['title']
         page_html = raw['page_html']
 
         article = Article(url=link)
-        article.set_html(page_html)
+        article.download(input_html=page_html)  # takes the page as given; nothing is fetched
         article.parse()
 
         text_content = article.text.strip()

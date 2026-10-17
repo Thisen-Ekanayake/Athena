@@ -1,25 +1,26 @@
-from uuid import UUID
-from fastapi import FastAPI, HTTPException, Depends
-from sqlalchemy import select, func
-from sqlalchemy.orm import Session
+"""
+Item summaries and the admin summary tools.
+
+GET  /api/v1/items/{item_id}/summary                    — an item's summary; written on demand when it is lazy or stale
+GET  /api/v1/admin/summaries/cost                       — today's and the last 7 days' summary spend (admin)
+GET  /api/v1/admin/summaries/sample                     — 10 random summaries to spot-check (admin)
+POST /api/v1/admin/items/{item_id}/regenerate-summary   — queue one item for a new summary (admin)
+"""
 from datetime import datetime, timezone
+from uuid import UUID
 
-from athena.database.db import SessionLocal
-from athena.core.models import ContentItem, SummaryStatus, SummaryUsageLog
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
 from athena.api.auth import require_admin
+from athena.api.deps import get_db
+from athena.core.models import ContentItem, SummaryStatus, SummaryUsageLog
 
-app = FastAPI(title="Athena Summarisation API", version="1.0.0")
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+router = APIRouter(prefix="/api/v1", tags=["Summarisation"])
 
 
-@app.get("/items/{item_id}/summary")
+@router.get("/items/{item_id}/summary")
 def get_item_summary(item_id: str, db: Session = Depends(get_db)):
     """Fetch summary for an item. Generates on-demand if status is LAZY."""
     try:
@@ -57,7 +58,7 @@ def get_item_summary(item_id: str, db: Session = Depends(get_db)):
     }
 
 
-@app.get("/admin/summaries/cost")
+@router.get("/admin/summaries/cost")
 def get_summarisation_cost(db: Session = Depends(get_db), user=Depends(require_admin)):
     """Daily and 7-day rolling spend in USD, and token breakdowns."""
     from datetime import timedelta
@@ -113,7 +114,7 @@ def get_summarisation_cost(db: Session = Depends(get_db), user=Depends(require_a
     }
 
 
-@app.get("/admin/summaries/sample")
+@router.get("/admin/summaries/sample")
 def get_summary_sample(db: Session = Depends(get_db), user=Depends(require_admin)):
     """Returns 10 random summaries for manual spot-check."""
     items = db.execute(
@@ -135,7 +136,7 @@ def get_summary_sample(db: Session = Depends(get_db), user=Depends(require_admin
     ]
 
 
-@app.post("/admin/items/{item_id}/regenerate-summary")
+@router.post("/admin/items/{item_id}/regenerate-summary")
 def regenerate_summary(item_id: str, db: Session = Depends(get_db), user=Depends(require_admin)):
     """Manually trigger regeneration for a specific item."""
     try:

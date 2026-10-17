@@ -5,7 +5,7 @@ Two rankings, fused:
 
 - meaning: the query's vector against the feed's vectors in Qdrant, as before;
 - keywords: Postgres full-text search over the title (weight A), summary (B) and abstract (C), through the generated
-  ``content_items.search_vector`` column (athena.api.migrations.add_writing). The English parser keeps names whole
+  ``content_items.search_vector`` column (alembic/versions/0001_baseline.py). The English parser keeps names whole
   ("lora", "yolov8", "rt-detr", "gpt-4o"), so an exact name is found even where its vector sits among loosely
   related items.
 

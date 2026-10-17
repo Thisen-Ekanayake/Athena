@@ -9,16 +9,15 @@ import secrets
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from loguru import logger
 
 from athena.api.routers import (
     feed, items, clusters, trending, search, sources, sync, app_settings, saved, evolution, inbox, auth as auth_routes,
-    users, watches, usage, share, momentum, personal, interests, reviews,
+    users, watches, usage, share, momentum, personal, interests, reviews, scoring, summaries,
 )
 from athena.api import qa_api
-from athena.api import score_api
-from athena.api import summary_api
 from athena.api.auth import active_user, require_admin
 from athena.api.config import settings
 
@@ -26,7 +25,7 @@ _basic_auth = HTTPBasic()
 
 
 def _verify_docs_credentials(credentials: HTTPBasicCredentials = Depends(_basic_auth)):
-    """Reject requests to /docs or /redoc unless credentials match DOCS_USERNAME/PASSWORD."""
+    """Reject requests to /docs, /redoc or /openapi.json unless credentials match DOCS_USERNAME/PASSWORD."""
     ok_user = secrets.compare_digest(credentials.username, settings.DOCS_USERNAME)
     ok_pass = secrets.compare_digest(credentials.password, settings.DOCS_PASSWORD)
     if not (ok_user and ok_pass):
@@ -47,7 +46,7 @@ def create_app() -> FastAPI:
         init_db()
         yield
 
-    # Disable built-in docs; we mount our own routes with auth below.
+    # Disable built-in docs and schema; we mount our own routes with auth below.
     app = FastAPI(
         lifespan=lifespan,
         title="Athena API",
@@ -59,6 +58,7 @@ def create_app() -> FastAPI:
         version="1.0.0",
         docs_url=None,
         redoc_url=None,
+        openapi_url=None,
     )
 
     # ── CORS ────────────────────────────────────────────
@@ -70,26 +70,26 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── Docs (optional, Basic-Auth-gated) ───────────────
+    # ── Docs (off unless DOCS_ENABLED; Basic-Auth-gated when DOCS_PASSWORD is set) ──
     if settings.DOCS_ENABLED:
         if settings.DOCS_PASSWORD:
-            # Password set → protect with HTTP Basic Auth
-            @app.get("/docs", include_in_schema=False)
-            def swagger_ui(credentials: HTTPBasicCredentials = Depends(_verify_docs_credentials)):
-                return get_swagger_ui_html(openapi_url="/openapi.json", title="Athena API")
-
-            @app.get("/redoc", include_in_schema=False)
-            def redoc_ui(credentials: HTTPBasicCredentials = Depends(_verify_docs_credentials)):
-                return get_redoc_html(openapi_url="/openapi.json", title="Athena API")
+            docs_guard = [Depends(_verify_docs_credentials)]
         else:
-            # No password → open access (dev default)
-            @app.get("/docs", include_in_schema=False)
-            def swagger_ui_open():
-                return get_swagger_ui_html(openapi_url="/openapi.json", title="Athena API")
+            docs_guard = []
+            logger.warning("DOCS_ENABLED is on without DOCS_PASSWORD: /docs, /redoc and /openapi.json are open "
+                           "to anyone who can reach the API.")
 
-            @app.get("/redoc", include_in_schema=False)
-            def redoc_ui_open():
-                return get_redoc_html(openapi_url="/openapi.json", title="Athena API")
+        @app.get("/openapi.json", include_in_schema=False, dependencies=docs_guard)
+        def openapi_schema():
+            return JSONResponse(app.openapi())
+
+        @app.get("/docs", include_in_schema=False, dependencies=docs_guard)
+        def swagger_ui():
+            return get_swagger_ui_html(openapi_url="/openapi.json", title="Athena API")
+
+        @app.get("/redoc", include_in_schema=False, dependencies=docs_guard)
+        def redoc_ui():
+            return get_redoc_html(openapi_url="/openapi.json", title="Athena API")
 
     # ── Routers ─────────────────────────────────────────
     # Every route needs a logged-in account, except logging in itself, shared map links and /health.
@@ -117,14 +117,8 @@ def create_app() -> FastAPI:
     app.include_router(usage.router, dependencies=login)  # the admin views add require_admin themselves
     app.include_router(share.router)  # read-only maps behind a share link; the token is the access
     app.include_router(qa_api.router, prefix="/api/v1", tags=["QA"], dependencies=login)
-    app.include_router(
-        score_api.app.router, prefix="/api/v1",
-        tags=["Scoring"], dependencies=login,
-    )
-    app.include_router(
-        summary_api.app.router, prefix="/api/v1",
-        tags=["Summarisation"], dependencies=login,
-    )
+    app.include_router(scoring.router, dependencies=login)  # rescore-all adds require_admin itself
+    app.include_router(summaries.router, dependencies=login)  # the admin views add require_admin themselves
 
     # ── Health check ────────────────────────────────────
     @app.get("/health", tags=["Health"])

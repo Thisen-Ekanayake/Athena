@@ -16,7 +16,7 @@ git clone https://github.com/your-username/athena.git
 cd athena
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt
 playwright install chromium
 ```
 
@@ -38,7 +38,7 @@ docker compose -f docker/docker-compose.yml up -d
 ### 4. Initialise the database and seed sources
 
 ```bash
-python3 scripts/setup_project.py
+python3 scripts/setup_project.py   # alembic upgrade head, prompt templates, sources
 ```
 
 ### 5. Run the backend
@@ -46,7 +46,7 @@ python3 scripts/setup_project.py
 ```bash
 uvicorn athena.api.main:app --reload
 # API available at http://localhost:8000
-# Swagger docs at http://localhost:8000/docs  (requires DOCS_USERNAME/DOCS_PASSWORD if set)
+# Swagger docs at http://localhost:8000/docs when DOCS_ENABLED=true (Basic Auth if DOCS_PASSWORD is set)
 ```
 
 ### 6. Start the Celery worker (separate terminal)

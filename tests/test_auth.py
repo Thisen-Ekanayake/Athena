@@ -123,6 +123,15 @@ class TestSetupAndLogin:
         assert c.post("/api/v1/auth/logout").status_code == 204
         assert c.get("/api/v1/auth/me").status_code == 401
 
+    def test_the_cookie_is_secure_over_https(self, db):
+        """Behind nginx, uvicorn takes the scheme from X-Forwarded-Proto; the cookie follows the scheme."""
+        setup_admin(client())
+        body = {"email": "admin@example.com", "password": "correct horse"}
+        plain = client().post("/api/v1/auth/login", json=body)
+        assert "secure" not in plain.headers["set-cookie"].lower()
+        https = TestClient(app, base_url="https://testserver").post("/api/v1/auth/login", json=body)
+        assert https.status_code == 200 and "secure" in https.headers["set-cookie"].lower()
+
     def test_only_the_token_hash_is_stored(self, db):
         Session, _ = db
         c = client()
