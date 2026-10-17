@@ -1,6 +1,6 @@
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ExternalLink } from 'lucide-react'
-import { useItemDetail } from '../api/queries'
+import { useItemDetail } from '../api/queries/feed'
 import { PaperDetail } from '../components/paper/PaperDetail'
 import { SaveMenu } from '../components/items/SaveMenu'
 import { Button } from '../ui/Button'

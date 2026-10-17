@@ -15,7 +15,7 @@ import { Spinner } from '../../ui/Spinner'
 import { cn } from '../../ui/cn'
 import { EvolutionGraph } from './EvolutionGraph'
 import { GapsView } from './GapsView'
-import { PaperPanel } from './PaperPanel'
+import { MapPaperPanel } from './MapPaperPanel'
 import { ExportMenu } from './ExportMenu'
 import { FollowButton } from '../inbox/FollowButton'
 import type { GraphExporter } from './graphExport'
@@ -429,7 +429,7 @@ export function TopicView({ slug }: { slug: string }) {
             />
           </div>
           {selectedId ? (
-            <PaperPanel slug={slug} paperId={selectedId} onSelect={setSelectedId} onClose={() => setSelectedId(null)} />
+            <MapPaperPanel slug={slug} paperId={selectedId} onSelect={setSelectedId} onClose={() => setSelectedId(null)} />
           ) : (
             <aside className="grid content-start gap-5">
               <p className="rounded-xl border border-line bg-surface p-4 text-[13px] text-fg-2">

@@ -4,7 +4,8 @@ import {
   ArrowRight, Bookmark, CornerDownLeft, FileText, GitBranch, House, Layers, Newspaper, Search, Settings, Sparkles, TrendingUp,
   type LucideIcon,
 } from 'lucide-react'
-import { useClusters, useSearch } from '../../api/queries/phase4'
+import { useClusterList } from '../../api/queries/clusters'
+import { useSearch } from '../../api/queries/search'
 import { useEvolutionTopics } from '../../features/evolution/api'
 import { usePaletteStore, usePanelStore } from '../../store/panelStore'
 import { Kbd } from '../../ui/Kbd'
@@ -67,7 +68,7 @@ function PaletteDialog() {
   const debounced = useDebounced(q, 250)
   const papers = useSearch(debounced, null, debounced.length > 2)
   const { data: topics } = useEvolutionTopics()
-  const { data: clusters } = useClusters()
+  const { data: clusters } = useClusterList()
 
   useEffect(() => {
     inputRef.current?.focus()

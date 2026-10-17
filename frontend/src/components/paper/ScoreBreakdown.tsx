@@ -1,4 +1,4 @@
-import { useScoreBreakdown } from '../../api/queries/phase4'
+import { useScoreBreakdown } from '../../api/queries/score'
 import { timeAgo } from '../items/format'
 import { Spinner } from '../../ui/Spinner'
 

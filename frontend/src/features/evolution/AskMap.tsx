@@ -9,7 +9,7 @@ import { Spinner } from '../../ui/Spinner'
 import { cn } from '../../ui/cn'
 import { useAddHighlight } from '../../api/queries/personal'
 import { Highlightable } from '../reading/Highlightable'
-import { PaperPanel } from './PaperPanel'
+import { MapPaperPanel } from './MapPaperPanel'
 import { useClearMapQuestions, useMapQuestions, type MapSource, type SectionFilter } from './api'
 
 const FILTERS: { value: SectionFilter; label: string }[] = [
@@ -188,7 +188,7 @@ export function AskMap({ slug, topicName }: { slug: string; topicName: string })
       </div>
 
       {selected ? (
-        <PaperPanel slug={slug} paperId={selected} onSelect={setSelected} onClose={() => setSelected(null)} />
+        <MapPaperPanel slug={slug} paperId={selected} onSelect={setSelected} onClose={() => setSelected(null)} />
       ) : (
         <aside className="rounded-xl border border-line bg-surface p-4 text-[13px] text-fg-2">
           Each claim cites its source as [number]. Click one to read the paper here, with what it built on and the gaps it states.

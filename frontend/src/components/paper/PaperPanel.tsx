@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { ExternalLink, Maximize2, X } from 'lucide-react'
 import { motion } from 'framer-motion'
-import { useItemDetail } from '../../api/queries'
+import { useItemDetail } from '../../api/queries/feed'
 import { usePanelStore } from '../../store/panelStore'
 import { Button, ButtonLink } from '../../ui/Button'
 import { buttonClass } from '../../ui/buttonClass'

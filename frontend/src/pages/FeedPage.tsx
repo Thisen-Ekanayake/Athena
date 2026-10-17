@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ArrowLeft, EyeOff, Newspaper } from 'lucide-react'
-import { useFeed, type FeedSort } from '../api/queries'
+import { useFeed, type FeedSort } from '../api/queries/feed'
 import { useInterests } from '../api/queries/personal'
 import { ItemList } from '../components/items/ItemRow'
 import { useAppStore } from '../store/appStore'

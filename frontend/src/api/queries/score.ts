@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { apiClient, type FeedItem } from '../client'
+import { apiClient } from '../client'
 
 interface ApiSignal {
   score: number
@@ -53,66 +53,6 @@ export const useScoreBreakdown = (itemId: string, enabled: boolean) => {
     },
     enabled,
     staleTime: 5 * 60 * 1000
-  })
-}
-
-export interface LibrarySearchResponse {
-  query: string
-  items: FeedItem[]
-  total: number
-}
-
-export const useSearch = (q: string, category: string | null = null, enabled: boolean = true) => {
-  return useQuery({
-    queryKey: ['search', q, category],
-    queryFn: async () => {
-      const { data } = await apiClient.get<LibrarySearchResponse>('/search', {
-        params: { q, category }
-      })
-      return data
-    },
-    enabled: enabled && q.length > 2,
-    staleTime: 60 * 1000
-  })
-}
-
-export interface ClusterDetail {
-  cluster: ClusterSummary
-  items: FeedItem[]
-  pagination: { page: number; limit: number; total: number; has_next: boolean }
-}
-
-export const useCluster = (clusterId: string, page: number = 1) => {
-  return useQuery({
-    queryKey: ['cluster', clusterId, page],
-    queryFn: async () => {
-      const { data } = await apiClient.get<ClusterDetail>(`/clusters/${clusterId}`, {
-        params: { page, limit: 20 }
-      })
-      return data
-    },
-    staleTime: 5 * 60 * 1000
-  })
-}
-
-export interface ClusterSummary {
-  id: string
-  label: string | null
-  summary: string | null
-  item_count: number
-  is_active: boolean
-}
-
-export const useClusters = () => {
-  return useQuery({
-    queryKey: ['clusters-list'],
-    queryFn: async () => {
-      const { data } = await apiClient.get<ClusterSummary[]>('/clusters', {
-        params: { min_items: 0 }
-      })
-      return data
-    },
-    staleTime: 5 * 60 * 1000,
   })
 }
 
