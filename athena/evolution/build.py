@@ -16,8 +16,8 @@ from athena.evolution.config import TopicConfig
 from athena.evolution.corpus import Seed, build_corpus
 from athena.evolution.membership import Membership, abstract_vectors, keyword_only, semantic_membership
 from athena.evolution.milestones import score_topic
-from athena.evolution.openalex import OpenAlexClient
-from athena.evolution.semantic_scholar import SemanticScholarClient
+from athena.core.openalex import OpenAlexClient
+from athena.core.semantic_scholar import SemanticScholarClient
 
 
 def topic_membership(corpus, config: TopicConfig) -> Membership:

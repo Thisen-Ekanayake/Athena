@@ -71,7 +71,7 @@ from athena.core import llm, usage
 from athena.evolution import ask, export, ideas, notes
 from athena.evolution import propose as proposals
 from athena.evolution.classify import chat_available
-from athena.evolution.openalex import FIELD_IDS, OpenAlexBudgetError
+from athena.core.openalex import FIELD_IDS, OpenAlexBudgetError
 from athena.evolution.search import find_topic_by_content
 
 router = APIRouter(prefix="/api/v1/evolution", tags=["Evolution"])

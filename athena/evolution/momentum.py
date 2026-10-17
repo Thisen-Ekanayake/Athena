@@ -65,7 +65,7 @@ def rising_entry(counts: dict[int, int], now: datetime) -> dict | None:
 def refresh_topic_years(session, topic, client=None, now: datetime | None = None, force: bool = False) -> int:
     """Fetch citations per year for a map's papers that have none or are older than REFETCH_DAYS."""
     from athena.core.models import EvoPaper, EvoTopicPaper
-    from athena.evolution.openalex import OpenAlexClient
+    from athena.core.openalex import OpenAlexClient
     now = now or datetime.now(timezone.utc)
     papers = session.execute(select(EvoPaper).join(EvoTopicPaper, EvoTopicPaper.paper_id == EvoPaper.id)
                              .where(EvoTopicPaper.topic_id == topic.id)).scalars().all()

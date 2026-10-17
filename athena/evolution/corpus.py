@@ -30,8 +30,8 @@ from functools import lru_cache
 from loguru import logger
 
 from athena.evolution.config import TopicConfig
-from athena.evolution.openalex import OpenAlexClient, Work, arxiv_year
-from athena.evolution.semantic_scholar import (
+from athena.core.openalex import OpenAlexClient, Work, arxiv_year
+from athena.core.semantic_scholar import (
     CANDIDATE_FIELDS, S2Paper, S2Ref, SemanticScholarAuthError, SemanticScholarClient, lookup_id,
 )
 

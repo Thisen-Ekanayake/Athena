@@ -92,7 +92,7 @@ def _ss_payload(papers: list[dict]) -> dict:
 
 def _live(*responses: httpx.Response | Exception):
     """Patch live search's Semantic Scholar client to answer from ``responses``, in turn."""
-    from athena.evolution.semantic_scholar import SemanticScholarClient
+    from athena.core.semantic_scholar import SemanticScholarClient
     answers = iter(responses)
 
     def handler(request: httpx.Request) -> httpx.Response:

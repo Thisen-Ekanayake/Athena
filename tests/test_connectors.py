@@ -128,13 +128,13 @@ class TestSemanticScholarEnricher:
     @staticmethod
     def _client(handler):
         import httpx
-        from athena.evolution.semantic_scholar import SemanticScholarClient
+        from athena.core.semantic_scholar import SemanticScholarClient
 
         def make(**kwargs):
             http = httpx.Client(base_url="https://api.semanticscholar.org/graph/v1",
                                 transport=httpx.MockTransport(handler))
             return SemanticScholarClient(api_key="k", http=http, min_interval=0, **kwargs)
-        return patch("athena.evolution.semantic_scholar.SemanticScholarClient", side_effect=make)
+        return patch("athena.core.semantic_scholar.SemanticScholarClient", side_effect=make)
 
     @pytest.mark.asyncio
     async def test_fetch_paper_metrics_returns_citation_count(self):

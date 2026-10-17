@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from athena.evolution import propose as p
 from athena.evolution.corpus import relevance
-from athena.evolution.openalex import Work
+from athena.core.openalex import Work
 
 
 def work(wid: str, title: str, year: int, cited: int, abstract: str | None = None, field: str = "Computer Science",

@@ -82,7 +82,7 @@ def fetch_method_names(slug: str, top: int = TOP_CANDIDATES, s2=None, force: boo
     """Fetch citing sentences for the topic's top candidates and store each one's cited name."""
     from athena.database import evolution as db
     from athena.database.db import SessionLocal
-    from athena.evolution.semantic_scholar import SemanticScholarClient
+    from athena.core.semantic_scholar import SemanticScholarClient
 
     s2 = s2 or SemanticScholarClient()
     now = datetime.now(timezone.utc)

@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from athena.evolution.corpus import EXCLUDED_TYPES, classify_kind, relevance, title_key
-from athena.evolution.openalex import OpenAlexClient, Work
+from athena.core.openalex import OpenAlexClient, Work
 
 if TYPE_CHECKING:
     from athena.evolution.classify import Classifier

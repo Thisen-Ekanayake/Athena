@@ -1,5 +1,5 @@
 """People view (E8): key authors and labs per era, and who introduced each milestone."""
-from athena.evolution.openalex import parse_authorships
+from athena.core.openalex import parse_authorships
 from athena.evolution.people import PeoplePaper, author_key, key_people, milestone_people, people_by_era
 
 MIT = {"id": "I1", "name": "MIT", "country": "US"}

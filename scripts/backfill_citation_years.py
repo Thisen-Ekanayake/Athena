@@ -19,7 +19,7 @@ from sqlalchemy import select  # noqa: E402
 from athena.core.models import EvoTopic  # noqa: E402
 from athena.database.db import SessionLocal  # noqa: E402
 from athena.evolution.momentum import refresh_topic_years  # noqa: E402
-from athena.evolution.openalex import OpenAlexClient  # noqa: E402
+from athena.core.openalex import OpenAlexClient  # noqa: E402
 
 
 def main() -> None:

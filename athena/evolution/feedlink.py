@@ -104,8 +104,8 @@ def check_feed_citations(s2=None, openalex=None, now: datetime | None = None) ->
     from athena.database import evolution as db
     from athena.database.db import SessionLocal
     from athena.evolution.fulltext import PaperIndex
-    from athena.evolution.openalex import OpenAlexClient
-    from athena.evolution.semantic_scholar import SemanticScholarClient
+    from athena.core.openalex import OpenAlexClient
+    from athena.core.semantic_scholar import SemanticScholarClient
 
     now = now or datetime.now(timezone.utc)
     s2 = s2 or SemanticScholarClient()

@@ -15,7 +15,7 @@ from sqlalchemy import or_, select, update
 
 from athena.core.models import EvoPaper
 from athena.database.db import SessionLocal
-from athena.evolution.openalex import IDS_PER_FILTER, OpenAlexClient
+from athena.core.openalex import IDS_PER_FILTER, OpenAlexClient
 
 
 def main():

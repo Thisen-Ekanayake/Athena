@@ -291,7 +291,7 @@ def run(session, s2, now: datetime, rebuilds: int | None = REBUILDS_PER_RUN) -> 
 def daily_momentum(force: bool = False) -> dict:
     """The day's citation refresh, snapshots and gains, once per UTC day (it is scheduled hourly)."""
     from athena.database.db import SessionLocal
-    from athena.evolution.semantic_scholar import SemanticScholarClient
+    from athena.core.semantic_scholar import SemanticScholarClient
     now = datetime.now(timezone.utc)
     today = now.date().isoformat()
     if not force and get_setting(DAY_MARKER) == today:

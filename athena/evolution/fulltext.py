@@ -41,7 +41,7 @@ from athena.database.db import SessionLocal
 from athena.evolution.config import TopicConfig
 from athena.evolution.corpus import same_title, title_key
 from athena.evolution.milestones import named_method
-from athena.evolution.semantic_scholar import S2Ref, SemanticScholarAuthError, SemanticScholarClient
+from athena.core.semantic_scholar import S2Ref, SemanticScholarAuthError, SemanticScholarClient
 from athena.evolution.tei import BibEntry, ParsedPaper, mention_before, parse_tei
 
 CHUNK_WORDS = 300

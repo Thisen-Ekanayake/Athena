@@ -22,7 +22,7 @@ from athena.database.db import init_db  # noqa: E402
 from athena.database.evolution import upsert_topic  # noqa: E402
 from athena.evolution.config import TopicConfig  # noqa: E402
 from athena.evolution.corpus import title_key  # noqa: E402
-from athena.evolution.openalex import OpenAlexClient  # noqa: E402
+from athena.core.openalex import OpenAlexClient  # noqa: E402
 
 TOPICS = [
     {

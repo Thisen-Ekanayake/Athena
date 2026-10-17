@@ -18,7 +18,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from athena.core.config_store import set_setting  # noqa: E402
 from athena.database.db import SessionLocal  # noqa: E402
-from athena.evolution.semantic_scholar import SemanticScholarClient  # noqa: E402
+from athena.core.semantic_scholar import SemanticScholarClient  # noqa: E402
 from athena.pipeline import momentum  # noqa: E402
 
 

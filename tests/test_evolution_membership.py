@@ -5,7 +5,7 @@ import numpy as np
 
 from athena.evolution.corpus import Corpus, CorpusPaper
 from athena.evolution.membership import MIN_PROFILE_PAPERS, semantic_membership
-from athena.evolution.openalex import Work
+from athena.core.openalex import Work
 
 
 def paper(pid: str, title: str, abstract: str | None = None) -> CorpusPaper:

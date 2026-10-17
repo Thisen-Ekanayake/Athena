@@ -10,7 +10,7 @@ from athena.evolution.corpus import Corpus, CorpusPaper
 from athena.evolution.milestones import (
     PaperScore, classify_kind, era_bounds, named_method, relevance, score_topic, select_milestones,
 )
-from athena.evolution.openalex import Work
+from athena.core.openalex import Work
 
 # A(2000) <- B(2001), C(2001) <- D(2002) <- E(2003): knowledge flows A -> {B, C} -> D -> E.
 DIAMOND_YEARS = {"A": 2000, "B": 2001, "C": 2001, "D": 2002, "E": 2003}

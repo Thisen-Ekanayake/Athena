@@ -1,6 +1,6 @@
 """Live paper search against the Semantic Scholar Graph API.
 
-It goes through the shared client (``athena.evolution.semantic_scholar``), so it takes its turn with map builds and
+It goes through the shared client (``athena.core.semantic_scholar``), so it takes its turn with map builds and
 the workers and retries a rate limit, but gives up after about ten seconds: someone is waiting for the results.
 """
 from __future__ import annotations
@@ -8,7 +8,7 @@ from __future__ import annotations
 import httpx
 from loguru import logger
 
-from athena.evolution.semantic_scholar import SemanticScholarAuthError, SemanticScholarClient
+from athena.core.semantic_scholar import SemanticScholarAuthError, SemanticScholarClient
 
 PATIENCE = 10.0  # seconds a search may spend waiting out rate limits
 DEFAULT_TIMEOUT = 15.0

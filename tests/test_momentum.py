@@ -239,7 +239,7 @@ def test_the_hourly_task_works_once_a_day(Session, monkeypatch):
     calls = []
     monkeypatch.setattr(db_module, "SessionLocal", Session)
     monkeypatch.setattr(momentum, "run", lambda session, s2, now, rebuilds=30: calls.append(now) or {"ok": 1})
-    monkeypatch.setattr("athena.evolution.semantic_scholar.SemanticScholarClient", lambda: None)
+    monkeypatch.setattr("athena.core.semantic_scholar.SemanticScholarClient", lambda: None)
     assert momentum.daily_momentum() == {"ok": 1}
     assert momentum.daily_momentum() == {"skipped": datetime.now(timezone.utc).date().isoformat()}
     assert len(calls) == 1
