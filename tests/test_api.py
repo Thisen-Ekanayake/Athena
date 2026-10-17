@@ -157,7 +157,6 @@ def mock_db():
         published_at=datetime.now(timezone.utc),
         category=ContentCategory.COMPANY_BLOG,
         score=0.95,
-        is_trending=True,
         summary_status=SummaryStatus.COMPLETE,
         source_id=source_id,
         cluster_id=cluster_id,
@@ -214,15 +213,6 @@ def test_feed_endpoint(mock_db):
     assert data["items"][0]["title"] == "Test Item"
     assert data["items"][0]["source"]["name"] == "Test Source"
     assert data["items"][0]["cluster"]["label"] == "Test Cluster"
-
-
-def test_trending_endpoint(mock_db):
-    response = client.get("/api/v1/trending")
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
-    assert len(data["items"]) == 1
-    assert data["items"][0]["is_trending"] is True
 
 
 def test_clusters_endpoint(mock_db):

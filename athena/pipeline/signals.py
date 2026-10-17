@@ -102,7 +102,7 @@ def compute_engagement_score(metadata: Dict[str, Any], source_url: str) -> float
 
 
 # ──────────────────────────────────────────────────────────
-# 3. Recency & Velocity (R)
+# 3. Recency (R)
 # ──────────────────────────────────────────────────────────
 
 def compute_recency_score(published_at: datetime, half_life_days: int = 30) -> float:
@@ -126,29 +126,6 @@ def compute_recency_score(published_at: datetime, half_life_days: int = 30) -> f
     return float(min(1.0, max(0.0, score)))
 
 
-def compute_velocity_score(
-    current_citations: int,
-    current_engagement: float,
-    prev_citations: int,
-    prev_engagement: float,
-    max_citation_delta: int = 50,
-    max_engagement_delta: float = 0.3,
-) -> float:
-    """
-    Velocity = rate of change in citation count + engagement over the last 7 days.
-    Normalised against reasonable maxima.
-    """
-    citation_delta = max(0, current_citations - prev_citations)
-    engagement_delta = max(0.0, current_engagement - prev_engagement)
-
-    citation_velocity = min(1.0, citation_delta / max(1, max_citation_delta))
-    engagement_velocity = min(1.0, engagement_delta / max(0.01, max_engagement_delta))
-
-    # 60/40 split between citation velocity and engagement velocity
-    combined = 0.6 * citation_velocity + 0.4 * engagement_velocity
-    return float(min(1.0, max(0.0, combined)))
-
-
 # ──────────────────────────────────────────────────────────
 # 4. Authority & Source Quality (A)
 # ──────────────────────────────────────────────────────────
@@ -161,7 +138,7 @@ def compute_authority_score(authority_score: Optional[float]) -> float:
 
 
 # ──────────────────────────────────────────────────────────
-# Composite Score & Trending
+# Composite Score
 # ──────────────────────────────────────────────────────────
 
 def compute_composite_score(
@@ -183,46 +160,3 @@ def compute_composite_score(
         + weights.get("authority", 0.0) * authority
     )
     return float(max(0.0, min(1.0, raw)))
-
-
-def apply_trending_boost(base_score: float, is_trending: bool) -> float:
-    """
-    Trending items receive a +0.08 boost, capped at 0.95.
-    Keeps truly seminal older work still reachable at top.
-    """
-    if not is_trending:
-        return base_score
-    return min(0.95, base_score + 0.08)
-
-
-def check_trending_criteria(
-    velocity_score: float,
-    published_at: datetime,
-    engagement_data_points: int,
-    max_age_days: int = 30,
-    velocity_threshold: float = 0.70,
-    min_engagement_points: int = 3,
-) -> bool:
-    """
-    Determine if an item qualifies as trending:
-    - velocity_score > threshold (~top 5%)
-    - Published within last max_age_days
-    - Has at least min_engagement_points engagement signals
-    """
-    if velocity_score <= velocity_threshold:
-        return False
-
-    now = datetime.now(timezone.utc)
-    if published_at is None:
-        return False
-    if published_at.tzinfo is None:
-        published_at = published_at.replace(tzinfo=timezone.utc)
-
-    age_days = (now - published_at).total_seconds() / 86400.0
-    if age_days > max_age_days:
-        return False
-
-    if engagement_data_points < min_engagement_points:
-        return False
-
-    return True

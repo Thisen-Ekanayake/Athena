@@ -7,7 +7,7 @@ import { RisingPage } from './RisingPage'
 
 const paper = (id: string, title: string, gain: number): RisingItem => ({
   id, title, url: `https://arxiv.org/abs/${id}`, summary: null, score: 0.6, published_at: '2026-10-01T12:00:00Z',
-  category: 'paper', is_trending: false, source: { name: 'ArXiv AI', type: 'api', authority: 0.85 }, related_count: 0,
+  category: 'paper', source: { name: 'ArXiv AI', type: 'api', authority: 0.85 }, related_count: 0,
   citation_count: 40 + gain, gain, series: [40, 40 + gain],
 })
 

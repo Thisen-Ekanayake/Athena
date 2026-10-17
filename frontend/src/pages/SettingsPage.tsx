@@ -598,7 +598,7 @@ function ClustersSection() {
         <div className="grid gap-3 sm:grid-cols-3">
           <Stat label="Items" value={health.total_items.toLocaleString()} />
           <Stat label="Clusters" value={clusters?.length ?? '—'} />
-          <Stat label="Trending" value={health.trending_items} sub={`${health.trending_percentage}% of items`} />
+          <Stat label="Scored" value={health.scored_items.toLocaleString()} />
         </div>
       )}
       {isLoading ? (

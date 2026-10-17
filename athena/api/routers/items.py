@@ -156,7 +156,7 @@ def get_score_breakdown(
             "label": _label(score_record.engagement_score),
             "weight": weights.get("engagement", 0.15),
         },
-        "recency_velocity": {
+        "recency": {
             "score": round(score_record.recency_score, 4),
             "label": _label(score_record.recency_score),
             "weight": weights.get("recency", 0.20),
@@ -179,7 +179,6 @@ def get_score_breakdown(
         "item_id": str(item.id),
         "title": item.title,
         "composite_score": round(score_record.composite_score, 4),
-        "is_trending": item.is_trending or False,
         "category_rank": item.category_rank,
         "signals": signals,
         "computed_at": (

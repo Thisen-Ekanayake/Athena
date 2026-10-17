@@ -77,7 +77,7 @@ def env(monkeypatch):
             s.execute(ContentItem.__table__.insert().values(
                 id=ids[name], source_id=source_id, title=name, url=f"https://example.org/{name}", score=score,
                 published_at=datetime(2026, 10, 10, tzinfo=timezone.utc), category=ContentCategory.PAPER,
-                content_hash=name, authors=None, extra_data={}, is_trending=True, citation_gain_7d=3))
+                content_hash=name, authors=None, extra_data={}, citation_gain_7d=3))
         s.commit()
     qdrant = FakeQdrant({str(ids[name]): vec for name, (vec, _) in ITEMS.items()})
     monkeypatch.setattr(interests, "_qdrant", lambda: qdrant)

@@ -1,7 +1,7 @@
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
 import { apiClient, type FeedItem, type FeedResponse, type ClusterInfo } from './client'
 
-export type FeedSort = 'score' | 'date' | 'trending' | 'foryou'
+export type FeedSort = 'score' | 'date' | 'foryou'
 
 export const useFeed = (
   sort: FeedSort = 'score',

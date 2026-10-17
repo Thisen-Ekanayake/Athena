@@ -12,7 +12,6 @@ from athena.pipeline.signals import (
     compute_recency_score,
     compute_authority_score,
     compute_composite_score,
-    apply_trending_boost,
 )
 
 
@@ -70,14 +69,6 @@ class TestScoringPipelineIntegration:
         )
 
         assert nature_score > blog_score
-
-    def test_trending_boost_surfaces_new_items(self):
-        """A trending new item should outscore a non-trending equivalent."""
-        base_score = 0.55
-        boosted = apply_trending_boost(base_score, True)
-        unboosted = apply_trending_boost(base_score, False)
-        assert boosted > unboosted
-        assert boosted == 0.63
 
     def test_different_category_weights_differentiate(self):
         """Same item scored with paper vs blog weights should differ."""

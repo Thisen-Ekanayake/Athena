@@ -61,7 +61,7 @@ def today_date() -> str:
 def check_budget_before_call(job_type: str, tier: int = 2) -> bool:
     """
     Check if we have exceeded the daily summary budget.
-    Tier 1 (urgent/trending) is exempt from the 80% threshold.
+    Tier 1 (urgent: a score of 0.75 or more) is exempt from the 80% threshold.
     Tier 2/3 pauses at 80% of daily budget to reserve capacity for urgent items.
     """
     if usage.app_over_budget():

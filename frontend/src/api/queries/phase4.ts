@@ -11,7 +11,6 @@ interface ApiScoreBreakdown {
   composite_score: number
   signals: Record<string, ApiSignal>
   computed_at: string
-  is_trending: boolean
 }
 
 export interface ScoreBreakdown {
@@ -24,13 +23,12 @@ export interface ScoreBreakdown {
     weight: number
   }[]
   computed_at: string
-  is_trending: boolean
 }
 
 const SIGNAL_LABELS: Record<string, string> = {
   citation_impact: 'Citations',
   engagement: 'Engagement',
-  recency_velocity: 'Recency',
+  recency: 'Recency',
   source_authority: 'Source authority',
   your_interests: 'Your interests',
 }
@@ -51,7 +49,6 @@ export const useScoreBreakdown = (itemId: string, enabled: boolean) => {
         score: data.composite_score,
         signals,
         computed_at: data.computed_at,
-        is_trending: data.is_trending,
       }
     },
     enabled,
@@ -123,10 +120,8 @@ export interface ScoringHealth {
   total_items: number
   scored_items: number
   unscored_items: number
-  trending_items: number
   average_score: number
   scoring_queue_depth: number
-  trending_percentage: number
 }
 
 export const useScoringHealth = () => {

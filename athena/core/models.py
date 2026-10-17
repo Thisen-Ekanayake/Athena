@@ -80,7 +80,6 @@ class ContentItem(Base):
     score = Column(Float, default=0.0)
     score_version = Column(Integer, nullable=True)  # FK → scoring_config.version
     scored_at = Column(DateTime(timezone=True), nullable=True)
-    is_trending = Column(Boolean, default=False)
     category_rank = Column(Integer, nullable=True)
     # Citations gained over the last 7 and 30 days, from metric snapshots (athena.pipeline.momentum); papers only
     citation_gain_7d = Column(Integer, nullable=True)

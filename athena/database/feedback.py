@@ -1,7 +1,7 @@
 """
 Users' reactions to feed items (ROADMAP P1): 👍 (up), 👎 (down) and "not interested" (hide).
 
-One reaction per item. Hidden items leave the user's feed, Home, Trending and Clusters (search and saved lists still
+One reaction per item. Hidden items leave the user's feed, Home, Rising and Clusters (search and saved lists still
 show them). All three feed the interest profile (athena.pipeline.interests), together with saved items.
 """
 from __future__ import annotations

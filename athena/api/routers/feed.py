@@ -47,7 +47,6 @@ def _build_feed_item(item: ContentItem, related_count: int = 0) -> dict:
         "published_at": item.published_at.isoformat() if item.published_at else None,  # noqa: E501
         "citation_count": item.citation_count or 0,
         "score": round(item.score, 4) if item.score else 0.0,
-        "is_trending": item.is_trending or False,
         "category_rank": item.category_rank,
         "summary": item.summary,
         "summary_status": item.summary_status.value if item.summary_status and hasattr(item.summary_status, 'value') else str(item.summary_status) if item.summary_status else None,  # noqa: E501
@@ -66,7 +65,7 @@ def _build_feed_item(item: ContentItem, related_count: int = 0) -> dict:
 
 @router.get("/feed", response_model=FeedResponse)
 def get_feed(
-    sort: str = Query("score", pattern="^(score|date|trending|foryou)$"),
+    sort: str = Query("score", pattern="^(score|date|foryou)$"),
     category: str | None = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=50),
@@ -125,9 +124,6 @@ def get_feed(
         query = query.order_by(desc(ContentItem.score))
     elif sort == "date":
         query = query.order_by(desc(ContentItem.published_at))
-    elif sort == "trending":
-        query = query.where(ContentItem.is_trending.is_(True))
-        query = query.order_by(desc(ContentItem.score))
 
     # ── Count total ─────────────────────────────────────
     count_query = select(func.count()).select_from(query.subquery())

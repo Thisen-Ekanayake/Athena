@@ -6,9 +6,7 @@ Covers:
 - Engagement extraction per platform
 - Recency exponential decay formula
 - Weight application and score clipping
-- Trending boost logic
 - Composite score computation
-- Velocity score computation
 - Authority score pass-through
 """
 import math
@@ -19,11 +17,8 @@ from athena.pipeline.signals import (
     compute_citation_score,
     compute_engagement_score,
     compute_recency_score,
-    compute_velocity_score,
     compute_authority_score,
     compute_composite_score,
-    apply_trending_boost,
-    check_trending_criteria,
     _extract_engagement_signals,
 )
 
@@ -176,41 +171,6 @@ class TestRecencyScore:
 
 
 # ─────────────────────────────────────────────────────────
-# Velocity Score Tests
-# ─────────────────────────────────────────────────────────
-
-class TestVelocityScore:
-    def test_no_change(self):
-        assert compute_velocity_score(10, 0.5, 10, 0.5) == 0.0
-
-    def test_citation_increase(self):
-        score = compute_velocity_score(60, 0.5, 10, 0.5)
-        assert score > 0.0
-
-    def test_engagement_increase(self):
-        score = compute_velocity_score(10, 0.8, 10, 0.5)
-        assert score > 0.0
-
-    def test_max_velocity(self):
-        score = compute_velocity_score(100, 1.0, 0, 0.0)
-        assert score == pytest.approx(1.0, abs=0.01)
-
-    def test_negative_delta_treated_as_zero(self):
-        """Decreasing metrics shouldn't produce negative velocity."""
-        score = compute_velocity_score(5, 0.3, 10, 0.5)
-        assert score == 0.0
-
-    def test_60_40_split(self):
-        """Citation velocity is weighted 60%, engagement 40%."""
-        # Only citation change
-        s_cit = compute_velocity_score(50, 0.0, 0, 0.0)
-        # Only engagement change
-        s_eng = compute_velocity_score(0, 0.3, 0, 0.0)
-        # Citation should contribute more per unit
-        assert s_cit > s_eng
-
-
-# ─────────────────────────────────────────────────────────
 # Authority Score Tests
 # ─────────────────────────────────────────────────────────
 
@@ -264,43 +224,6 @@ class TestCompositeScore:
         """A signal without a weight adds nothing to the score."""
         assert compute_composite_score(0.5, 0.5, 0.5, 0.5, {}) == 0.0
         assert compute_composite_score(0.5, 1.0, 0.5, 0.5, {"engagement": 0.4}) == pytest.approx(0.4)
-
-
-# ─────────────────────────────────────────────────────────
-# Trending Tests
-# ─────────────────────────────────────────────────────────
-
-class TestTrending:
-    def test_boost_not_applied_when_not_trending(self):
-        assert apply_trending_boost(0.8, False) == 0.8
-
-    def test_boost_applied(self):
-        assert apply_trending_boost(0.8, True) == 0.88
-
-    def test_boost_capped_at_095(self):
-        assert apply_trending_boost(0.92, True) == 0.95
-
-    def test_boost_exactly_at_cap(self):
-        assert apply_trending_boost(0.87, True) == 0.95
-
-    def test_trending_criteria_met(self):
-        published = datetime.now(timezone.utc) - timedelta(days=5)
-        assert check_trending_criteria(0.8, published, 5) is True
-
-    def test_trending_low_velocity(self):
-        published = datetime.now(timezone.utc) - timedelta(days=5)
-        assert check_trending_criteria(0.5, published, 5) is False
-
-    def test_trending_too_old(self):
-        published = datetime.now(timezone.utc) - timedelta(days=60)
-        assert check_trending_criteria(0.8, published, 5) is False
-
-    def test_trending_too_few_signals(self):
-        published = datetime.now(timezone.utc) - timedelta(days=5)
-        assert check_trending_criteria(0.8, published, 1) is False
-
-    def test_trending_none_published_at(self):
-        assert check_trending_criteria(0.8, None, 5) is False
 
 
 # ─────────────────────────────────────────────────────────

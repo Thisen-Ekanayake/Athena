@@ -61,7 +61,6 @@ export interface FeedItem {
   score: number
   published_at: string
   category: string
-  is_trending: boolean
   authors?: string[]
   citation_count?: number
   source: {

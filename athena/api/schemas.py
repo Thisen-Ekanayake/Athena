@@ -34,7 +34,6 @@ class FeedItemResponse(BaseModel):
     published_at: Optional[datetime] = None
     citation_count: int = 0
     score: float = 0.0
-    is_trending: bool = False
     category_rank: Optional[int] = None
     summary: Optional[str] = None
     summary_status: Optional[str] = None
@@ -84,7 +83,6 @@ class ScoreBreakdownResponse(BaseModel):
     item_id: str
     title: str
     composite_score: float
-    is_trending: bool
     category_rank: Optional[int] = None
     signals: dict  # signal_name -> SignalScore dict
     computed_at: Optional[str] = None

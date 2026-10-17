@@ -13,7 +13,7 @@ const CATEGORY_LABEL: Record<string, string> = { paper: 'Papers', company_blog: 
 const SIGNAL_LABEL: Record<BaseSignal, { label: string; hint: string }> = {
   citation: { label: 'Citations', hint: 'How often it is cited (papers)' },
   engagement: { label: 'Engagement', hint: 'Votes, comments, stars where a source has them' },
-  recency: { label: 'Recency', hint: 'How new it is, and how fast it gathers citations' },
+  recency: { label: 'Recency', hint: 'How new it is' },
   authority: { label: 'Source authority', hint: 'How much the source is trusted' },
 }
 

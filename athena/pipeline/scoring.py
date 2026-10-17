@@ -4,7 +4,7 @@ Athena Layer 3 — Scoring Worker
 Celery tasks for computing, persisting, and updating content scores.
 Consumes items from the Redis scoring queue (emitted after Layer 2 embedding).
 """
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from uuid import UUID
 
@@ -15,19 +15,15 @@ from sqlalchemy import select, update, text
 
 from athena.database.db import SessionLocal
 from athena.core.models import (
-    ContentItem, ContentScore, ScoringConfig, MetricSnapshot, Source
+    ContentItem, ContentScore, ScoringConfig, Source
 )
 from athena.core.redis_client import get_redis
 from athena.pipeline.signals import (
     compute_citation_score,
     compute_engagement_score,
     compute_recency_score,
-    compute_velocity_score,
     compute_authority_score,
     compute_composite_score,
-    apply_trending_boost,
-    check_trending_criteria,
-    _extract_engagement_signals,
 )
 from athena.pipeline.mlflow_utils import mlflow_run, ml_log
 
@@ -129,40 +125,10 @@ def engagement_raw(signals: list) -> float:
     return sum(signals) / len(signals) if signals else 0.0
 
 
-def _get_prev_snapshot(item_id, session) -> tuple | None:
-    """(citations, raw engagement) from the latest metric snapshot at least 7 days old, or None without one."""
-    seven_days_ago = datetime.now(timezone.utc) - timedelta(days=7)
-    prev = session.execute(
-        select(MetricSnapshot)
-        .where(MetricSnapshot.item_id == item_id)
-        .where(MetricSnapshot.snapshot_date <= seven_days_ago)
-        .order_by(MetricSnapshot.snapshot_date.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-
-    if prev:
-        return prev.citation_count, prev.engagement_raw
-    return None
-
-
-def _week_ago_metrics(item, session, eng_now: float) -> tuple:
-    """What an item had a week ago. Without a snapshot from then, an item younger than a week had nothing, and
-    for an older one there is nothing to compare with, so it counts as unchanged (not as gaining everything)."""
-    prev = _get_prev_snapshot(item.id, session)
-    if prev is not None:
-        return prev
-    published = item.published_at
-    if published is not None and published.tzinfo is None:
-        published = published.replace(tzinfo=timezone.utc)
-    if published is not None and datetime.now(timezone.utc) - published < timedelta(days=7):
-        return 0, 0.0
-    return item.citation_count or 0, eng_now
-
-
 def score_item(item_id: str, session=None) -> Optional[float]:
     """
     Full scoring pipeline for a single item.
-    Computes all 5 signals, composite score, trending status, and persists results.
+    Computes the 4 signals and the composite score, and persists them.
     """
     close_session = False
     if session is None:
@@ -194,39 +160,19 @@ def score_item(item_id: str, session=None) -> Optional[float]:
         # 2. Engagement
         source_url = source.url if source else ""
         engagement = compute_engagement_score(metadata, source_url)
-        engagement_signals = _extract_engagement_signals(metadata, source_url)
 
         # 3. Recency
         half_life = weights.get("half_life_days", 30)
         recency = compute_recency_score(item.published_at, half_life)
 
-        # 4. Velocity (from metric snapshots). Compared like with like: the raw engagement mean that snapshots
-        # store, so an item without engagement data has none to gain (the 0.5 neutral score is not a reading).
-        eng_now = engagement_raw(engagement_signals)
-        prev_citations, prev_engagement = _week_ago_metrics(item, session, eng_now)
-        velocity = compute_velocity_score(
-            item.citation_count or 0, eng_now,
-            prev_citations, prev_engagement,
-        )
-
-        # Combined recency signal = 60% recency + 40% velocity
-        recency_combined = 0.6 * recency + 0.4 * velocity
-
-        # 5. Authority
+        # 4. Authority
         authority = compute_authority_score(source.authority_score if source else None)
 
-        # 6. Composite
-        composite = compute_composite_score(citation, engagement, recency_combined, authority, weights)
+        # 5. Composite. How fast a paper gathers citations is its citation momentum (athena.pipeline.momentum,
+        # the Rising page), not part of the score.
+        final_score = compute_composite_score(citation, engagement, recency, authority, weights)
 
-        # 7. Trending check
-        is_trending = check_trending_criteria(
-            velocity, item.published_at, len(engagement_signals)
-        )
-
-        # 8. Apply trending boost
-        final_score = apply_trending_boost(composite, is_trending)
-
-        # 9. Persist ContentScore
+        # 6. Persist ContentScore
         version = weights.get("version", 1)
         now = datetime.now(timezone.utc)
 
@@ -234,7 +180,7 @@ def score_item(item_id: str, session=None) -> Optional[float]:
             item_id=item.id,
             citation_score=citation,
             engagement_score=engagement,
-            recency_score=recency_combined,
+            recency_score=recency,
             authority_score=authority,
             composite_score=final_score,
             score_version=version,
@@ -242,24 +188,23 @@ def score_item(item_id: str, session=None) -> Optional[float]:
         )
         session.add(score_record)
 
-        # 10. Update ContentItem
+        # 7. Update ContentItem
         session.execute(
             update(ContentItem).where(ContentItem.id == item.id).values(
                 score=final_score,
                 score_version=version,
                 scored_at=now,
-                is_trending=is_trending,
             )
         )
         session.commit()
 
         # Enqueue for summarisation
-        enqueue_summary_tier(str(item.id), final_score, is_trending)
+        enqueue_summary_tier(str(item.id), final_score)
 
         logger.info(
             f"Scored item {item_id}: composite={final_score:.3f} "
             f"(C={citation:.2f} E={engagement:.2f} "
-            f"R={recency_combined:.2f} A={authority:.2f}) trending={is_trending}"
+            f"R={recency:.2f} A={authority:.2f})"
         )
         return final_score
 
@@ -341,7 +286,7 @@ def process_scoring_queue():
             "scored_count": len(scores),
             **({"mean_score": float(np.mean(scores)),
                 "max_score": float(np.max(scores)),
-                "trending_count": sum(1 for s in scores if s >= 0.75)} if scores else {}),
+                "high_score_count": sum(1 for s in scores if s >= 0.75)} if scores else {}),
         })
 
 
@@ -380,7 +325,7 @@ def score_all_items():
             **({"mean_score": float(np.mean(scores)),
                 "median_score": float(np.median(scores)),
                 "p90_score": float(np.percentile(scores, 90)),
-                "trending_count": sum(1 for s in scores if s >= 0.75)} if scores else {}),
+                "high_score_count": sum(1 for s in scores if s >= 0.75)} if scores else {}),
         })
         logger.info(f"Full re-score complete. {total} items processed.")
 
@@ -427,7 +372,7 @@ def score_new_item(item_id: str):
     update_category_ranks()
 
 
-def enqueue_summary_tier(item_id: str, score: float, is_trending: bool):
+def enqueue_summary_tier(item_id: str, score: float):
     """Emits the item to the correct Celery queue based on Layer 3 score.
 
     An item whose summary is already complete is left alone: rescoring (every six hours for recency) must not
@@ -441,7 +386,7 @@ def enqueue_summary_tier(item_id: str, score: float, is_trending: bool):
         status = session.execute(select(ContentItem.summary_status).where(ContentItem.id == item_uuid)).scalar()
         if status == SummaryStatus.COMPLETE:
             return
-        if is_trending or score >= 0.75:
+        if score >= 0.75:
             tier, new_status = "summary_urgent", None
         elif score >= 0.40:
             tier, new_status = "pending (Tier 2 batch)", SummaryStatus.PENDING

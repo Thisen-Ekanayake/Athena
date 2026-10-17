@@ -41,7 +41,7 @@ def test_kept_routes_exist(method, path):
     assert (method, path) in _routes()
 
 
-@pytest.mark.parametrize("path", ["/api/v1/items/top/{category}", "/api/v1/items/trending"])
+@pytest.mark.parametrize("path", ["/api/v1/items/top/{category}", "/api/v1/items/trending", "/api/v1/trending"])
 def test_unreachable_routes_are_gone(path):
     assert path not in {p for _, p in _routes()}
 
