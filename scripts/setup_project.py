@@ -25,7 +25,7 @@ def setup():
         url="https://export.arxiv.org/api/query",
         type=SourceType.API,
         category=SourceCategory.PAPER,
-        fetch_config={"query": "cat:cs.AI OR cat:cs.LG", "max_results": 20}
+        fetch_config={}  # athena.scrapers.arxiv's query and per-sync limit; a "query" or "max_results" replaces them
     ))
 
     # OpenAI Blog

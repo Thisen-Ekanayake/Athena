@@ -295,8 +295,8 @@ async def _crawl_source_async(source_id: str, is_retry: bool = False) -> tuple[i
             # Parse per item, so one record failing validation is quarantined instead of failing the source
             if isinstance(scraper, ArXivScraper):
                 from athena.database.operations import latest_published
-                from athena.scrapers.arxiv import ARXIV_MAX_PER_SYNC
-                raw_items = await scraper.fetch(since=latest_published(source.id), max_results=ARXIV_MAX_PER_SYNC)
+                from athena.scrapers.arxiv import sync_args
+                raw_items = await scraper.fetch(**sync_args(source.fetch_config, latest_published(source.id)))
             else:
                 raw_items = await scraper.fetch(source.url)
             # Scrapers that skip pages already stored say how many they listed; the rest return all of them
