@@ -9,7 +9,7 @@ celery[redis]
 redis
 python-dotenv
 loguru
-newspaper3k
+newspaper4k
 lxml_html_clean
 lxml
 arxiv

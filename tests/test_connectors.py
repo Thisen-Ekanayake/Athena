@@ -172,6 +172,47 @@ class TestSemanticScholarEnricher:
         assert result is None
 
 
+class TestPlaywrightScraperParse:
+    """newspaper4k pulls the article body out of the page Playwright rendered, without fetching anything."""
+
+    SOURCE = "6f1c2a4e-0b7d-4c55-9a51-3d2e8f9b1c07"
+
+    PAGE = """<html><head><title>Scaling laws for sparse models</title>
+    <meta name="author" content="Ada Lovelace"></head><body>
+    <nav>Home | Research | Blog</nav>
+    <article><h1>Scaling laws for sparse models</h1>
+    <p>We study how mixture-of-experts language models scale with the number of experts and the compute budget.
+    Across five orders of magnitude, loss follows a power law in both, and the best number of experts grows.</p>
+    <p>These results suggest sparse models should be trained with more experts as budgets grow.</p>
+    </article><footer>Copyright 2026</footer></body></html>"""
+
+    def _raw(self, page_html=PAGE, authors=None):
+        return {"link": "https://lab.example.com/blog/sparse-scaling", "title": "Scaling laws for sparse models",
+                "page_html": page_html, "authors": authors or [], "published_at": datetime(2026, 10, 1),
+                "feed_url": "https://lab.example.com/feed.xml"}
+
+    def test_parse_extracts_the_body_offline(self):
+        from athena.scrapers.scraping import PlaywrightScraper
+        with patch("socket.socket", side_effect=AssertionError("parse() used the network")):
+            item = PlaywrightScraper(self.SOURCE, source_category="company").parse(self._raw())
+        assert item.abstract.startswith("We study how mixture-of-experts language models scale")
+        assert "Copyright" not in item.abstract and "Home | Research" not in item.abstract
+        assert item.authors == ["Ada Lovelace"]  # the feed had none, so the page's byline is used
+        assert item.category == "company_blog"
+        assert item.extra_data == {"feed_link": "https://lab.example.com/feed.xml", "full_text_scraped": True}
+
+    def test_parse_keeps_the_feed_authors(self):
+        from athena.scrapers.scraping import PlaywrightScraper
+        item = PlaywrightScraper(self.SOURCE).parse(self._raw(authors=["Feed Author"]))
+        assert item.authors == ["Feed Author"]
+        assert item.category == "community_blog"
+
+    def test_parse_rejects_a_page_without_text(self):
+        from athena.scrapers.scraping import PlaywrightScraper
+        with pytest.raises(ValueError, match="No text content"):
+            PlaywrightScraper(self.SOURCE).parse(self._raw(page_html="<html><body><nav>Home</nav></body></html>"))
+
+
 # ─────────────────────────────────────────────────────────────
 # FAILURE TESTS
 # ─────────────────────────────────────────────────────────────
