@@ -20,7 +20,7 @@ Papers without an open PDF get their citing sentences from Semantic
 Scholar's contexts instead (no sections, so no chunks).
 
 No GPU work happens here: chunks wait for the embedder and citing sentences
-for the classifier (``athena.evolution.gpu``).
+for the classifier (``athena.evolution.model_lane``).
 """
 from __future__ import annotations
 

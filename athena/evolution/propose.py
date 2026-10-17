@@ -449,7 +449,7 @@ def run_refinement(proposal_id: str, r=None) -> str:
     """The Celery side: start (or reuse) the 9B, refine a pending proposal, store the answer."""
     from athena.core.redis_client import get_redis
     from athena.evolution.classify import Classifier
-    from athena.evolution.gpu import chat_server  # the worker image only
+    from athena.evolution.model_lane import chat_server  # the worker image only
 
     r = r or get_redis(decode_responses=True)
     proposal = load(r, proposal_id)

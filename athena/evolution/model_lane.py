@@ -1,5 +1,5 @@
 """
-The GPU lane: one model on the 8 GB card at a time.
+The model lane (the "GPU lane"): one model on the 8 GB card at a time.
 
 Qwen3-Embedding-8B (4.7 GB) and Qwen3.5-9B (5.7 GB) do not fit together, so
 a lane run asks the 9B to label every pending citing sentence and gap
@@ -303,7 +303,7 @@ def label_themes() -> int:
     return done
 
 
-def run_gpu_lane(embed: bool = True, classify: bool = True) -> dict:
+def run_lane(embed: bool = True, classify: bool = True) -> dict:
     """Everything pending, one model at a time: the 9B, the embedder, themes on the CPU, then the 9B names them."""
     summary = {}
     if classify:

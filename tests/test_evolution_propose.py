@@ -205,7 +205,7 @@ class TestStorage:
         assert p.load(r, "../etc") is None
 
     def test_run_refinement_skips_cancelled_and_stores_failures(self, monkeypatch):
-        import athena.evolution.gpu as gpu
+        import athena.evolution.model_lane as lane
 
         r = FakeRedis()
         p.save(r, {"id": "d" * 32, "refine": {"status": "cancelled"}})
@@ -214,7 +214,7 @@ class TestStorage:
         def broken_server():
             raise RuntimeError("out of VRAM")
 
-        monkeypatch.setattr(gpu, "chat_server", broken_server)
+        monkeypatch.setattr(lane, "chat_server", broken_server)
         p.save(r, PROPOSAL | {"id": "e" * 32, "refine": {"status": "pending", "deadline": 9e9}})
         assert p.run_refinement("e" * 32, r) == "failed"
         assert p.load(r, "e" * 32)["refine"] == {"status": "failed", "error": "out of VRAM"}
@@ -228,7 +228,7 @@ class TestBuildSearchTopic:
 
     def patch(self, monkeypatch, embed):
         import athena.evolution.build as build
-        import athena.evolution.gpu as gpu
+        import athena.evolution.model_lane as lane
 
         def fake_build(slug, stage_status="building", status_after="ready", snapshot=True):
             assert snapshot is False  # the search build takes one snapshot, at its end
@@ -239,7 +239,7 @@ class TestBuildSearchTopic:
         monkeypatch.setattr(build, "take_snapshot", lambda slug, reason: self.snapshots.append(reason))
         monkeypatch.setattr(build.db, "set_topic_status",
                             lambda slug, status, detail=None, stats=None: self.statuses.append((status, stats)))
-        monkeypatch.setattr(gpu, "embed_abstracts", embed)
+        monkeypatch.setattr(lane, "embed_abstracts", embed)
         return build
 
     def test_map_first_then_rebuilt_with_embeddings(self, monkeypatch):

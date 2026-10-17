@@ -95,7 +95,7 @@ def build_search_topic(slug: str, stage_status: str = "building", snapshot: bool
     """
     summary = build_topic(slug, stage_status=stage_status, status_after="refining", snapshot=False)
     try:
-        from athena.evolution.gpu import embed_abstracts  # numpy and Qdrant: the worker image only
+        from athena.evolution.model_lane import embed_abstracts  # numpy and Qdrant: the worker image only
         db.set_topic_status(slug, "refining", "Embedding the papers' abstracts")
         embedded = embed_abstracts()
     except Exception as exc:

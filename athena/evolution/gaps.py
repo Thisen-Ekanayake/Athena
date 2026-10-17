@@ -14,7 +14,7 @@ in one theme. Each theme gets:
   was first stated before them, ``new`` when it has only been stated in
   them, and ``quiet`` when it has not been stated in them.
 
-Pure functions; ``athena.evolution.gpu`` feeds them vectors from Qdrant.
+Pure functions; ``athena.evolution.model_lane`` feeds them vectors from Qdrant.
 """
 from __future__ import annotations
 

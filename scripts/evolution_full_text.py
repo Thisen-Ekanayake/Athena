@@ -64,8 +64,8 @@ def main():
             result = tasks.run_gpu_lane.apply_async(args=[embed, classify], queue="evolution")
             print(f"GPU lane queued as task {result.id}")
             return
-        from athena.evolution.gpu import run_gpu_lane
-        summary = run_gpu_lane(embed=embed, classify=classify)
+        from athena.evolution.model_lane import run_lane
+        summary = run_lane(embed=embed, classify=classify)
         print("\nGPU lane:")
         for key, value in summary.items():
             print(f"  {key:24s} {value}")

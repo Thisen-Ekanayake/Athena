@@ -236,9 +236,10 @@ class TestExternalEndpoints:
         import numpy as np
         import pytest
 
-        from athena.evolution import classify, gpu
+        from athena.evolution import classify
+        from athena.evolution import model_lane as lane
         settings = {"EVOLUTION_EMBED_MODEL_NAME": "text-embedding-3-large", "EVOLUTION_EMBED_DIMENSIONS": "1024"}
-        for module in (gpu, classify):
+        for module in (lane, classify):
             monkeypatch.setattr(module, "get_setting", lambda key, default="": settings.get(key, default))
         sizes = iter([3072, 768])
         bodies = []
@@ -249,17 +250,17 @@ class TestExternalEndpoints:
             return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0] * n}]})
 
         http = httpx.Client(transport=httpx.MockTransport(handler))
-        vec = gpu._embed(http, "https://api.example.com", ["a gap"])
+        vec = lane._embed(http, "https://api.example.com", ["a gap"])
         assert vec.shape == (1, 1024) and np.isclose(np.linalg.norm(vec[0]), 1.0)
         assert bodies[0] == {"input": ["a gap"], "model": "text-embedding-3-large", "dimensions": 1024}
         with pytest.raises(ValueError, match="768 dimensions"):
-            gpu._embed(http, "https://api.example.com", ["a gap"])
+            lane._embed(http, "https://api.example.com", ["a gap"])
 
     def test_external_text_is_cut_by_words(self, monkeypatch):
-        from athena.evolution import gpu
-        monkeypatch.setattr(gpu, "is_local", lambda: False)
-        text, cut = gpu._fit(None, "https://api.example.com", "word " * 700)
-        assert cut and len(text.split()) == gpu.EXTERNAL_MAX_WORDS
+        from athena.evolution import model_lane as lane
+        monkeypatch.setattr(lane, "is_local", lambda: False)
+        text, cut = lane._fit(None, "https://api.example.com", "word " * 700)
+        assert cut and len(text.split()) == lane.EXTERNAL_MAX_WORDS
 
 
 def test_theme_labels_are_short_or_refused():
