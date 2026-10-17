@@ -114,3 +114,28 @@ export const useUpdateScoring = () => {
     },
   })
 }
+
+// ── Feed mix (admin) ──────────────────────────────────────────────────
+
+export interface FeedSettings {
+  /** The most of a Score or For-you page one source may fill, 0–1 (1: no cap) */
+  source_share: number
+  default_source_share: number
+}
+
+export const useFeedSettings = () =>
+  useQuery({
+    queryKey: ['feed-settings'],
+    queryFn: async () => (await apiClient.get<FeedSettings>('/settings/feed')).data,
+  })
+
+export const useUpdateFeedSettings = () => {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (source_share: number) => (await apiClient.put<FeedSettings>('/settings/feed', { source_share })).data,
+    onSuccess: (data) => {
+      queryClient.setQueryData(['feed-settings'], data)
+      queryClient.invalidateQueries({ queryKey: ['feed'] })
+    },
+  })
+}

@@ -203,7 +203,9 @@ def test_health_check():
     assert response.json()["status"] == "ok"
 
 
-def test_feed_endpoint(mock_db):
+def test_feed_endpoint(mock_db, monkeypatch):
+    from athena.api.routers import feed
+    monkeypatch.setattr(feed, "get_setting", lambda key, default="": "1")  # the plain order: the mock runs no SQL
     response = client.get("/api/v1/feed?sort=score&limit=10")
     assert response.status_code == 200
     data = response.json()

@@ -3,7 +3,10 @@ Athena Layer 5 — Feed Router
 
 GET /api/v1/feed — paginated, sorted, filtered content feed.
 """
+import heapq
+import math
 from datetime import datetime, timedelta
+from typing import Callable, Hashable, Sequence, TypeVar
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -19,6 +22,7 @@ from athena.api.config import settings
 from athena.api.schemas import (
     FeedResponse,
 )
+from athena.core.config_store import get_setting
 from athena.core.models import (
     ContentItem, Source, Cluster, ItemLink, User,
 )
@@ -26,6 +30,71 @@ from athena.database import feedback, personal
 from athena.pipeline import interests
 
 router = APIRouter(prefix="/api/v1", tags=["Feed"])
+
+# The most of a page one source may fill in the Score and For-you orders (Settings → Scoring); 1 turns it off.
+FEED_SOURCE_SHARE = "FEED_SOURCE_SHARE"
+DEFAULT_SOURCE_SHARE = 0.25
+
+T = TypeVar("T")
+
+
+def source_share() -> float:
+    """The per-source cap as a share of a page, in (0, 1]; a value that isn't one gives the default."""
+    try:
+        share = float(get_setting(FEED_SOURCE_SHARE, str(DEFAULT_SOURCE_SHARE)))
+    except ValueError:
+        return DEFAULT_SOURCE_SHARE
+    return min(1.0, share) if share > 0 else DEFAULT_SOURCE_SHARE
+
+
+def diversify(rows: Sequence[T], source_of: Callable[[T], Hashable], limit: int, share: float, upto: int) -> list[T]:
+    """The first ``upto`` of ``rows`` (best first), reordered so no source fills more than ``share`` of a page.
+
+    The order is built a page (``limit`` rows) at a time: each page takes rows in order, at most
+    ``max(1, floor(share * limit))`` from one source, and a row it skips waits for the next page in its place. A page
+    that runs out of other sources takes the waiting rows, so no row is lost and the total stays the same. Within a
+    source the order never changes. Every page boundary depends on ``limit``, so pages of one size fit together.
+    """
+    cap = max(1, math.floor(share * limit))
+    queues: dict[Hashable, list[int]] = {}
+    for i, row in enumerate(rows):
+        queues.setdefault(source_of(row), []).append(i)
+    heads = {s: 0 for s in queues}  # each source's next row (index into its queue)
+
+    def head(s):
+        return queues[s][heads[s]]
+
+    out: list[int] = []
+    upto = min(upto, len(rows))
+    while len(out) < upto:
+        size = min(limit, upto - len(out))
+        taken: dict[Hashable, int] = {}
+        live = [(head(s), s) for s in queues if heads[s] < len(queues[s])]
+        heapq.heapify(live)
+        held = []  # sources at the cap for this page, in case the page can't fill without them
+        filled = 0
+        while filled < size and live:
+            _, s = heapq.heappop(live)
+            if taken.get(s, 0) >= cap:
+                held.append(s)
+                continue
+            out.append(head(s))
+            heads[s] += 1
+            taken[s] = taken.get(s, 0) + 1
+            filled += 1
+            if heads[s] < len(queues[s]):
+                heapq.heappush(live, (head(s), s))
+        if filled < size:  # only capped sources are left: take their rows in order
+            rest = [(head(s), s) for s in held if heads[s] < len(queues[s])]
+            heapq.heapify(rest)
+            while filled < size and rest:
+                _, s = heapq.heappop(rest)
+                out.append(head(s))
+                heads[s] += 1
+                filled += 1
+                if heads[s] < len(queues[s]):
+                    heapq.heappush(rest, (head(s), s))
+    return [rows[i] for i in out]
 
 
 def _build_feed_item(item: ContentItem, related_count: int = 0) -> dict:
@@ -84,7 +153,8 @@ def get_feed(
     The primary endpoint for the main feed. Items the user marked "not interested" are left out of every order;
     ``foryou`` orders by the score blended with the user's interests (athena.pipeline.interests), and falls back to
     the score (``personalised`` false) while there is nothing to learn from or personalisation is off.
-    ``unread`` leaves out what the user marked read.
+    ``unread`` leaves out what the user marked read. In the score and For-you orders no source fills more than
+    FEED_SOURCE_SHARE of a page (diversify), unless the feed is one source's.
     """
     filters = f"{category}:{cluster_id}:{source_id}:{date_from}:{date_to}:{date_range}"
     conditions = _conditions(category, cluster_id, source_id, date_from, date_to, date_range)
@@ -93,13 +163,14 @@ def get_feed(
         conditions.append(feedback.not_hidden(user.id))
     if unread:
         conditions.append(personal.unread_filter(user.id))
+    share = 1.0 if source_id else source_share()
 
     if sort == "foryou":
         profile = interests.active_profile(db, user.id)
         if profile is not None:
             try:
                 ranking = interests.ranked(db, r, user.id, profile, conditions, f"{filters}:{unread}")
-                return _for_user(db, user, _ranked_page(db, ranking["order"], page, limit))
+                return _for_user(db, user, _ranked_page(db, ranking["order"], page, limit, share))
             except Exception as exc:  # Qdrant down: the plain score order below
                 logger.warning(f"For you: falling back to the score for {user.id}: {exc}")
         sort = "score"
@@ -107,10 +178,16 @@ def get_feed(
     # ── Cache check ─────────────────────────────────────
     # The user only joins the key when the page depends on them; each item's own state is added afterwards.
     mine = f":u{user.id}:{interests.version(r, user.id)}" if unread or hides else ""
-    cache_key = f"feed:{sort}:{page}:{limit}:{filters}{mine}"
+    capped = sort == "score" and share < 1
+    cache_key = f"feed:{sort}:{page}:{limit}:{filters}{f':cap{share}' if capped else ''}{mine}"
     cached = cache_get(r, cache_key)
     if cached:
         return _for_user(db, user, cached)
+
+    if capped:
+        response = _capped_page(db, conditions, page, limit, share)
+        cache_set(r, cache_key, response, settings.CACHE_FEED_SCORE_TTL if not unread else 60)
+        return _for_user(db, user, response)
 
     # ── Build query ─────────────────────────────────────
     query = select(ContentItem).join(
@@ -194,13 +271,37 @@ def _feed_items(db: Session, items: list) -> list[dict]:
     return [_build_feed_item(item, related_counts.get(item.id, 0)) for item in items]
 
 
-def _ranked_page(db: Session, order: list, page: int, limit: int) -> dict:
-    """One page of a For-you order ([[id, for_you, interest rank], ...]), each card with its interest rank."""
-    rows = order[(page - 1) * limit:page * limit]
-    ids = [UUID(row[0]) for row in rows]
+def _items_in_order(db: Session, ids: list) -> list:
+    """The items with these ids, in this order (an id no longer there is skipped)."""
     found = {i.id: i for i in db.execute(select(ContentItem).where(ContentItem.id.in_(ids))).scalars().all()} \
         if ids else {}
-    items = [found[i] for i in ids if i in found]
+    return [found[i] for i in ids if i in found]
+
+
+def _capped_page(db: Session, conditions: list, page: int, limit: int, share: float) -> dict:
+    """One page of the score order with each source's share capped (diversify)."""
+    rows = db.execute(select(ContentItem.id, ContentItem.source_id).where(*conditions)
+                      .order_by(desc(ContentItem.score), ContentItem.id)).all()
+    picked = diversify(rows, lambda row: row[1], limit, share, page * limit)[(page - 1) * limit:]
+    return {
+        "items": _feed_items(db, _items_in_order(db, [row[0] for row in picked])),
+        "pagination": {"page": page, "limit": limit, "total": len(rows), "has_next": page * limit < len(rows)},
+        "personalised": False,
+    }
+
+
+def _ranked_page(db: Session, order: list, page: int, limit: int, share: float = 1.0) -> dict:
+    """One page of a For-you order ([[id, for_you, interest rank], ...]), each card with its interest rank, and
+    each source's share capped (diversify) when ``share`` is under 1."""
+    if share < 1 and order:
+        ids = [UUID(row[0]) for row in order]
+        source = dict(db.execute(select(ContentItem.id, ContentItem.source_id)
+                                 .where(ContentItem.id.in_(ids))).all())
+        rows = diversify(order, lambda row: source.get(UUID(row[0])), limit, share, page * limit)
+        rows = rows[(page - 1) * limit:]
+    else:
+        rows = order[(page - 1) * limit:page * limit]
+    items = _items_in_order(db, [UUID(row[0]) for row in rows])
     interest = {UUID(row[0]): row[2] for row in rows}
     return {
         "items": [card | {"interest": interest.get(item.id)} for card, item in zip(_feed_items(db, items), items)],

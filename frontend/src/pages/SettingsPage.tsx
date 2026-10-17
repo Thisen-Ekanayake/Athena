@@ -12,6 +12,7 @@ import { SyncLog } from '../components/layout/SyncLog'
 import { useStartSync } from '../api/queries/sync'
 import { SharingSettings } from '../features/evolution/SharingSettings'
 import { ModelsCard } from '../features/settings/ModelsCard'
+import { FeedMixSettings } from '../features/settings/FeedMixSettings'
 import { ScoringSettings } from '../features/settings/ScoringSettings'
 import { PersonalisationSettings } from '../features/personalisation/PersonalisationSettings'
 import { NotificationsSettings } from '../features/inbox/NotificationsSettings'
@@ -98,7 +99,7 @@ export function SettingsPage() {
           {active === 'keys' && <KeysSection />}
           {active === 'users' && <UsersSection />}
           {active === 'sharing' && <SharingSettings />}
-          {active === 'scoring' && <ScoringSettings />}
+          {active === 'scoring' && <div className="grid gap-6"><ScoringSettings /><FeedMixSettings /></div>}
           {active === 'account' && <AccountSection />}
           {active === 'notifications' && <NotificationsSettings />}
           {active === 'personalisation' && <PersonalisationSettings />}

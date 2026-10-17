@@ -278,3 +278,33 @@ def update_scoring(body: ScoringUpdate, db: Session = Depends(get_db), r=Depends
 def _queue_rescore() -> None:
     from athena.pipeline.scoring import score_all_items
     score_all_items.delay()
+
+
+# ── Feed ────────────────────────────────────────────────
+
+class FeedSettingsUpdate(BaseModel):
+    source_share: float = Field(..., gt=0, le=1)
+
+
+def _feed_settings(db: Session) -> dict:
+    from athena.api.routers.feed import DEFAULT_SOURCE_SHARE, FEED_SOURCE_SHARE
+    row = db.get(AppSetting, FEED_SOURCE_SHARE)
+    raw = row.value if row and row.value else os.getenv(FEED_SOURCE_SHARE, "")
+    try:
+        share = float(raw) if raw else DEFAULT_SOURCE_SHARE
+    except ValueError:
+        share = DEFAULT_SOURCE_SHARE
+    return {"source_share": share, "default_source_share": DEFAULT_SOURCE_SHARE}
+
+
+@router.get("/feed")
+def get_feed_settings(db: Session = Depends(get_db)):
+    """How the feed mixes sources: the most of a Score or For-you page one source may fill (1 is no cap)."""
+    return _feed_settings(db)
+
+
+@router.put("/feed")
+def update_feed_settings(body: FeedSettingsUpdate, db: Session = Depends(get_db)):
+    from athena.api.routers.feed import FEED_SOURCE_SHARE
+    save_settings(db, {FEED_SOURCE_SHARE: f"{body.source_share:g}"}, {FEED_SOURCE_SHARE}, numeric={FEED_SOURCE_SHARE})
+    return _feed_settings(db)
