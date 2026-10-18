@@ -146,7 +146,7 @@ def process_batch(item_ids: List[str]):
             session.commit()
             logger.info(f"Successfully embedded and updated {len(valid_items)} items.")
 
-            # Push embedded items to scoring queue for Layer 3
+            # Push embedded items to the scoring queue
             r = get_redis()
             for item in valid_items:
                 r.rpush("athena:scoring_queue", str(item.id))

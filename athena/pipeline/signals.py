@@ -1,5 +1,5 @@
 """
-Signal computation functions for Athena Layer 3 Scoring & Ranking.
+The feed score's signals, as pure functions shared by the scoring worker and the score API.
 
 Each function computes a single normalised score in [0.0, 1.0].
 """
@@ -35,7 +35,6 @@ PLATFORM_BASELINES = {
     "alignmentforum": {"baseScore": 150, "commentCount": 40},
     "medium": {"clapCount": 5000, "responseCount": 100},
     "tds": {"clapCount": 5000, "responseCount": 100},
-    "paperswithcode": {"githubStars": 1000},
     "arxiv": {"downloadCount": 5000},
 }
 
@@ -66,11 +65,6 @@ def _extract_engagement_signals(metadata: Dict[str, Any], source_url: str) -> Li
         signals.append(min(1.0, claps / baseline["clapCount"]))
         signals.append(min(1.0, responses / baseline["responseCount"]))
 
-    elif "paperswithcode" in source_lower:
-        baseline = PLATFORM_BASELINES["paperswithcode"]
-        stars = metadata.get("githubStars", 0) or 0
-        signals.append(min(1.0, stars / baseline["githubStars"]))
-
     # Semantic Scholar / arXiv enrichment data (stored in extra_data)
     if "semantic_scholar" in metadata:
         ss = metadata["semantic_scholar"]
@@ -78,14 +72,6 @@ def _extract_engagement_signals(metadata: Dict[str, Any], source_url: str) -> Li
             downloads = ss.get("downloadCount", 0) or 0
             if downloads:
                 signals.append(min(1.0, downloads / PLATFORM_BASELINES["arxiv"]["downloadCount"]))
-
-    if "papers_with_code" in metadata:
-        pwc = metadata["papers_with_code"]
-        if isinstance(pwc, dict):
-            repos = pwc.get("repositories", [])
-            if repos:
-                total_stars = sum(r.get("stars", 0) for r in repos if isinstance(r, dict))
-                signals.append(min(1.0, total_stars / PLATFORM_BASELINES["paperswithcode"]["githubStars"]))
 
     return signals
 

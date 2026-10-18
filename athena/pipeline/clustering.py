@@ -6,7 +6,6 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 from sqlalchemy import select, update
 import umap
-import mlflow
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
 from datetime import datetime
@@ -15,7 +14,6 @@ from uuid import UUID
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem, Cluster, ItemLink, ClusterRunLog
 from athena.pipeline.celery_app import celery_app
-from athena.pipeline.mlflow_utils import mlflow_run, ml_log
 
 # Config
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
@@ -40,99 +38,80 @@ def run_clustering():
     """
     logger.info("Starting clustering run...")
 
-    with mlflow_run("athena-clustering", "run_clustering"):
-        ml_log(mlflow.log_params, {
-            "umap_n_neighbors": 15,
-            "umap_n_components": 50,
-            "umap_metric": "cosine",
-            "stability_threshold": STABILITY_THRESHOLD,
-        })
+    qdrant = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
 
-        qdrant = QdrantClient(url=os.getenv("QDRANT_URL", "http://localhost:6333"))
+    # 1. Fetch all points from Qdrant
+    # For now, fetch ALL. In production, we might want to fetch only semi-recent ones.
+    collections = [c.name for c in qdrant.get_collections().collections]
+    if COLLECTION_NAME not in collections:
+        logger.warning(f"Qdrant collection '{COLLECTION_NAME}' does not exist yet. Skipping clustering.")
+        return
 
-        # 1. Fetch all points from Qdrant
-        # For now, fetch ALL. In production, we might want to fetch only semi-recent ones.
-        collections = [c.name for c in qdrant.get_collections().collections]
-        if COLLECTION_NAME not in collections:
-            logger.warning(f"Qdrant collection '{COLLECTION_NAME}' does not exist yet. Skipping clustering.")
-            return
+    offset = None
+    all_points = []
+    while True:
+        points, next_offset = qdrant.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=1000,
+            with_vectors=True,
+            offset=offset
+        )
+        all_points.extend(points)
+        if not next_offset:
+            break
+        offset = next_offset
 
-        offset = None
-        all_points = []
-        while True:
-            points, next_offset = qdrant.scroll(
-                collection_name=COLLECTION_NAME,
-                limit=1000,
-                with_vectors=True,
-                offset=offset
+    if not all_points:
+        logger.warning("No points found in Qdrant for clustering.")
+        return
+
+    vectors = np.array([p.vector for p in all_points])
+
+    # 2. UMAP dimensionality reduction
+    reducer = umap.UMAP(n_neighbors=15, n_components=50, metric='cosine', random_state=42)
+    reduced_vectors = reducer.fit_transform(vectors)
+
+    # 3. Topics Clustering (K-Means)
+    num_items = len(all_points)
+    k = max(5, min(20, num_items // 10))
+    clusterer = KMeans(n_clusters=k, random_state=42, n_init='auto')
+    cluster_labels = clusterer.fit_predict(reduced_vectors)
+
+    unique_labels = set(cluster_labels)
+    noise_count = list(cluster_labels).count(-1)
+
+    logger.info(f"Found {len(unique_labels)} topic clusters (k={k}, inertia {clusterer.inertia_:.1f}) over "
+                f"{len(all_points)} items and {noise_count} noise points.")
+
+    # 4. Process clusters (with run log)
+    with SessionLocal() as session:
+        run_log = ClusterRunLog(
+            total_items=len(all_points),
+            num_clusters=len(unique_labels),
+            noise_items=list(cluster_labels).count(-1),
+            umap_dims=50,
+            hdbscan_min_cluster_size=5,
+        )
+        session.add(run_log)
+        session.flush()
+        try:
+            stats = process_clusters(
+                all_points, cluster_labels, vectors, session
             )
-            all_points.extend(points)
-            if not next_offset:
-                break
-            offset = next_offset
-
-        if not all_points:
-            logger.warning("No points found in Qdrant for clustering.")
-            return
-
-        vectors = np.array([p.vector for p in all_points])
-
-        # 2. UMAP dimensionality reduction
-        reducer = umap.UMAP(n_neighbors=15, n_components=50, metric='cosine', random_state=42)
-        reduced_vectors = reducer.fit_transform(vectors)
-
-        # 3. Topics Clustering (K-Means)
-        num_items = len(all_points)
-        k = max(5, min(20, num_items // 10))
-        ml_log(mlflow.log_param, "kmeans_k", k)
-        clusterer = KMeans(n_clusters=k, random_state=42, n_init='auto')
-        cluster_labels = clusterer.fit_predict(reduced_vectors)
-
-        unique_labels = set(cluster_labels)
-        noise_count = list(cluster_labels).count(-1)
-
-        ml_log(mlflow.log_metrics, {
-            "total_items": len(all_points),
-            "num_clusters": len(unique_labels),
-            "noise_count": noise_count,
-            "kmeans_inertia": float(clusterer.inertia_),
-        })
-
-        logger.info(f"Found {len(unique_labels)} topic clusters and {noise_count} noise points.")
-
-        # 4. Process clusters (with run log)
-        with SessionLocal() as session:
-            run_log = ClusterRunLog(
-                total_items=len(all_points),
-                num_clusters=len(unique_labels),
-                noise_items=list(cluster_labels).count(-1),
-                umap_dims=50,
-                hdbscan_min_cluster_size=5,
-            )
-            session.add(run_log)
-            session.flush()
-            try:
-                stats = process_clusters(
-                    all_points, cluster_labels, vectors, session
-                )
-                run_log.new_clusters = stats.get('new', 0)
-                run_log.merged_clusters = stats.get('merged', 0)
-                run_log.deactivated_clusters = stats.get('deactivated', 0)
-                run_log.finished_at = datetime.utcnow()
-                run_log.status = "success"
-                session.commit()
-                ml_log(mlflow.log_metrics, {
-                    "new_clusters": stats.get('new', 0),
-                    "merged_clusters": stats.get('merged', 0),
-                    "deactivated_clusters": stats.get('deactivated', 0),
-                })
-            except Exception as e:
-                run_log.finished_at = datetime.utcnow()
-                run_log.status = "failed"
-                run_log.error_message = str(e)[:500]
-                session.commit()
-                ml_log(mlflow.set_tag, "error", str(e)[:200])
-                raise
+            run_log.new_clusters = stats.get('new', 0)
+            run_log.merged_clusters = stats.get('merged', 0)
+            run_log.deactivated_clusters = stats.get('deactivated', 0)
+            run_log.finished_at = datetime.utcnow()
+            run_log.status = "success"
+            session.commit()
+            logger.info(f"Clusters: {stats.get('new', 0)} new, {stats.get('merged', 0)} merged, "
+                        f"{stats.get('deactivated', 0)} deactivated.")
+        except Exception as e:
+            run_log.finished_at = datetime.utcnow()
+            run_log.status = "failed"
+            run_log.error_message = str(e)[:500]
+            session.commit()
+            raise
 
 
 def process_clusters(points, labels, raw_vectors, session):

@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Centralised Configuration
+Configuration
 
 All environment variables in one place using pydantic-settings.
 """

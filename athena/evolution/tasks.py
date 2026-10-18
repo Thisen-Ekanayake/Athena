@@ -56,17 +56,6 @@ def refresh_due_topics() -> list[str]:
 
 
 @celery_app.task
-def fetch_method_names_step(slug: str) -> dict:
-    """Names citing papers use, for the rebuild's score. Network only, so it runs on the default queue."""
-    from athena.evolution.method_names import fetch_method_names
-    try:
-        return fetch_method_names(slug)
-    except Exception as exc:  # Semantic Scholar down: the rebuild uses the names already stored
-        logger.warning(f"Refresh {slug}: method names not fetched: {exc}")
-        return {"error": str(exc)[:300]}
-
-
-@celery_app.task
 def refresh_build(slug: str) -> dict:
     """Rebuild with the old map readable meanwhile (status ``refining``). A failure stops the chain.
 

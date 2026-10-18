@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Items Router
+Single items: detail, score breakdown and related items.
 
 GET /api/v1/items/{id}                — single item with full detail
 GET /api/v1/items/{id}/score-breakdown — score explainability

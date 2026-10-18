@@ -201,8 +201,7 @@ def test_the_reading_path_has_no_reader_and_never_asks_the_model(env):
 
 def test_changes_leave_out_the_upkeep_settings(env):
     token = make_link(admin_client()).json()["token"]
-    changes = {"topic": {"slug": "peft"}, "refresh_days": 30, "named_method": False,
-               "named_method_in_scores": False, "snapshots": [{"id": "s1"}]}
+    changes = {"topic": {"slug": "peft"}, "refresh_days": 30, "snapshots": [{"id": "s1"}]}
     with patch("athena.api.routers.share.db.topic_changes", return_value=changes):
         body = anonymous().get(f"/api/v1/share/{token}/changes").json()
     assert body == {"topic": {"slug": "peft"}, "snapshots": [{"id": "s1"}]}

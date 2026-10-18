@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Inbox Router
+The inbox
 
 GET  /api/v1/inbox            — recent entries the user sees, newest first: new maps, updates and citing papers
                                 for the maps they follow, what their watches caught, their digests

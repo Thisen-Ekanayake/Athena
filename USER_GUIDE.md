@@ -62,7 +62,7 @@ python3 scripts/run_crawl.py
 
 ### 4.1. Run Enrichment Workers (All Phases)
 
-Start the Celery worker to process enrichment tasks (Semantic Scholar, Papers With Code) and staging tasks (Phase 5). In a **new terminal**:
+Start the Celery worker to process enrichment tasks (Semantic Scholar) and staging tasks (Phase 5). In a **new terminal**:
 
 ```bash
 source venv/bin/activate
@@ -99,11 +99,11 @@ Sources and Item Counts:
   [SCRAPE] LessWrong: ~10
 ```
 
-Check if arXiv papers were enriched with citation counts from Semantic Scholar and benchmarks from Papers With Code:
+Check if arXiv papers were enriched with citation counts from Semantic Scholar:
 ```bash
 python3 scripts/view_db.py -s "ArXiv" -n 5
 ```
-Look for the `extra_data.semantic_scholar` or `extra_data.paperswithcode` fields. Note that ArXiv IDs are automatically normalized to remove version suffixes (e.g. `2401.00001v1` becomes `2401.00001`) for better API compatibility.
+Look for the `extra_data.semantic_scholar` field. Note that ArXiv IDs are automatically normalized to remove version suffixes (e.g. `2401.00001v1` becomes `2401.00001`) for better API compatibility.
 
 ### Verifying Fetch Logs (Phase 3)
 Fetch logs are written to the `fetch_logs` table after every run. Check them with:
@@ -126,7 +126,7 @@ docker exec -it athena-redis-1 redis-cli llen athena:embedding_queue
 
 | Phase | Component | Status |
 |-------|-----------|--------|
-| **Phase 1** | ArXiv + Semantic Scholar + Papers With Code Connectors | ✅ Done |
+| **Phase 1** | ArXiv + Semantic Scholar Connectors | ✅ Done |
 | **Phase 2** | 7 Company RSS feeds + Celery Beat 6h polling | ✅ Done |
 | **Phase 3** | Retry logic (3x backoff), FetchLog table, Auto-disable on 5 failures | ✅ Done |
 | **Phase 4** | Playwright headless scraper (The Gradient, TDS, LessWrong) | ✅ Done |

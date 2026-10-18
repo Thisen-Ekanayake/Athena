@@ -227,25 +227,6 @@ class PromptVersion(Base):
     notes = Column(String, nullable=True)
 
 
-class SummaryUsageLog(Base):
-    """Audit log for OpenAI LLM token usage and cost."""
-    __tablename__ = "summary_usage_log"
-
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=True)
-    cluster_id = Column(PG_UUID(as_uuid=True), ForeignKey("clusters.id"), nullable=True)
-    job_type = Column(SQLEnum(JobType), nullable=False)
-    model = Column(String, nullable=False)
-    prompt_version = Column(Integer, nullable=False)
-    input_tokens = Column(Integer, default=0)
-    output_tokens = Column(Integer, default=0)
-    total_cost_usd = Column(Float, default=0.0)
-    latency_ms = Column(Integer, default=0)
-    success = Column(Boolean, default=True)
-    error_message = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-
 class QAFetchCache(Base):
     """Caches fetch status and metadata for Q&A features."""
     __tablename__ = "qa_fetch_cache"
@@ -258,31 +239,6 @@ class QAFetchCache(Base):
     fetch_latency_ms = Column(Integer, default=0)
 
     content_item = relationship("ContentItem", backref="qa_fetch_cache")
-
-
-class QAUsageLog(Base):
-    """Audit log for Q&A feature token usage and session history."""
-    __tablename__ = "qa_usage_log"
-
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
-    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    session_id = Column(String, nullable=False)
-    turn_number = Column(Integer, nullable=False)
-    question_length = Column(Integer, default=0)
-    fetch_method = Column(String, nullable=False)
-    fetch_latency_ms = Column(Integer, default=0)
-    article_tokens = Column(Integer, default=0)
-    history_tokens = Column(Integer, default=0)
-    answer_tokens = Column(Integer, default=0)
-    total_cost_usd = Column(Float, default=0.0)
-    model = Column(String, nullable=False)
-    partial_content = Column(Boolean, default=False)
-    success = Column(Boolean, default=True)
-    error_type = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-
-    content_item = relationship("ContentItem", backref="qa_usage_logs")
 
 
 class ClusterRunLog(Base):
@@ -613,7 +569,6 @@ class EvoGapStatement(Base):
     labelled_at = Column(DateTime(timezone=True), nullable=True)
     embedded_at = Column(DateTime(timezone=True), nullable=True)      # vector in Qdrant's gap_statements
     loose_checked_at = Column(DateTime(timezone=True), nullable=True)  # loose links searched
-    cross_checked_at = Column(DateTime(timezone=True), nullable=True)  # other maps' papers searched (E7)
 
 
 class EvoGapTheme(Base):
@@ -660,28 +615,6 @@ class EvoLooseLink(Base):
     chunk_id = Column(PG_UUID(as_uuid=True), nullable=False)
     score = Column(Float, nullable=False)            # cosine similarity of the best matching chunk
     cites = Column(Boolean, default=False)           # whether the later paper cites the gap's paper anyway
-
-
-class EvoCrossLink(Base):
-    """A paper in another map whose text matches a gap statement: a loose link across maps.
-
-    Like ``EvoLooseLink``, ``chunk_id`` is not a foreign key; a link to a chunk that is gone drops out of reads.
-    """
-    __tablename__ = "evo_cross_links"
-    __table_args__ = (
-        UniqueConstraint("gap_id", "paper_id", name="uq_evo_cross_link"),
-    )
-
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    gap_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_gap_statements.id", ondelete="CASCADE"),
-                    nullable=False, index=True)
-    paper_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_papers.id", ondelete="CASCADE"),
-                      nullable=False, index=True)
-    chunk_id = Column(PG_UUID(as_uuid=True), nullable=False)
-    score = Column(Float, nullable=False)
-
-
-# ── Research evolution: reading, questions and history ───────────────
 
 
 class EvoPaperNote(Base):

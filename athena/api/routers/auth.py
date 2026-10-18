@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Auth Router
+Logging in and out, and creating the first account.
 
 GET  /api/v1/auth/status    — whether the first admin still has to be created, and who is logged in
 POST /api/v1/auth/setup     — create the first (admin) account; refused once any account exists

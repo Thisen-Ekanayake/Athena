@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Feed Router
+The feed
 
 GET /api/v1/feed — paginated, sorted, filtered content feed.
 """

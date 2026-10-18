@@ -1,5 +1,5 @@
 """
-Unit tests for Athena Layer 3 Scoring & Ranking.
+Unit tests for feed scoring and ranking.
 
 Covers:
 - Log normalisation formula correctness
@@ -94,11 +94,6 @@ class TestEngagementScore:
     def test_alignment_forum(self):
         metadata = {"baseScore": 75, "commentCount": 20}
         score = compute_engagement_score(metadata, "https://alignmentforum.org/posts/abc")
-        assert 0.0 < score < 1.0
-
-    def test_papers_with_code(self):
-        metadata = {"githubStars": 500}
-        score = compute_engagement_score(metadata, "https://paperswithcode.com/paper/test")
         assert 0.0 < score < 1.0
 
     def test_unknown_source_returns_neutral(self):
@@ -244,7 +239,6 @@ class TestEngagementExtraction:
     def test_extract_enrichment_data(self):
         metadata = {
             "semantic_scholar": {"downloadCount": 1000},
-            "papers_with_code": {"repositories": [{"stars": 200}]}
         }
         signals = _extract_engagement_signals(metadata, "https://arxiv.org/abs/123")
         assert len(signals) >= 1

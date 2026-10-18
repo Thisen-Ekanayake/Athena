@@ -41,7 +41,7 @@ the milestones, the reading order and the open problems, all on your own GPU or 
 
 **Feed and reading**
 
-- Ingests ArXiv, Semantic Scholar, Papers With Code, RSS, Substack, LessWrong and scraped lab blogs.
+- Ingests ArXiv, Semantic Scholar, RSS, Substack, LessWrong and scraped lab blogs.
 - Ranks items on citations, engagement, recency and source authority (each kind of item weighs only the signals it has data for), with a personal **For you** order learned from your reactions and saves. No one source fills more than a quarter of a page.
 - Citation momentum (the **Rising** page), topic clusters, AI summaries and Q&A on any paper.
 - Reading lists, read marks, notes and highlights.
@@ -130,7 +130,7 @@ Two Celery pipelines, one for the feed and one for the research maps, write to P
 | `athena/pipeline/` | Celery workers: embedding, scoring, clustering, summaries, momentum |
 | `athena/evolution/` | Research maps: topic search, citation graph, milestones, gaps, full text, reviews |
 | `athena/api/` | FastAPI app, routers and auth |
-| `frontend/` | React 19 + TypeScript + Vite (TanStack Query, Zustand, three.js) |
+| `frontend/` | React 19 + TypeScript + Vite (TanStack Query, Zustand, three.js); pages and layout in [docs/ui.md](docs/ui.md) |
 | `docker/` | Dockerfiles and Compose files; images publish to GHCR on push to `main` |
 
 ## Development

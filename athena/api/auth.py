@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Accounts, sessions and per-user limits
+Accounts, sessions and per-user limits
 
 A login creates an opaque session token, stored only as its SHA-256 in
 ``user_sessions`` and sent back in an httpOnly cookie. Unlike a signed JWT, a

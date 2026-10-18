@@ -1,5 +1,4 @@
 import os
-import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -149,10 +148,8 @@ def summarise_item_worker(self, item_id: str, tier: int = 2):
         user_msg = build_item_summary_prompt(item, text_content, active_prompt.user_prompt_tpl)
 
         try:
-            start_time = time.time()
             res, model = _complete(active_prompt.system_prompt, user_msg, "item_summary", ITEM_SCHEMA)
             raw_response = res.choices[0].message.content
-            latency = int((time.time() - start_time) * 1000)
 
             # Validate
             try:
@@ -163,18 +160,8 @@ def summarise_item_worker(self, item_id: str, tier: int = 2):
                 success = False
                 err_msg = str(pe)
 
-            log_usage_and_update_spend(
-                session=session,
-                job_type=JobType.ITEM_SUMMARY,
-                prompt_version=active_prompt.version,
-                input_tokens=res.usage.prompt_tokens,
-                output_tokens=res.usage.completion_tokens,
-                latency_ms=latency,
-                success=success,
-                error_message=err_msg,
-                item_id=item.id,
-                model=model
-            )
+            log_usage_and_update_spend(JobType.ITEM_SUMMARY, res.usage.prompt_tokens, res.usage.completion_tokens,
+                                       model)
 
             if success:
                 item.summary = parsed.summary
@@ -206,8 +193,6 @@ def summarise_item_worker(self, item_id: str, tier: int = 2):
 
 def summarise_on_demand_sync(item_id: str) -> Optional[ContentItem]:
     """Synchronous on-demand summary for Tier 3 items, triggered by API."""
-    import time
-    time.time()
     logger.info(f"Triggering on-demand summarisation for {item_id}")
     task = summarise_item_worker.apply_async(args=[item_id], queue='summary_lazy')
 
@@ -265,10 +250,8 @@ def label_cluster_worker(self, cluster_id: str):
         )
 
         try:
-            start_time = time.time()
             res, model = _complete(active_prompt.system_prompt, user_msg, "cluster_summary", CLUSTER_SCHEMA)
             raw_response = res.choices[0].message.content
-            latency = int((time.time() - start_time) * 1000)
 
             try:
                 clean = raw_response.strip().lstrip('```json').rstrip('```').strip()
@@ -283,18 +266,8 @@ def label_cluster_worker(self, cluster_id: str):
                 success = False
                 err_msg = str(pe)
 
-            log_usage_and_update_spend(
-                session=session,
-                job_type=JobType.CLUSTER_LABEL,
-                prompt_version=active_prompt.version,
-                input_tokens=res.usage.prompt_tokens,
-                output_tokens=res.usage.completion_tokens,
-                latency_ms=latency,
-                success=success,
-                error_message=err_msg,
-                cluster_id=cluster.id,
-                model=model
-            )
+            log_usage_and_update_spend(JobType.CLUSTER_LABEL, res.usage.prompt_tokens, res.usage.completion_tokens,
+                                       model)
 
             if success:
                 cluster.label = label

@@ -21,7 +21,6 @@ SOURCES = [
     {"name": "arXiv – Statistics / Machine Learning",     "url": "https://arxiv.org/rss/stat.ML",  "category": SourceCategory.PAPER,   "authority": 1.0},
     {"name": "arXiv – Information Retrieval (cs.IR)",     "url": "https://arxiv.org/rss/cs.IR",    "category": SourceCategory.PAPER,   "authority": 0.9},
     {"name": "arXiv – Multi-Agent Systems (cs.MA)",       "url": "https://arxiv.org/rss/cs.MA",    "category": SourceCategory.PAPER,   "authority": 0.9},
-    {"name": "Papers With Code – Latest",                 "url": "https://paperswithcode.com/latest/rss", "category": SourceCategory.PAPER, "authority": 0.9},
 
     # ── Company / Lab Research Blogs ──────────────────────────────────────
     {"name": "Microsoft Research",          "url": "https://www.microsoft.com/en-us/research/feed/",          "category": SourceCategory.COMPANY, "authority": 0.95},

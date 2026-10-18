@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Database Index Migration
+Feed indexes: an old migration script, which athena.database.migrate leaves out.
 
 Adds all indexes required by Section 7.1 of the plan document,
 plus the is_active column on content_items if missing.

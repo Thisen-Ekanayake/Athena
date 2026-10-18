@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Users Router (admin only)
+Accounts, managed by the admin
 
 GET   /api/v1/users                        — every account
 POST  /api/v1/users                        — create one; answers with a temporary password, shown once

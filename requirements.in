@@ -43,7 +43,6 @@ python-dateutil
 umap-learn
 scikit-learn
 python-igraph
-mlflow
 
 # Config and logs
 python-dotenv

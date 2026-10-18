@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Unified FastAPI Application
+The FastAPI application
 
 Entry point that mounts all API routers, configures CORS,
 and wires up DB + Redis connections.
@@ -52,8 +52,8 @@ def create_app() -> FastAPI:
         title="Athena API",
         description=(
             "AI Research Intelligence Feed — "
-            "Layer 5 API serving content cards, clusters, "
-            "search, and source management."
+            "Athena's API: the feed, clusters, search, research maps, "
+            "reading tools and accounts."
         ),
         version="1.0.0",
         docs_url=None,

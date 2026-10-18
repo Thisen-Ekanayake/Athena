@@ -97,10 +97,10 @@ def test_metrics_update_merges_into_extra_data(Session, monkeypatch):
     monkeypatch.setattr(operations, "SessionLocal", Session)
     with Session() as s:
         item = add_item(s, add_source(s), citations=4, extra={"arxiv_id": "2608.00001", "pdf_url": "x"})
-    operations.update_content_item_metrics(item.url, 0, {"semantic_scholar": None, "papers_with_code": {"r": 1}})
+    operations.update_content_item_metrics(item.url, 0, {"semantic_scholar": None, "other": {"r": 1}})
     with Session() as s:
         got = s.get(ContentItem, item.id)
-        assert got.extra_data == {"arxiv_id": "2608.00001", "pdf_url": "x", "papers_with_code": {"r": 1}}
+        assert got.extra_data == {"arxiv_id": "2608.00001", "pdf_url": "x", "other": {"r": 1}}
         assert got.citation_count == 4  # a failed lookup's 0 doesn't erase what was known
 
 

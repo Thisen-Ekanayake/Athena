@@ -17,7 +17,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, aliased
 
 from athena.core.models import (
-    EvoChunk, EvoCitation, EvoCitationContext, EvoCrossLink, EvoGapStatement, EvoGapTheme, EvoGapThemeMember,
+    EvoChunk, EvoCitation, EvoCitationContext, EvoGapStatement, EvoGapTheme, EvoGapThemeMember,
     EvoIdeaCheck, EvoLooseLink, EvoMainPathEdge, EvoMapQuestion, EvoMilestoneOverride, EvoPaper, EvoPaperNote,
     EvoReadingProgress, EvoSection, EvoSnapshot, EvoTopic, EvoTopicPaper,
 )
@@ -747,35 +747,8 @@ def maps_version(session: Session) -> str:
     return f"{int(latest.timestamp()) if latest else 0}-{count}"
 
 
-def pending_cross(session: Session, limit: int) -> list[tuple[EvoGapStatement, int | None]]:
-    """Embedded gap statements not yet searched against other maps' papers, with the stating paper's year."""
-    source = aliased(EvoPaper)
-    return session.execute(
-        select(EvoGapStatement, source.year).join(source, EvoGapStatement.source_paper_id == source.id)
-        .where(EvoGapStatement.label == "gap", EvoGapStatement.embedded_at.isnot(None),
-               EvoGapStatement.cross_checked_at.is_(None)).limit(limit)).all()
-
-
-def paper_topic_kinds(session: Session, paper_ids: list[UUID]) -> dict[UUID, dict[str, str]]:
-    """Paper -> {topic id: kind} for every topic it is in, read fresh (the chunks' topic payload can be stale)."""
-    out: dict[UUID, dict[str, str]] = defaultdict(dict)
-    for pid, tid, kind in session.execute(select(EvoTopicPaper.paper_id, EvoTopicPaper.topic_id, EvoTopicPaper.kind)
-                                          .where(EvoTopicPaper.paper_id.in_(paper_ids))):
-        out[pid][str(tid)] = kind
-    return out
-
-
-def save_cross_links(session: Session, gap_id: UUID, links: list[dict]) -> None:
-    """Replace a gap statement's cross-map links. ``links``: [{paper_id, chunk_id, score}]."""
-    session.execute(delete(EvoCrossLink).where(EvoCrossLink.gap_id == gap_id))
-    if links:
-        session.execute(insert(EvoCrossLink).values([{"id": uuid4(), "gap_id": gap_id, **link} for link in links]))
-
-
 def topic_links(session: Session, topic: EvoTopic, limit: int = 40) -> dict:
-    """How this map connects to the others: papers they share, and milestones one borrows from the other.
-
-    Gaps another map's papers address are not included: see ``athena.evolution.gpu.cross_links``."""
+    """How this map connects to the others: papers they share, and milestones one borrows from the other."""
     overrides = _overrides(session, topic.id)
     rows = {p.id: (tp, p) for tp, p in _topic_rows(session, topic.id)}
     weight = TopicConfig.from_dict(topic.config).weights.relevance
@@ -916,13 +889,6 @@ def _announce(session: Session, topic: EvoTopic, reason: str, changes: dict | No
                                                       for k, v in changes.items()}})
 
 
-def _named_method_in_scores(session: Session, topic: EvoTopic) -> bool:
-    """Whether the stored build gave any paper a named-method part."""
-    return session.execute(select(EvoTopicPaper.id).where(
-        EvoTopicPaper.topic_id == topic.id,
-        EvoTopicPaper.score_detail["named_method"].as_float() > 0).limit(1)).first() is not None
-
-
 def topic_changes(session: Session, topic: EvoTopic, limit: int = 20) -> dict:
     """Snapshots newest first, each with what changed since the one before."""
     rows = session.execute(select(EvoSnapshot.id, EvoSnapshot.taken_at, EvoSnapshot.reason, EvoSnapshot.built_at,
@@ -931,9 +897,6 @@ def topic_changes(session: Session, topic: EvoTopic, limit: int = 20) -> dict:
                            .order_by(EvoSnapshot.taken_at.desc()).limit(limit)).all()
     config = TopicConfig.from_dict(topic.config)
     return {"topic": topic_summary(topic), "refresh_days": config.refresh_days,
-            "named_method": config.weights.named_method > 0,
-            # Built since the setting changed? The scores follow the setting only from the next build.
-            "named_method_in_scores": _named_method_in_scores(session, topic),
             "snapshots": [{"id": str(r.id), "taken_at": r.taken_at.isoformat(), "reason": r.reason,
                            "built_at": r.built_at.isoformat() if r.built_at else None, "stats": r.stats or {},
                            "changes": r.changes} for r in rows]}
@@ -986,14 +949,6 @@ def cited_names_fetched_since(session: Session, paper_ids: list[UUID], days: int
         except (KeyError, TypeError, ValueError):
             continue
     return out
-
-
-def cited_names(openalex_ids: list[str]) -> dict[str, str]:
-    """OpenAlex ID -> the name citing papers use, for papers where one was found."""
-    with SessionLocal() as session:
-        rows = session.execute(select(EvoPaper.openalex_id, EvoPaper.cited_name).where(
-            EvoPaper.openalex_id.in_(openalex_ids), EvoPaper.cited_name.isnot(None))).all()
-    return {oid: v["name"] for oid, v in rows if isinstance(v, dict) and v.get("name")}
 
 
 # ── exports (E6) ───────────────────────────────────────────────────────
@@ -1581,15 +1536,14 @@ def mark_abstracts(session: Session, paper_ids: list[UUID]) -> None:
 
 
 def forget_vectors(session: Session) -> None:
-    """Mark every chunk, gap statement and abstract as not embedded, and drop the loose and cross-map links.
+    """Mark every chunk, gap statement and abstract as not embedded, and drop the loose links.
 
     For a switch of embedding model: the next GPU lane embeds everything again and rebuilds the themes.
     """
     session.execute(update(EvoChunk).values(embedded_at=None))
-    session.execute(update(EvoGapStatement).values(embedded_at=None, loose_checked_at=None, cross_checked_at=None))
+    session.execute(update(EvoGapStatement).values(embedded_at=None, loose_checked_at=None))
     session.execute(update(EvoPaper).values(abstract_embedded_at=None))
     session.execute(delete(EvoLooseLink))
-    session.execute(delete(EvoCrossLink))
     session.commit()
 
 

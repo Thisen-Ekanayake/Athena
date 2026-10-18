@@ -86,16 +86,3 @@ def later_chunks(vector: np.ndarray, after_year: int | None, topics: list[str], 
     flt = qm.Filter(must=must, must_not=[qm.FieldCondition(key="paper_id", match=qm.MatchAny(any=exclude_papers))])
     return qdrant.query_points(COLLECTION, query=vector.tolist(), query_filter=flt, limit=limit,
                                with_payload=True).points
-
-
-def later_chunks_anywhere(vector: np.ndarray, after_year: int | None, exclude_papers: list[str],
-                          section_types: list[str], limit: int, qdrant: QdrantClient | None = None) -> list:
-    """Chunks of any paper that appeared after ``after_year``, nearest first. The caller decides which topics
-    count, from the database: a chunk's ``topic_ids`` payload is fixed when it is embedded."""
-    qdrant = qdrant or client()
-    must = [qm.FieldCondition(key="section_type", match=qm.MatchAny(any=section_types))]
-    if after_year is not None:
-        must.append(qm.FieldCondition(key="year", range=qm.Range(gt=after_year)))
-    flt = qm.Filter(must=must, must_not=[qm.FieldCondition(key="paper_id", match=qm.MatchAny(any=exclude_papers))])
-    return qdrant.query_points(COLLECTION, query=vector.tolist(), query_filter=flt, limit=limit,
-                               with_payload=True).points

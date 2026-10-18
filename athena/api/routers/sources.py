@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Sources Router
+Sources: what Athena fetches from.
 
 GET  /api/v1/sources            — list all sources
 POST /api/v1/sources            — add source with auto-detect + preview

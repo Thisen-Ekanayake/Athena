@@ -1,5 +1,5 @@
 """
-Integration tests for Athena Layer 3 Scoring & Ranking.
+Integration tests for feed scoring and ranking.
 
 Tests scoring pipeline with mocked database sessions and the score API endpoint.
 """

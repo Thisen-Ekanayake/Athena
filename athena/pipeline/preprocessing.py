@@ -14,7 +14,7 @@ def preprocess(
     model_name: str = "text-embedding-3-small"
 ) -> str:
     """
-    Athena Layer 2 Preprocessing:
+    Clean an item's text before it is embedded:
     1. Strip HTML tags
     2. Remove navigation, footer, sidebar elements
     3. Normalize whitespace

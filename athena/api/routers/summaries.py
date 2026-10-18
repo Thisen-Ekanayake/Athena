@@ -7,7 +7,7 @@ GET  /api/v1/admin/summaries/cost                       — today's and the last
 GET  /api/v1/admin/summaries/sample                     — 10 random summaries to spot-check (admin)
 POST /api/v1/admin/items/{item_id}/regenerate-summary   — queue one item for a new summary (admin)
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,9 +16,11 @@ from sqlalchemy.orm import Session
 
 from athena.api.auth import require_admin
 from athena.api.deps import get_db
-from athena.core.models import ContentItem, Source, SummaryStatus, SummaryUsageLog
+from athena.core.models import ContentItem, Source, SummaryStatus, UsageEvent
 
 router = APIRouter(prefix="/api/v1", tags=["Summarisation"])
+# What usage_events calls summaries and cluster labels (athena.pipeline.summarisation.USAGE_FEATURES)
+SUMMARY_FEATURES = ("summary", "cluster_label")
 
 
 @router.get("/items/{item_id}/summary")
@@ -82,57 +84,28 @@ def summary_status(db: Session = Depends(get_db), user=Depends(require_admin)):
 
 @router.get("/admin/summaries/cost")
 def get_summarisation_cost(db: Session = Depends(get_db), user=Depends(require_admin)):
-    """Daily and 7-day rolling spend in USD, and token breakdowns."""
-    from datetime import timedelta
+    """Summary and cluster-label spend in USD today and over the last 7 days, and today's tokens by model."""
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=7)
+    features = UsageEvent.feature.in_(SUMMARY_FEATURES)
 
-    today_spend = db.execute(
-        select(func.sum(SummaryUsageLog.total_cost_usd))
-        .where(SummaryUsageLog.created_at >= today_start)
-    ).scalar() or 0.0
+    def spend(since: datetime) -> float:
+        return db.execute(select(func.coalesce(func.sum(UsageEvent.cost_usd), 0.0))
+                          .where(features, UsageEvent.created_at >= since)).scalar_one()
 
-    weekly_spend = db.execute(
-        select(func.sum(SummaryUsageLog.total_cost_usd))
-        .where(SummaryUsageLog.created_at >= week_start)
-    ).scalar() or 0.0
-
-    failed_count = db.execute(
-        select(func.count(SummaryUsageLog.id))
-        .where(SummaryUsageLog.created_at >= today_start)
-        .where(SummaryUsageLog.success.is_(False))
-    ).scalar() or 0
-
-    # Token usage and latency breakdown by job_type and model
     stats = db.execute(
-        select(
-            SummaryUsageLog.job_type,
-            SummaryUsageLog.model,
-            func.sum(SummaryUsageLog.input_tokens).label("in_tokens"),
-            func.sum(SummaryUsageLog.output_tokens).label("out_tokens"),
-            func.avg(SummaryUsageLog.latency_ms).label("avg_latency")
-        )
-        .where(SummaryUsageLog.created_at >= today_start)
-        .group_by(SummaryUsageLog.job_type, SummaryUsageLog.model)
+        select(UsageEvent.feature, UsageEvent.model, func.sum(UsageEvent.calls),
+               func.sum(UsageEvent.input_tokens), func.sum(UsageEvent.output_tokens))
+        .where(features, UsageEvent.created_at >= today_start)
+        .group_by(UsageEvent.feature, UsageEvent.model)
     ).all()
-
-    breakdowns = []
-    for row in stats:
-        job_type = row[0].value if hasattr(row[0], 'value') else str(row[0])
-        breakdowns.append({
-            "job_type": job_type,
-            "model": row[1],
-            "input_tokens": row[2] or 0,
-            "output_tokens": row[3] or 0,
-            "average_latency_ms": round(row[4] or 0)
-        })
-
     return {
-        "today_spend_usd": round(today_spend, 4),
-        "7_day_spend_usd": round(weekly_spend, 4),
-        "today_failed_count": failed_count,
-        "breakdown": breakdowns
+        "today_spend_usd": round(spend(today_start), 4),
+        "7_day_spend_usd": round(spend(week_start), 4),
+        "breakdown": [{"feature": feature, "model": model, "calls": calls or 0, "input_tokens": tokens_in or 0,
+                       "output_tokens": tokens_out or 0}
+                      for feature, model, calls, tokens_in, tokens_out in stats],
     }
 
 

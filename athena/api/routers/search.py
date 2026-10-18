@@ -1,5 +1,5 @@
 """
-Athena Layer 5 — Search Router
+Search.
 
 GET /api/v1/search   — keyword plus meaning search over the existing feed (athena.search.hybrid).
 POST /api/v1/search  — research search: the library, Semantic Scholar and arXiv. Literature reviews are written

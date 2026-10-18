@@ -1,5 +1,5 @@
 """
-Athena Layer 4 — Summarisation Core Logic
+Item summaries and cluster labels: the shared parts.
 
 Contains utilities for Redis-based budget tracking, Pydantic validation of model
 responses, and core logic for formatting prompts and generating summaries.
@@ -14,7 +14,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from athena.core import llm, usage
-from athena.core.models import PromptVersion, SummaryUsageLog, JobType
+from athena.core.models import PromptVersion, JobType
 from athena.core.redis_client import get_redis
 
 redis = get_redis()
@@ -95,20 +95,8 @@ def check_budget_before_call(job_type: str, tier: int = 2) -> bool:
     return True
 
 
-def log_usage_and_update_spend(
-    session,
-    job_type: JobType,
-    prompt_version: int,
-    input_tokens: int,
-    output_tokens: int,
-    latency_ms: int,
-    success: bool,
-    error_message: Optional[str] = None,
-    item_id: Optional[str] = None,
-    cluster_id: Optional[str] = None,
-    model: str = ""
-):
-    """Logs usage to the DB and increments daily spend in Redis (zero for local models)."""
+def log_usage_and_update_spend(job_type: JobType, input_tokens: int, output_tokens: int, model: str = "") -> float:
+    """Counts the call in usage_events and adds its cost to today's summary spend in Redis (zero for local models)."""
     cost = llm.cost(input_tokens, output_tokens)
     if input_tokens or output_tokens:
         kind = job_type.value if hasattr(job_type, "value") else str(job_type)
@@ -118,22 +106,6 @@ def log_usage_and_update_spend(
     redis.incrbyfloat(key, cost)
     # Give the budget key a 2-day TTL so old limits expire naturally
     redis.expire(key, 86400 * 2)
-
-    log_entry = SummaryUsageLog(
-        item_id=item_id,
-        cluster_id=cluster_id,
-        job_type=job_type,
-        model=model,
-        prompt_version=prompt_version,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        total_cost_usd=cost,
-        latency_ms=latency_ms,
-        success=success,
-        error_message=error_message
-    )
-    session.add(log_entry)
-
     return cost
 
 
