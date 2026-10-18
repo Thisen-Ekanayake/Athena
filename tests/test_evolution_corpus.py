@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from athena.evolution.config import TopicConfig
 from athena.evolution.corpus import Seed, _citer_bound, select_corpus
-from athena.evolution.openalex import Work
+from athena.core.openalex import Work
 
 
 def work(wid: str, refs: list[str] = (), year: int = 2020, cited_by: int = 10, title: str | None = None,
@@ -176,7 +176,7 @@ class TestOpenAlexSearchAndSkippedS2:
         assert oa.searches == [] and set(corpus.papers) == {"S1", "S2"}
 
     def test_no_key_skips_semantic_scholar_when_keyless_is_off(self, monkeypatch):
-        monkeypatch.setattr("athena.evolution.semantic_scholar.get_setting", lambda key, default=None: default)
+        monkeypatch.setattr("athena.core.semantic_scholar.get_setting", lambda key, default=None: default)
         corpus, _ = self.run(s2=True, s2_keyless=False)
         assert corpus.stats["s2"].startswith("skipped")
         assert set(corpus.papers) == {"S1", "S2"}

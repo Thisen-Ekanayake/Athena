@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from athena.api.deps import get_db, get_redis
 from athena.api.main import app
+from athena.core import citation_gains
 from athena.core.models import (
     AppSetting, ContentCategory, ContentItem, EvoMilestoneOverride, EvoPaper, EvoTopic, EvoTopicPaper, ItemFeedback,
     ItemRead, MetricSnapshot, Source, SourceCategory, SourceType, UserHighlight, UserNote,
@@ -239,7 +240,7 @@ def test_the_hourly_task_works_once_a_day(Session, monkeypatch):
     calls = []
     monkeypatch.setattr(db_module, "SessionLocal", Session)
     monkeypatch.setattr(momentum, "run", lambda session, s2, now, rebuilds=30: calls.append(now) or {"ok": 1})
-    monkeypatch.setattr("athena.evolution.semantic_scholar.SemanticScholarClient", lambda: None)
+    monkeypatch.setattr("athena.core.semantic_scholar.SemanticScholarClient", lambda: None)
     assert momentum.daily_momentum() == {"ok": 1}
     assert momentum.daily_momentum() == {"skipped": datetime.now(timezone.utc).date().isoformat()}
     assert len(calls) == 1
@@ -301,22 +302,22 @@ def test_rising_lists_papers_by_gain(Session, api):
 def test_twelve_months_from_calendar_years():
     counts = {2024: 40, 2025: 100, 2026: 150}
     january = datetime(2026, 1, 2, tzinfo=timezone.utc)
-    last, before = map_momentum.twelve_months(counts, january)
+    last, before = citation_gains.twelve_months(counts, january)
     assert last == pytest.approx(150 + 100 * (1 - 1 / 365), abs=0.5)  # January keeps most of last year
     assert before == pytest.approx(40, abs=1)
     october = datetime(2026, 10, 1, tzinfo=timezone.utc)
-    last, before = map_momentum.twelve_months(counts, october)
+    last, before = citation_gains.twelve_months(counts, october)
     assert last == pytest.approx(150 + 100 * 0.25, abs=1)
     assert before == pytest.approx(100 * 0.75 + 40 * 0.25, abs=1)
 
 
 def test_rising_needs_enough_citations_and_growth():
     now = datetime(2026, 10, 1, tzinfo=timezone.utc)
-    assert map_momentum.rising_entry({2026: 5}, now) is None                 # under the floor
-    assert map_momentum.rising_entry({2025: 400, 2026: 100}, now) is None    # falling
-    entry = map_momentum.rising_entry({2025: 10, 2026: 60}, now)
+    assert citation_gains.rising_entry({2026: 5}, now) is None                 # under the floor
+    assert citation_gains.rising_entry({2025: 400, 2026: 100}, now) is None    # falling
+    entry = citation_gains.rising_entry({2025: 10, 2026: 60}, now)
     assert entry["last_12_months"] == 63 and entry["ratio"] > 3
-    years = map_momentum.by_year({2026: 3}, now, years=3)
+    years = citation_gains.by_year({2026: 3}, now, years=3)
     assert years == [{"year": 2024, "citations": 0, "partial": False}, {"year": 2025, "citations": 0, "partial": False},
                      {"year": 2026, "citations": 3, "partial": True}]
 
@@ -343,7 +344,7 @@ def add_topic(s):
 
 
 def test_topic_rising_ranks_by_growth(Session, monkeypatch):
-    monkeypatch.setattr(evo_db, "method_names", lambda session, papers: {})
+    monkeypatch.setattr("athena.database.evolution.graph.method_names", lambda session, papers: {})
     with Session() as s:
         topic, papers = add_topic(s)
         rising = evo_db.topic_rising(s, topic, now=datetime(2026, 10, 1, tzinfo=timezone.utc))

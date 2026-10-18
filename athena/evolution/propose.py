@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from athena.evolution.corpus import EXCLUDED_TYPES, classify_kind, relevance, title_key
-from athena.evolution.openalex import OpenAlexClient, Work
+from athena.core.openalex import OpenAlexClient, Work
 
 if TYPE_CHECKING:
     from athena.evolution.classify import Classifier
@@ -449,7 +449,7 @@ def run_refinement(proposal_id: str, r=None) -> str:
     """The Celery side: start (or reuse) the 9B, refine a pending proposal, store the answer."""
     from athena.core.redis_client import get_redis
     from athena.evolution.classify import Classifier
-    from athena.evolution.gpu import chat_server  # the worker image only
+    from athena.evolution.model_lane import chat_server  # the worker image only
 
     r = r or get_redis(decode_responses=True)
     proposal = load(r, proposal_id)

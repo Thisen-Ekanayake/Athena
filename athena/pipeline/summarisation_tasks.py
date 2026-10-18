@@ -7,6 +7,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from athena.core import llm
+from athena.core.redis_client import get_redis
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem, SummaryStatus, JobType
 from athena.pipeline.summarisation import (
@@ -282,3 +283,50 @@ def label_cluster_worker(self, cluster_id: str):
         except Exception as e:
             logger.error(f"Model error for cluster {cluster_id}: {e}")
             raise self.retry(exc=e)
+
+
+# ── the hourly top-up ────────────────────────────────────────────────
+
+SUMMARY_BATCH = 500                 # the hourly run tops the queue up to this many jobs, highest score first
+SUMMARY_QUEUED_TTL = 6 * 3600       # an item queued this recently is not queued again
+
+
+@shared_task(name="athena.pipeline.tasks.enqueue_tier2_summaries")
+def enqueue_tier2_summaries():
+    """Hourly: queue a summary for every item that has none, highest score first.
+
+    Items scoring under 0.40 used to wait to be summarised when opened, but nothing in the app asked, so they
+    never got one; now they follow the better items. Items skipped for having too little text are left out.
+    One worker summarises a few hundred items an hour, so the run only tops the queue up to SUMMARY_BATCH,
+    and a short-lived Redis marker keeps an item from being queued twice.
+    """
+    from sqlalchemy import or_
+
+    # Only enqueue if we have budget
+    if not check_budget_before_call("item_summary"):
+        logger.warning('Budget exhausted, skipping the hourly summary batch')
+        return
+
+    r = get_redis()
+    room = SUMMARY_BATCH - r.llen("summary_standard")
+    if room <= 0:
+        logger.info("The summary queue is still full; nothing queued this hour.")
+        return
+    queued = 0
+    with SessionLocal() as session:
+        items = session.query(ContentItem).filter(
+            ContentItem.summary_status.notin_([SummaryStatus.COMPLETE, SummaryStatus.SKIPPED]),
+            or_(ContentItem.extra_data.is_(None), ~ContentItem.extra_data.has_key("summary_skipped")),
+        ).order_by(ContentItem.score.desc().nulls_last()).limit(room * 2).all()
+
+        for item in items:
+            if queued >= room:
+                break
+            if not r.set(f"summary:queued:{item.id}", 1, nx=True, ex=SUMMARY_QUEUED_TTL):
+                continue  # an earlier job for it is still waiting
+            item.summary_status = SummaryStatus.PENDING
+            summarise_item_worker.apply_async(
+                args=[str(item.id)], queue='summary_standard')
+            queued += 1
+        session.commit()
+    logger.info(f"Queued {queued} items for summarisation.")

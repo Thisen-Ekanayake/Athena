@@ -14,7 +14,7 @@ from athena.api.main import app
 from tests.conftest import ADMIN
 from tests.fakes import FakeRedis
 
-ROUTER_DB = "athena.api.routers.evolution.db"
+ROUTER_DB = "athena.database.evolution"
 TOPIC = SimpleNamespace(id=uuid4(), slug="object-detection", name="Object detection", built_at=datetime(2026, 10, 12),
                         status="ready", origin="curated", status_detail=None, config={})
 USER = SimpleNamespace(**{**{c: getattr(ADMIN, c) for c in ("id", "email", "display_name", "is_active")},

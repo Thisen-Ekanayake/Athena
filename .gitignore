@@ -161,6 +161,7 @@ athena_data_acquisition_plan.docx
 *.md
 
 models/
+!athena/core/models/
 scripts/evolution_bench/out/
 
 # The AUR package has its own repository (aur/.git, pushed to aur.archlinux.org)

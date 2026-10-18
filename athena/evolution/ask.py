@@ -9,7 +9,7 @@ than the chunks' ``topic_ids`` payload keeps papers that joined a map after
 their chunks were embedded.
 
 The chat model gets the passages numbered and must cite them as [n]; the API
-streams its answer (``athena.api.routers.evolution``).
+streams its answer (``athena.api.routers.evolution.ask``).
 """
 from __future__ import annotations
 

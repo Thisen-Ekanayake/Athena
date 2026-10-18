@@ -1,5 +1,5 @@
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query'
-import { apiClient, type FeedItem, type FeedResponse, type ClusterInfo } from './client'
+import { apiClient, type FeedItem, type FeedResponse } from '../client'
 
 export type FeedSort = 'score' | 'date' | 'foryou'
 
@@ -22,18 +22,6 @@ export const useFeed = (
     getNextPageParam: (lastPage) => 
       lastPage.pagination.has_next ? lastPage.pagination.page + 1 : undefined,
     initialPageParam: 1,
-  })
-}
-
-export const useClusters = (category: string | null = null) => {
-  return useQuery({
-    queryKey: ['clusters', category],
-    queryFn: async () => {
-      const { data } = await apiClient.get<ClusterInfo[]>('/clusters', {
-        params: { category }
-      })
-      return data
-    }
   })
 }
 

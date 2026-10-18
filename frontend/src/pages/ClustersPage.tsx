@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Layers } from 'lucide-react'
-import { useClusters } from '../api/queries'
+import { useClusters } from '../api/queries/clusters'
 import { useAppStore } from '../store/appStore'
 import { EmptyState } from '../ui/EmptyState'
 import { Notice } from '../ui/Notice'

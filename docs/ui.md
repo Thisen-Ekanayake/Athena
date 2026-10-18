@@ -80,5 +80,6 @@ frontend/src/
 ```
 
 Server state lives in TanStack Query, and the only state kept in the browser is the accent and a few
-remembered choices (such as the feed's last sort). Each feature's hooks sit next to it (`features/evolution/api.ts`,
-`features/search/api.ts`) or in `api/queries/`. Tests sit next to the code as `*.test.tsx`.
+remembered choices (such as the feed's last sort). Each feature's hooks sit next to it
+(`features/evolution/api/`, one file per part of a map; `features/search/api.ts`) or in `api/queries/` (feed,
+score, search, clusters, ...). Tests sit next to the code as `*.test.tsx`.

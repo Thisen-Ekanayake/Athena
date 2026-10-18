@@ -5,7 +5,8 @@ import type { Source } from '../api/client'
 import { apiErrorMessage } from '../api/error'
 import { useCreateUser, useCurrentUser, useIsAdmin, useResetPassword, useSetOnboarded, useUpdateUser, useUsers, type AuthUser, type IssuedUser, type Role } from '../api/queries/auth'
 import { useApiKeys, useDeleteApiKey, useSetApiKey } from '../api/queries/app_settings'
-import { useClusters, useFetchHealth, useScoringHealth, useSummaryStatus } from '../api/queries/phase4'
+import { useClusterList } from '../api/queries/clusters'
+import { useFetchHealth, useScoringHealth, useSummaryStatus } from '../api/queries/score'
 import { useAddSource, useSources, useToggleSource, useUpdateSource, type PreviewResponse } from '../api/queries/sources'
 import { timeAgo } from '../components/items/format'
 import { SyncLog } from '../components/layout/SyncLog'
@@ -590,7 +591,7 @@ function AppearanceSection() {
 /* ── Clusters ── */
 
 function ClustersSection() {
-  const { data: clusters, isLoading } = useClusters()
+  const { data: clusters, isLoading } = useClusterList()
   const { data: health } = useScoringHealth()
   return (
     <section className="grid gap-5">

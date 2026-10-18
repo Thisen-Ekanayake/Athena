@@ -10,7 +10,7 @@ import { NotesSection } from '../reading/NotesSection'
 import { YearBars } from '../momentum/YearBars'
 import { useMapScope, usePaperDetail, useSetMilestone, type EvolutionNode, type LooseMatch, type PaperGap, type StrictLink } from './api'
 
-interface PaperPanelProps {
+interface MapPaperPanelProps {
   slug: string
   paperId: string
   onSelect: (id: string) => void
@@ -33,7 +33,7 @@ const YEAR_SOURCE: Record<string, string> = {
   openalex: 'from OpenAlex',
 }
 
-export function PaperPanel({ slug, paperId, onSelect, onClose }: PaperPanelProps) {
+export function MapPaperPanel({ slug, paperId, onSelect, onClose }: MapPaperPanelProps) {
   const { data: paper, isLoading, error } = usePaperDetail(slug, paperId)
   const setMilestone = useSetMilestone(slug)
   const { readOnly } = useMapScope()

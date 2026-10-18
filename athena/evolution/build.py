@@ -16,8 +16,8 @@ from athena.evolution.config import TopicConfig
 from athena.evolution.corpus import Seed, build_corpus
 from athena.evolution.membership import Membership, abstract_vectors, keyword_only, semantic_membership
 from athena.evolution.milestones import score_topic
-from athena.evolution.openalex import OpenAlexClient
-from athena.evolution.semantic_scholar import SemanticScholarClient
+from athena.core.openalex import OpenAlexClient
+from athena.core.semantic_scholar import SemanticScholarClient
 
 
 def topic_membership(corpus, config: TopicConfig) -> Membership:
@@ -95,7 +95,7 @@ def build_search_topic(slug: str, stage_status: str = "building", snapshot: bool
     """
     summary = build_topic(slug, stage_status=stage_status, status_after="refining", snapshot=False)
     try:
-        from athena.evolution.gpu import embed_abstracts  # numpy and Qdrant: the worker image only
+        from athena.evolution.model_lane import embed_abstracts  # numpy and Qdrant: the worker image only
         db.set_topic_status(slug, "refining", "Embedding the papers' abstracts")
         embedded = embed_abstracts()
     except Exception as exc:

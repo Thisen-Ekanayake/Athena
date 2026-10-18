@@ -4,7 +4,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from athena.evolution.openalex import (
+from athena.core.openalex import (
     OpenAlexBudgetError, OpenAlexClient, Work, arxiv_id_from, arxiv_year, reconstruct_abstract, search_expression,
 )
 

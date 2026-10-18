@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { ArrowLeft, Layers } from 'lucide-react'
-import { useCluster } from '../api/queries/phase4'
+import { useCluster } from '../api/queries/clusters'
 import { ItemList } from '../components/items/ItemRow'
 import { FollowButton } from '../features/inbox/FollowButton'
 import { Button, ButtonLink } from '../ui/Button'

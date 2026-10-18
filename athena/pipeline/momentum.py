@@ -21,13 +21,13 @@ restarts often it never fired: metric_snapshots was empty.
 """
 from __future__ import annotations
 
-import bisect
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 
 from loguru import logger
 from sqlalchemy import delete, select, update
 
+from athena.core.citation_gains import gain
 from athena.core.config_store import get_setting, set_setting
 from athena.pipeline.celery_app import celery_app
 
@@ -198,24 +198,6 @@ def take_snapshots(session, now: datetime) -> int:
     return taken
 
 
-def count_at(history: list[tuple[datetime, int]], when: datetime) -> int | None:
-    """The count of the latest snapshot at or before ``when`` (``history`` sorted by date), or None."""
-    i = bisect.bisect_right([d for d, _ in history], when)
-    return history[i - 1][1] if i else None
-
-
-def gain(history: list[tuple[datetime, int]], current: int, published: datetime | None, since: datetime) -> int | None:
-    """Citations gained since ``since``. A paper published after it gained everything it has; one with no snapshot
-    from then is unknown."""
-    before = count_at(history, since)
-    if before is None:
-        if published is not None and published >= since:
-            before = 0
-        else:
-            return None
-    return max(0, current - before)
-
-
 def histories(session, item_ids: list) -> dict:
     """Each item's snapshots as [(date, citations)], oldest first."""
     from athena.core.models import MetricSnapshot
@@ -291,7 +273,7 @@ def run(session, s2, now: datetime, rebuilds: int | None = REBUILDS_PER_RUN) -> 
 def daily_momentum(force: bool = False) -> dict:
     """The day's citation refresh, snapshots and gains, once per UTC day (it is scheduled hourly)."""
     from athena.database.db import SessionLocal
-    from athena.evolution.semantic_scholar import SemanticScholarClient
+    from athena.core.semantic_scholar import SemanticScholarClient
     now = datetime.now(timezone.utc)
     today = now.date().isoformat()
     if not force and get_setting(DAY_MARKER) == today:

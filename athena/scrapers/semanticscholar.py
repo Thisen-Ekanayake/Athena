@@ -18,7 +18,7 @@ class SemanticScholarEnricher:
 
     @staticmethod
     def _fetch(arxiv_id: str) -> Optional[Dict[str, Any]]:
-        from athena.evolution.semantic_scholar import SemanticScholarClient
+        from athena.core.semantic_scholar import SemanticScholarClient
         key = f"ARXIV:{arxiv_id}"
         try:
             client = SemanticScholarClient(cache_dir="", patience=PATIENCE)

@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from athena.api.deps import get_db, get_redis
-from athena.api.routers import evolution as maps
+from athena.api.routers.evolution import gaps, graph, people, reading
 from athena.database import evolution as db
 from athena.database import shares
 
@@ -83,30 +83,30 @@ def shared_graph(limit: int = Query(250), found=Depends(shared), session: Sessio
                  r: redis_lib.Redis = Depends(get_redis)):
     if limit not in GRAPH_LIMITS:
         raise HTTPException(status_code=422, detail=f"limit is one of {', '.join(map(str, GRAPH_LIMITS))}")
-    return _public(maps.topic_graph(found[1].slug, limit, session, r))
+    return _public(graph.topic_graph(found[1].slug, limit, session, r))
 
 
 @router.get("/{token}/timeline")
 def shared_timeline(found=Depends(shared), session: Session = Depends(get_db),
                     r: redis_lib.Redis = Depends(get_redis)):
-    return _public(maps.topic_timeline(found[1].slug, session, r))
+    return _public(graph.topic_timeline(found[1].slug, session, r))
 
 
 @router.get("/{token}/gaps")
 def shared_gaps(found=Depends(shared), session: Session = Depends(get_db), r: redis_lib.Redis = Depends(get_redis)):
-    return _public(maps.topic_gaps(found[1].slug, session, r))
+    return _public(gaps.topic_gaps(found[1].slug, session, r))
 
 
 @router.get("/{token}/people")
 def shared_people(found=Depends(shared), session: Session = Depends(get_db),
                   r: redis_lib.Redis = Depends(get_redis)):
-    return _public(maps.topic_people(found[1].slug, session, r))
+    return _public(people.topic_people(found[1].slug, session, r))
 
 
 @router.get("/{token}/rising")
 def shared_rising(limit: int = Query(10, ge=1, le=30), found=Depends(shared), session: Session = Depends(get_db),
                   r: redis_lib.Redis = Depends(get_redis)):
-    return maps.topic_rising(found[1].slug, limit, session, r)
+    return graph.topic_rising(found[1].slug, limit, session, r)
 
 
 @router.get("/{token}/changes")
@@ -117,7 +117,7 @@ def shared_changes(found=Depends(shared), session: Session = Depends(get_db)):
 
 @router.get("/{token}/papers/{paper_id}")
 def shared_paper(paper_id: UUID, found=Depends(shared), session: Session = Depends(get_db)):
-    return maps.paper_detail(found[1].slug, paper_id, session)
+    return graph.paper_detail(found[1].slug, paper_id, session)
 
 
 @router.get("/{token}/reading-path")
@@ -130,4 +130,4 @@ def shared_reading_path(n: int = Query(10, ge=3, le=30), found=Depends(shared), 
 @router.get("/{token}/export")
 def shared_export(what: Literal["milestones", "reading-path", "gaps"], format: Literal["bib", "ris", "md", "csv"],
                   n: int = Query(10, ge=3, le=30), found=Depends(shared), session: Session = Depends(get_db)):
-    return maps.export_file(session, found[1], what, format, n)
+    return reading.export_file(session, found[1], what, format, n)

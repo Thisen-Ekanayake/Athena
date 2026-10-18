@@ -8,8 +8,8 @@ import pytest
 
 from athena.evolution.config import TopicConfig
 from athena.evolution.corpus import Seed, augment_with_s2, same_title, select_corpus
-from athena.evolution.openalex import OpenAlexClient, Work
-from athena.evolution.semantic_scholar import (
+from athena.core.openalex import OpenAlexClient, Work
+from athena.core.semantic_scholar import (
     S2Paper, SemanticScholarAuthError, SemanticScholarClient, lookup_id,
 )
 
@@ -106,7 +106,7 @@ class TestClient:
         assert ctx.is_influential
 
     def test_rejected_key_falls_back_to_the_keyless_pool(self, monkeypatch):
-        monkeypatch.setattr("athena.evolution.semantic_scholar.MIN_INTERVAL_NO_KEY", 0)
+        monkeypatch.setattr("athena.core.semantic_scholar.MIN_INTERVAL_NO_KEY", 0)
 
         def handler(request: httpx.Request) -> httpx.Response:
             if "x-api-key" in request.headers:
@@ -159,7 +159,7 @@ class TestClient:
                 return 250  # another process holds the next quarter second
 
         monkeypatch.setattr("athena.core.redis_client.get_redis", lambda: Redis())
-        monkeypatch.setattr("athena.evolution.semantic_scholar.time.sleep", slept.append)
+        monkeypatch.setattr("athena.core.semantic_scholar.time.sleep", slept.append)
         client = SemanticScholarClient(api_key="k", cache_dir="", http=httpx.Client(), min_interval=1.1)
         client._pace()
         assert calls == [("s2:next_slot", 1100)] and slept == [0.25]
@@ -170,7 +170,7 @@ class TestClient:
 
         slept = []
         monkeypatch.setattr("athena.core.redis_client.get_redis", broken)
-        monkeypatch.setattr("athena.evolution.semantic_scholar.time.sleep", slept.append)
+        monkeypatch.setattr("athena.core.semantic_scholar.time.sleep", slept.append)
         client = SemanticScholarClient(api_key="k", cache_dir="", http=httpx.Client(), min_interval=1.1)
         client._pace()
         client._pace()

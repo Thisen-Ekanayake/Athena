@@ -35,7 +35,7 @@ def process_full_text(slug: str, reparse: bool = False) -> dict:
 @celery_app.task
 def run_gpu_lane(embed: bool = True, classify: bool = True) -> dict:
     """Embed pending chunks, then label pending citing sentences, one model on the GPU at a time."""
-    from athena.evolution.gpu import run_gpu_lane as run_lane
+    from athena.evolution.model_lane import run_lane
     return run_lane(embed=embed, classify=classify)
 
 
@@ -89,7 +89,7 @@ def refresh_full_text(slug: str) -> dict:
 
 @celery_app.task
 def refresh_gpu_lane() -> dict:
-    from athena.evolution.gpu import run_gpu_lane as run_lane
+    from athena.evolution.model_lane import run_lane
     try:
         return run_lane()
     except Exception as exc:  # no model server: the snapshot still records the rebuild
