@@ -47,7 +47,7 @@ terminate() {
 stop_all() {
   echo ">> Stopping local processes..."
   local targets=()
-  for svc in api worker summary evolution frontend llm; do
+  for svc in api worker beat summary evolution frontend llm; do
     pidfile="$RUN_DIR/$svc.pid"
     if [ -f "$pidfile" ]; then
       pid="$(cat "$pidfile")"
@@ -177,8 +177,10 @@ case "${LLM_URL:-http://127.0.0.1:8080/v1}" in
   *) echo "   using the model server at $LLM_URL" ;;
 esac
 start_proc api      uvicorn athena.api.main:app --host 127.0.0.1 --port 8000 --reload
-start_proc worker   celery -A athena.pipeline.tasks worker -l info --pool=threads \
-                      -B --schedule "$RUN_DIR/celerybeat-schedule"
+start_proc worker   celery -A athena.pipeline.tasks worker -l info --pool=threads
+# The periodic tasks: beat in its own process, not embedded in the worker (-B). Embedded beat closes every file
+# the worker had open, and a zipped egg on the host's sys.path that importlib.metadata keeps open then fails it.
+start_proc beat     celery -A athena.pipeline.tasks beat -l info --schedule "$RUN_DIR/celerybeat-schedule"
 # Summaries and cluster labels: their own queues, one at a time (the model server answers one request at a time).
 start_proc summary  celery -A athena.pipeline.tasks worker -l info --pool=solo -c 1 -n "summary@%h" \
                       -Q summary_urgent,summary_standard,summary_lazy,summary_cluster
@@ -201,6 +203,6 @@ echo " Athena is running (native services, dockerised infra)"
 echo "   Frontend : ${FRONTEND_URL}"
 echo "   API      : ${API_URL}        (docs: ${API_URL}/docs)"
 echo
-echo "   Logs : ${RUN_DIR}/{api,worker,summary,evolution,frontend,llm}.log"
+echo "   Logs : ${RUN_DIR}/{api,worker,beat,summary,evolution,frontend,llm}.log"
 echo "   Stop : ./run_native.sh --stop"
 echo "==================================================================="
