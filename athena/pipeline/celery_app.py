@@ -9,6 +9,11 @@ celery_app = Celery(
     broker=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
     backend=os.getenv("REDIS_URL", "redis://localhost:6379/0")
 )
+# The @shared_task tasks (summaries, scoring) find their app through Celery's current app, which is kept per thread.
+# In the API's worker threads, where sync routes run, that was Celery's own default app with an amqp broker on
+# localhost:5672: queueing a summary or a rescore from a route failed with "Connection refused". This is the
+# default app in every thread.
+celery_app.set_default()
 
 # Celery config: enable dead-letter queue via task_routes
 celery_app.conf.update(
