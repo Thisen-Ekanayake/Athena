@@ -59,8 +59,18 @@ if [ ! -f .env ]; then
 fi
 
 # --- start the stack --------------------------------------------------------
+# Compose starts an image it already has without looking for a newer one, so a `latest` pulled months ago runs
+# months-old code, and its old create_all and seed, against today's database. Pull the app's release images every
+# time (not the databases', whose `latest` could upgrade the data in place), and build the dev ones from here.
+UP_FLAGS="--build"
+if [ "$COMPOSE_FILE" = "$RELEASE_COMPOSE" ]; then
+  UP_FLAGS=""
+  echo ">> Pulling the release images"
+  docker compose -f "$COMPOSE_FILE" pull --quiet web worker summary evolution frontend \
+    || echo "WARNING: could not pull the release images; starting the ones already here, which may be old." >&2
+fi
 echo ">> Starting stack from ${COMPOSE_FILE}"
-docker compose -f "$COMPOSE_FILE" up -d
+docker compose -f "$COMPOSE_FILE" up -d $UP_FLAGS
 
 # --- wait for a URL to return HTTP 200 --------------------------------------
 wait_for_http() {
