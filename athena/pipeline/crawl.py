@@ -7,6 +7,7 @@ queued, the sync route's send_task and the beat entries still find them.
 """
 import asyncio
 import hashlib
+import json
 import os
 import re
 import time
@@ -92,31 +93,45 @@ def crawl_source(self, source_id: str, sync_id: str | None = None):
         sync_status.source_finished(r, sync_id, source_id, "done" if found else "empty", new=new)
 
 
-@celery_app.task(name="athena.pipeline.tasks.enrich_arxiv_paper", bind=True, max_retries=3, rate_limit="1/s")
-def enrich_arxiv_paper(self, url: str, arxiv_id: str):
-    try:
-        asyncio.run(_enrich_paper_async(url, arxiv_id))
-    except Exception as exc:
-        logger.error(f"Enrichment task failed for {arxiv_id}: {describe_error(exc)}")
-        raise self.retry(exc=exc, countdown=60)
+# New arXiv papers wait here for their Semantic Scholar counts, as [url, arXiv id]. A job per paper, each waiting
+# its turn at one request a second, held every worker thread through a sync's thousand papers, and the embedding
+# and scoring runs queued behind them for hours; a batch request asks about 200 papers.
+ENRICH_QUEUE = "athena:enrich_queue"
+ENRICH_BATCH = 400  # papers a run takes: two batch requests
 
 
-async def _enrich_paper_async(url: str, arxiv_id: str):
-    from athena.scrapers.semanticscholar import SemanticScholarEnricher
+def queue_enrichment(url: str, arxiv_id: str) -> None:
+    """Queue a paper for the next enrichment run, by its base id (2403.00001v1 -> 2403.00001)."""
+    get_redis().rpush(ENRICH_QUEUE, json.dumps([url, re.sub(r'v\d+$', '', arxiv_id)]))
+
+
+@celery_app.task(name="athena.pipeline.tasks.enrich_arxiv_paper")
+def enrich_arxiv_paper(url: str, arxiv_id: str):
+    """A paper's enrichment job from before they were batched: it joins the queue."""
+    queue_enrichment(url, arxiv_id)
+
+
+@celery_app.task
+def process_enrich_queue() -> int:
+    """Citation and reference counts for the papers in ENRICH_QUEUE, ENRICH_BATCH at a time. Returns how many.
+
+    Papers With Code shut down in 2025 (its API redirects to Hugging Face), so only Semantic Scholar is asked.
+    """
     from athena.database.operations import update_content_item_metrics
+    from athena.scrapers.semanticscholar import SemanticScholarEnricher
 
-    ss_enricher = SemanticScholarEnricher()
-
-    # Strip version suffix (e.g. 2403.00001v1 -> 2403.00001) as enrichment APIs prefer base IDs
-    base_arxiv_id = re.sub(r'v\d+$', '', arxiv_id)
-
-    logger.info(f"Enriching paper: {base_arxiv_id} (original: {arxiv_id})")
-    # Papers With Code shut down in 2025 (its API redirects to Hugging Face), so only Semantic Scholar is asked.
-    ss_data = await ss_enricher.fetch_paper_metrics(base_arxiv_id)
-
-    citation_count = ss_data.get("citation_count", 0) if ss_data else 0
-    extra_data = {"semantic_scholar": ss_data}
-    update_content_item_metrics(url, citation_count, extra_data)
+    r = get_redis()
+    pairs = []
+    while len(pairs) < ENRICH_BATCH and (raw := r.lpop(ENRICH_QUEUE)):
+        pairs.append(json.loads(raw))
+    if not pairs:
+        return 0
+    logger.info(f"Enriching {len(pairs)} papers from Semantic Scholar")
+    found = SemanticScholarEnricher.fetch_many([arxiv_id for _, arxiv_id in pairs])
+    for url, arxiv_id in pairs:
+        ss_data = found.get(arxiv_id)
+        update_content_item_metrics(url, ss_data["citation_count"] if ss_data else 0, {"semantic_scholar": ss_data})
+    return len(pairs)
 
 
 async def _crawl_source_async(source_id: str, is_retry: bool = False) -> tuple[int, int]:
@@ -189,7 +204,7 @@ async def _crawl_source_async(source_id: str, is_retry: bool = False) -> tuple[i
                             if "arxiv" in source.url:
                                 arxiv_id = item.extra_data.get("arxiv_id")
                                 if arxiv_id:
-                                    enrich_arxiv_paper.delay(item_url, arxiv_id)
+                                    queue_enrichment(item_url, arxiv_id)
                             # Phase 5: Stage and queue
                             stage_content_item.delay(item_url, item.abstract or '', item.title)
                 else:

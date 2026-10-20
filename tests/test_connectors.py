@@ -136,42 +136,45 @@ class TestSemanticScholarEnricher:
             return SemanticScholarClient(api_key="k", http=http, min_interval=0, **kwargs)
         return patch("athena.core.semantic_scholar.SemanticScholarClient", side_effect=make)
 
-    @pytest.mark.asyncio
-    async def test_fetch_paper_metrics_returns_citation_count(self):
+    def test_papers_are_asked_about_together_and_come_back_by_arxiv_id(self):
+        import json
         import httpx
         from athena.scrapers.semanticscholar import SemanticScholarEnricher
+
+        asked = []
 
         def handler(request):
             assert request.url.path.endswith("/paper/batch")
+            asked.append(json.loads(request.content)["ids"])
             return httpx.Response(200, json=[{"paperId": "s2-1", "title": "A paper", "citationCount": 42,
-                                              "referenceCount": 10}])
+                                              "referenceCount": 10}, None])
 
         with self._client(handler):
-            result = await SemanticScholarEnricher().fetch_paper_metrics("2301.00001")
+            result = SemanticScholarEnricher.fetch_many(["2301.00001", "2301.00002"])
 
-        assert result == {"paper_id": "s2-1", "citation_count": 42, "reference_count": 10}
+        assert asked == [["ARXIV:2301.00001", "ARXIV:2301.00002"]]
+        assert result == {"2301.00001": {"paper_id": "s2-1", "citation_count": 42, "reference_count": 10},
+                          "2301.00002": None}
 
-    @pytest.mark.asyncio
-    async def test_returns_none_on_404(self):
+    def test_papers_it_does_not_know_yet_are_none(self):
         import httpx
         from athena.scrapers.semanticscholar import SemanticScholarEnricher
 
-        with self._client(lambda request: httpx.Response(200, json=[None])):
-            result = await SemanticScholarEnricher().fetch_paper_metrics("nonexistent-id")
+        with self._client(lambda request: httpx.Response(400, json={"error": "No valid paper ids given"})):
+            result = SemanticScholarEnricher.fetch_many(["2610.00001"])
 
-        assert result is None
+        assert result == {"2610.00001": None}
 
-    @pytest.mark.asyncio
-    async def test_returns_none_when_the_lookup_fails(self):
+    def test_every_paper_is_none_when_the_lookup_fails(self):
         import httpx
         from athena.scrapers import semanticscholar
         from athena.scrapers.semanticscholar import SemanticScholarEnricher
 
         with patch.object(semanticscholar, "PATIENCE", 0), \
                 self._client(lambda request: httpx.Response(429, json={})):
-            result = await SemanticScholarEnricher().fetch_paper_metrics("2301.00001")
+            result = SemanticScholarEnricher.fetch_many(["2301.00001", "2301.00002"])
 
-        assert result is None
+        assert result == {"2301.00001": None, "2301.00002": None}
 
 
 class TestPlaywrightScraperParse:

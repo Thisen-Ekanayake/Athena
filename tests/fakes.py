@@ -66,6 +66,10 @@ class FakeRedis:
         self.store.setdefault(key, []).extend(values)
         return len(self.store[key])
 
+    def lpop(self, key):
+        items = self.store.get(key)
+        return items.pop(0) if items else None
+
     def lrange(self, key, start, end):
         items = self.store.get(key, [])
         return items[start:None if end == -1 else end + 1]

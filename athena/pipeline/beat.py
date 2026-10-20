@@ -36,6 +36,9 @@ def setup_periodic_tasks(sender, **kwargs):
     # Run scoring queue every 1 minute
     sender.add_periodic_task(60.0, athena.pipeline.scoring.process_scoring_queue.s(),
                              name='process scoring queue every 1 minute')
+    # Semantic Scholar counts for the new arXiv papers, in batches, every 1 minute
+    sender.add_periodic_task(60.0, athena.pipeline.crawl.process_enrich_queue.s(),
+                             name='enrich new papers every 1 minute')
     # Refresh recency scores every 6 hours
     sender.add_periodic_task(21600.0,
                              athena.pipeline.scoring.refresh_recency_scores.s(),
