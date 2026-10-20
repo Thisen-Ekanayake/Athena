@@ -72,7 +72,12 @@ def process_embedding_queue():
             return
 
         logger.info(f"Processing batch of {len(item_ids)} items for embedding.")
-        process_batch(item_ids)
+        try:
+            process_batch(item_ids)
+        except Exception as e:  # before the batch could start (no free database connection): keep its items
+            logger.error(f"Embedding batch not started; its items go back on the queue: {e}")
+            r.rpush("athena:embedding_queue", *item_ids)
+            return
 
 
 def process_batch(item_ids: List[str]):
