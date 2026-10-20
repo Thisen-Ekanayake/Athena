@@ -96,6 +96,18 @@ class TestClient:
         assert json.loads(seen[-1].content)["ids"] == ["ARXIV:2"]
         assert len(seen) == 2
 
+    def test_a_batch_of_papers_it_does_not_know_is_unknown_not_an_error(self):
+        def handler(request):
+            if json.loads(request.content)["ids"] == ["ARXIV:2610.1"]:
+                return httpx.Response(400, json={"error": "No valid paper ids given"})
+            return httpx.Response(400, json={"error": "Unrecognized or unsupported fields: [nope]"})
+
+        http = httpx.Client(base_url="https://api.semanticscholar.org/graph/v1", transport=httpx.MockTransport(handler))
+        client = SemanticScholarClient(api_key="k", cache_dir="", http=http, min_interval=0)
+        assert client.get_papers(["ARXIV:2610.1"]) == {"ARXIV:2610.1": None}
+        with pytest.raises(httpx.HTTPStatusError):  # any other bad request still fails
+            client.get_papers(["ARXIV:2"], fields="nope")
+
     def test_reference_contexts(self):
         contexts = {"p1": [{"contexts": ["LoRA [12] freezes the weights."], "intents": ["methodology"],
                             "isInfluential": True, "citedPaper": ref("r1", "LoRA", arxiv="2106.09685")}]}
