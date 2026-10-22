@@ -201,7 +201,12 @@ echo
 echo "==================================================================="
 echo " Athena is running (native services, dockerised infra)"
 echo "   Frontend : ${FRONTEND_URL}"
-echo "   API      : ${API_URL}        (docs: ${API_URL}/docs)"
+# The API docs are off unless DOCS_ENABLED=true (athena/api/config.py); /docs is a 404 then.
+if [ "$(printf '%s' "${DOCS_ENABLED:-$(env_value DOCS_ENABLED)}" | tr '[:upper:]' '[:lower:]')" = "true" ]; then
+  echo "   API      : ${API_URL}        (docs: ${API_URL}/docs)"
+else
+  echo "   API      : ${API_URL}        (docs off: set DOCS_ENABLED=true in .env)"
+fi
 echo
 echo "   Logs : ${RUN_DIR}/{api,worker,beat,summary,evolution,frontend,llm}.log"
 echo "   Stop : ./run_native.sh --stop"

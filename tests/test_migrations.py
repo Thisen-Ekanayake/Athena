@@ -110,3 +110,34 @@ def test_empty_duplicate_sources_are_removed_and_the_gradient_switched_back_on(s
         left = dict(conn.execute(text("SELECT id, is_active FROM sources")).all())
         logs = conn.execute(text("SELECT count(*) FROM fetch_logs")).scalar()
     assert {k: bool(v) for k, v in left.items()} == {"m-rss": True, "g": True} and logs == 0
+
+
+def test_what_old_code_put_back_goes_again(sqlite_engine):
+    """0012: an older checkout's create_all, add_*.py scripts and seed, run on a migrated database, are undone."""
+    from alembic import command
+    with sqlite_engine.connect() as conn:
+        command.upgrade(migrate.alembic_config(conn), "0011")
+        for table in ("reference_embeddings", "score_audit_logs", "trending_briefs", "summary_usage_log",
+                      "qa_usage_log", "evo_cross_links"):
+            conn.execute(text(f"CREATE TABLE {table} (id VARCHAR PRIMARY KEY)"))
+        conn.execute(text("ALTER TABLE evo_gap_statements ADD COLUMN cross_checked_at TIMESTAMP"))
+        for sid, url in (("a-rss", "https://www.anthropic.com/feed.xml"), ("m-rss", "https://ai.meta.com/blog/rss/"),
+                         ("a", "https://www.anthropic.com/news")):
+            conn.execute(text("INSERT INTO sources (id, name, url, type, category, is_active, created_at)"
+                              " VALUES (:id, :id, :url, 'RSS', 'COMPANY', 1, CURRENT_TIMESTAMP)"),
+                         {"id": sid, "url": url})
+        conn.execute(text("INSERT INTO fetch_logs (id, source_id, status, duration_ms)"
+                          " VALUES ('f', 'a-rss', 'error', 1)"))
+        conn.execute(text("INSERT INTO content_items (id, source_id, title, url, published_at, category,"
+                          " content_hash) VALUES ('i', 'm-rss', 't', 'https://example.org/i', CURRENT_TIMESTAMP,"
+                          " 'COMPANY_BLOG', 'i')"))
+        conn.commit()
+    migrate.upgrade()
+    insp = inspect(sqlite_engine)
+    assert not {"reference_embeddings", "score_audit_logs", "trending_briefs", "summary_usage_log", "qa_usage_log",
+                "evo_cross_links"} & set(insp.get_table_names())
+    assert "cross_checked_at" not in {c["name"] for c in insp.get_columns("evo_gap_statements")}
+    with sqlite_engine.connect() as conn:
+        left = set(conn.execute(text("SELECT id FROM sources")).scalars())
+        logs = conn.execute(text("SELECT count(*) FROM fetch_logs")).scalar()
+    assert left == {"m-rss", "a"} and logs == 0  # a duplicate with items stays, like any other source

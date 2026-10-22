@@ -203,6 +203,33 @@ def test_a_failure_is_retried_soon_then_given_up_with_its_error(task, r):
     assert dlq.call_args.args == ("a", "ReadTimeout")
 
 
+def test_a_papers_enrichment_waits_in_the_queue_by_its_base_id(r):
+    """The crawl, and jobs queued before enrichment was batched, add a paper to the queue; nothing asks yet."""
+    from athena.pipeline import crawl
+    with patch.object(crawl, "get_redis", return_value=r):
+        crawl.queue_enrichment("http://arxiv.org/abs/2610.00001v2", "2610.00001v2")
+        crawl.enrich_arxiv_paper.run("http://arxiv.org/abs/2610.00002v1", "2610.00002v1")
+    assert [json.loads(p) for p in r.lrange(crawl.ENRICH_QUEUE, 0, -1)] == [
+        ["http://arxiv.org/abs/2610.00001v2", "2610.00001"], ["http://arxiv.org/abs/2610.00002v1", "2610.00002"]]
+
+
+def test_an_enrichment_run_asks_about_its_batch_in_one_lookup(r, monkeypatch):
+    from athena.pipeline import crawl
+    from athena.scrapers.semanticscholar import SemanticScholarEnricher
+    monkeypatch.setattr(crawl, "ENRICH_BATCH", 2)
+    for n in (1, 2, 3):
+        r.rpush(crawl.ENRICH_QUEUE, json.dumps([f"u{n}", f"2610.0000{n}"]))
+    counts = {"2610.00001": {"paper_id": "s2-1", "citation_count": 4, "reference_count": 30}, "2610.00002": None}
+    with patch.object(crawl, "get_redis", return_value=r), \
+            patch.object(SemanticScholarEnricher, "fetch_many", return_value=counts) as fetch, \
+            patch("athena.database.operations.update_content_item_metrics") as update:
+        assert crawl.process_enrich_queue.run() == 2
+    fetch.assert_called_once_with(["2610.00001", "2610.00002"])
+    assert [c.args for c in update.call_args_list] == [("u1", 4, {"semantic_scholar": counts["2610.00001"]}),
+                                                       ("u2", 0, {"semantic_scholar": None})]
+    assert [json.loads(p)[0] for p in r.lrange(crawl.ENRICH_QUEUE, 0, -1)] == ["u3"]  # the next run's
+
+
 def test_describe_error_names_the_exception():
     from athena.pipeline.crawl import describe_error
     assert describe_error(ValueError("bad page")) == "ValueError: bad page"

@@ -180,7 +180,14 @@ class SemanticScholarClient:
                 missing.append(pid)
         for start in range(0, len(missing), BATCH_SIZE):
             chunk = missing[start:start + BATCH_SIZE]
-            data = self._request("POST", "/paper/batch", {"fields": fields}, {"ids": chunk})
+            try:
+                data = self._request("POST", "/paper/batch", {"fields": fields}, {"ids": chunk})
+            except httpx.HTTPStatusError as exc:
+                # A batch of papers it doesn't know yet (new arXiv preprints) is refused with 400 "No valid paper
+                # ids given" instead of answered with nulls.
+                if exc.response.status_code != 400 or "no valid paper ids" not in exc.response.text.lower():
+                    raise
+                data = None
             for pid, raw in zip(chunk, data or [None] * len(chunk)):
                 self._cache_write("paper", pid, fields, raw)
                 out[pid] = S2Paper.from_api(raw) if raw else None

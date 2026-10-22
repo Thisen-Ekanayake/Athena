@@ -13,6 +13,11 @@ import athena.pipeline.summarisation_tasks
 import athena.pipeline.watches
 from athena.pipeline.celery_app import celery_app
 
+# A once-a-minute run still waiting in a busy worker's queue after this many seconds is dropped: the next one is
+# on its way. Ones that waited out a sync's backlog all ran at once, more of them than the database pool has
+# connections, and the runs that got none lost the items they had taken from their queue.
+MINUTE_RUN_EXPIRES = 55
+
 
 @celery_app.on_after_configure.connect
 def setup_periodic_tasks(sender, **kwargs):
@@ -22,7 +27,7 @@ def setup_periodic_tasks(sender, **kwargs):
     sender.add_periodic_task(
         60.0,
         athena.pipeline.embedding_worker.process_embedding_queue.s(),
-        name='process embeddings every 1 minute')
+        name='process embeddings every 1 minute', expires=MINUTE_RUN_EXPIRES)
     # Run clustering every 6 hours
     sender.add_periodic_task(
         21600.0,
@@ -35,7 +40,10 @@ def setup_periodic_tasks(sender, **kwargs):
         name='compute links every 6 hours')
     # Run scoring queue every 1 minute
     sender.add_periodic_task(60.0, athena.pipeline.scoring.process_scoring_queue.s(),
-                             name='process scoring queue every 1 minute')
+                             name='process scoring queue every 1 minute', expires=MINUTE_RUN_EXPIRES)
+    # Semantic Scholar counts for the new arXiv papers, in batches, every 1 minute
+    sender.add_periodic_task(60.0, athena.pipeline.crawl.process_enrich_queue.s(),
+                             name='enrich new papers every 1 minute', expires=MINUTE_RUN_EXPIRES)
     # Refresh recency scores every 6 hours
     sender.add_periodic_task(21600.0,
                              athena.pipeline.scoring.refresh_recency_scores.s(),
