@@ -2,7 +2,7 @@
 # Full Node image compiles the React app with Vite.
 # All dev dependencies, source maps, and build tooling stay in this stage only.
 # Build context is the repo root; frontend sources live under frontend/.
-FROM node:24-alpine AS builder
+FROM node:25-alpine AS builder
 WORKDIR /app
 COPY frontend/package*.json ./
 RUN npm ci
