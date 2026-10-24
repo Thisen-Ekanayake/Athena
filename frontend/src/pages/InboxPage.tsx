@@ -20,11 +20,16 @@ export function InboxPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unread])
 
-  // The bell links here with ?open=<id>: open that entry and bring it into view once the list is in.
+  // The bell links here with ?open=<id>: open that entry (while rendering, when the id changes) and bring it
+  // into view once the list is in.
   const target = params.get('open')
+  const [openedTarget, setOpenedTarget] = useState(target)
+  if (target !== openedTarget) {
+    setOpenedTarget(target)
+    if (target) setOpen((s) => new Set(s).add(target))
+  }
   useEffect(() => {
     if (!target || !data) return
-    setOpen((s) => new Set(s).add(target))
     document.getElementById(`inbox-${target}`)?.scrollIntoView({ block: 'start' })
   }, [target, data])
 

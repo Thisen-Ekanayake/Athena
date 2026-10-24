@@ -29,7 +29,7 @@ export async function downloadFile(path: string, params: Record<string, string>,
       } catch {
         // not JSON: fall back to axios's message
       }
-      if (detail) throw new Error(detail)
+      if (detail) throw new Error(detail, { cause: e })
     }
     throw e
   }
