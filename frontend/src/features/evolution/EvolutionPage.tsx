@@ -431,15 +431,8 @@ export function TopicView({ slug }: { slug: string }) {
       </div>
 
       {tab === 'map' ? (
-        <div
-          ref={mapRef}
-          className={cn(
-            'grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]',
-            // Full screen: the map takes the screen's height and the paper panel scrolls beside it.
-            fullScreen && 'fixed inset-0 z-[60] overflow-y-auto bg-bg p-4 xl:grid-rows-[minmax(0,1fr)] xl:items-stretch xl:overflow-hidden',
-          )}
-        >
-          <div className={cn('grid min-w-0 gap-3', fullScreen && 'h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)] xl:h-auto')}>
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+          <div className="grid min-w-0 gap-3">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[12.5px] text-fg-2">
               <span className="flex items-center gap-2">
                 Papers
@@ -456,25 +449,33 @@ export function TopicView({ slug }: { slug: string }) {
               <Legend />
               <span className="ml-auto flex items-center gap-1">
                 {timeline.data.without_full_text.length > 0 && (
-                  <Button variant="ghost" size="sm" onClick={() => { if (fullScreen) toggleFullScreen(); setTab('no-full-text') }} title="Notable papers whose full text is not openly available, so their gaps and citing sentences are missing">
+                  <Button variant="ghost" size="sm" onClick={() => setTab('no-full-text')} title="Notable papers whose full text is not openly available, so their gaps and citing sentences are missing">
                     Without full text ({timeline.data.without_full_text.length})
                   </Button>
                 )}
-                <Button variant="ghost" size="sm" onClick={toggleFullScreen} title={fullScreen ? 'Leave full screen (Esc)' : 'Show the map full screen'}>
-                  {fullScreen ? <><Minimize2 /> Exit full screen</> : <><Maximize2 /> Full screen</>}
+                <Button variant="ghost" size="sm" onClick={toggleFullScreen} title="Show only the map, on the whole screen">
+                  <Maximize2 /> Full screen
                 </Button>
               </span>
             </div>
-            <EvolutionGraph
-              nodes={nodes}
-              edges={edges}
-              looseEdges={showLoose ? loose_edges : []}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-              showCitations={showCitations}
-              onExporter={(e) => { exporter.current = e }}
-              className={fullScreen ? 'h-auto min-h-0' : undefined}
-            />
+            {/* Full screen shows the map alone; a selected paper's thread still lights up, and its panel is there on the way back. */}
+            <div ref={mapRef} className={cn('relative', fullScreen && 'fixed inset-0 z-[60] bg-[var(--map-bg)]')}>
+              <EvolutionGraph
+                nodes={nodes}
+                edges={edges}
+                looseEdges={showLoose ? loose_edges : []}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                showCitations={showCitations}
+                onExporter={(e) => { exporter.current = e }}
+                className={fullScreen ? 'h-full rounded-none border-0' : undefined}
+              />
+              {fullScreen && (
+                <Button variant="secondary" size="sm" className="absolute top-3 right-3 z-20" onClick={toggleFullScreen} title="Leave full screen (Esc)">
+                  <Minimize2 /> Exit full screen
+                </Button>
+              )}
+            </div>
           </div>
           {selectedId ? (
             <MapPaperPanel slug={slug} paperId={selectedId} onSelect={setSelectedId} onClose={() => setSelectedId(null)} />

@@ -139,7 +139,6 @@ function SelectionMenu({ pending, onSave, onClose }: { pending: Pending; onSave:
         </>
       )}
     </div>,
-    // Inside a full-screen map the body is not drawn, so the menu goes into the full-screen element.
-    document.fullscreenElement ?? document.body,
+    document.body,
   )
 }
