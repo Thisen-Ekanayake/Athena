@@ -475,12 +475,12 @@ export function TopicView({ slug }: { slug: string }) {
                 showCitations={showCitations}
                 onExporter={(e) => { exporter.current = e }}
                 className={fullScreen ? 'h-full rounded-none border-0' : undefined}
+                actions={fullScreen && (
+                  <Button variant="secondary" size="sm" onClick={toggleFullScreen} title="Leave full screen (Esc)">
+                    <Minimize2 /> Exit full screen
+                  </Button>
+                )}
               />
-              {fullScreen && (
-                <Button variant="secondary" size="sm" className="absolute top-3 right-3 z-20" onClick={toggleFullScreen} title="Leave full screen (Esc)">
-                  <Minimize2 /> Exit full screen
-                </Button>
-              )}
             </div>
           </div>
           {selectedId ? (

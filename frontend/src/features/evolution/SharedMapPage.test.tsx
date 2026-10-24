@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { fireEvent, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { mockApi, renderWithProviders } from '../../test/utils'
@@ -6,7 +7,9 @@ import { SharedMapPage } from './SharedMapPage'
 
 // The lineage map draws with WebGL and d3-force, which jsdom has neither of; the page around it is under test.
 vi.mock('./EvolutionGraph', () => ({
-  EvolutionGraph: ({ nodes }: { nodes: EvolutionNode[] }) => <div data-testid="graph">{nodes.length} stars</div>,
+  EvolutionGraph: ({ nodes, actions }: { nodes: EvolutionNode[]; actions?: ReactNode }) => (
+    <div data-testid="graph">{nodes.length} stars{actions}</div>
+  ),
 }))
 
 const topic: EvolutionTopic = {
@@ -41,7 +44,7 @@ describe('SharedMapPage', () => {
 
     expect(await screen.findByRole('heading', { name: 'Diffusion models' })).toBeInTheDocument()
     expect(screen.getByText('Shared map · read only')).toBeInTheDocument()
-    expect(screen.getByTestId('graph')).toHaveTextContent('2 stars')
+    expect(screen.getByTestId('graph')).toHaveTextContent(/^2 stars/)
     expect(screen.getByRole('button', { name: /Denoising diffusion probabilistic models/ })).toBeInTheDocument()
 
     const tabs = screen.getAllByRole('tab').map((t) => t.textContent)

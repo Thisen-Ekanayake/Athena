@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import cytoscape from 'cytoscape'
+import { Scan } from 'lucide-react'
 import { forceCollide, forceSimulation, forceX, forceY, type SimulationNodeDatum } from 'd3-force'
 import { useAppStore } from '../../store/appStore'
+import { Button } from '../../ui/Button'
 import { cn } from '../../ui/cn'
 import type { EvolutionEdge, EvolutionNode, LooseEdge } from './api'
 import { makeExporter, type GraphExporter } from './graphExport'
@@ -17,6 +19,8 @@ interface EvolutionGraphProps {
   onExporter?: (exporter: GraphExporter | null) => void
   /** Overrides the box's fixed height, e.g. to fill the screen. */
   className?: string
+  /** More buttons for the map's top-right corner, after Fit. */
+  actions?: ReactNode
 }
 
 // Graph units. Time runs left to right; each year's column is as wide as its paper count needs
@@ -249,7 +253,7 @@ function authorLine(paper: EvolutionNode) {
   return paper.author_count > paper.authors.length ? `${names} et al.` : names
 }
 
-export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations, onExporter, className }: EvolutionGraphProps) {
+export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations, onExporter, className, actions }: EvolutionGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const cyRef = useRef<cytoscape.Core | null>(null)
   const onSelectRef = useRef(onSelect)
@@ -459,10 +463,25 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
     cy.animate({ center: { eles: node }, zoom: Math.max(cy.zoom(), 0.9) }, { duration: 300 })
   }, [selectedId, nodes])
 
+  // Zoom and pan so every paper drawn fits the box.
+  const fitAll = () => {
+    const cy = cyRef.current
+    if (!cy) return
+    const fit = { eles: cy.elements(), padding: 30 }
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) cy.fit(fit.eles, fit.padding)
+    else cy.animate({ fit }, { duration: 300 })
+  }
+
   return (
     <div className={cn('relative h-[620px] w-full overflow-hidden rounded-xl border border-line', className)} style={{ background: 'var(--map-bg)' }}>
       {/* Explicit size: an absolutely positioned container collapsed to zero height once cytoscape took it over. */}
       <div ref={containerRef} className="relative h-full w-full" aria-label="Lineage map of the topic, oldest papers on the left" />
+      <div className="absolute top-3 right-3 z-20 flex gap-2">
+        <Button variant="secondary" size="sm" onClick={fitAll} title="Zoom out to show every paper drawn">
+          <Scan /> Fit
+        </Button>
+        {actions}
+      </div>
       {hovered && (
         <div
           role="tooltip"
