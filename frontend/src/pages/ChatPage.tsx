@@ -163,7 +163,6 @@ function ChatView({ id }: { id: string }) {
   const dismiss = useChatStreams((s) => s.dismiss)
   const openArtifact = useChatStreams((s) => s.openArtifact)
   const [error, setError] = useState<string | null>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
   const nearBottom = useRef(true)
 
   useEffect(() => {
@@ -174,9 +173,10 @@ function ChatView({ id }: { id: string }) {
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
+  // Follow the answer while the page is at its end; the composer is sticky there, so scroll to the very bottom.
   useLayoutEffect(() => {
-    if (nearBottom.current) bottomRef.current?.scrollIntoView({ block: 'end' })
-  }, [chat.data?.messages.length, draft?.content, draft?.reasoning, draft?.steps.length])
+    if (nearBottom.current) window.scrollTo({ top: document.documentElement.scrollHeight })
+  }, [chat.data?.messages.length, draft?.question, draft?.content, draft?.reasoning, draft?.steps.length])
 
   if (chat.isLoading) return <Spinner label="Opening the chat…" />
   if (!chat.data) return <Notice tone="error" title="Chat not found">It may have been deleted. <Link to="/chats" className="underline">All chats</Link></Notice>
@@ -197,6 +197,7 @@ function ChatView({ id }: { id: string }) {
 
   const submit = async (m: Outgoing) => {
     setError(null)
+    nearBottom.current = true  // follow the new turn, wherever the page was
     try {
       const files = m.files.length ? await uploadChatFiles(id, m.files) : []
       void send(id, { content: m.text, model: m.model, effort: m.effort, attachment_ids: files.map((f) => f.id) },
@@ -207,6 +208,7 @@ function ChatView({ id }: { id: string }) {
   }
 
   const retry = () => {
+    nearBottom.current = true
     const model = lastAssistant?.model && lastAssistant.model !== 'qwen3.5-9b-vision' ? lastAssistant.model : c.model
     void send(id, { retry: true, model: model ?? '', effort: c.effort ?? 'low' }, { question: '' })
   }
@@ -240,7 +242,6 @@ function ChatView({ id }: { id: string }) {
           </>
         )}
       </div>
-      <div ref={bottomRef} />
       <div className="sticky bottom-0 -mx-2 bg-gradient-to-t from-bg via-bg to-transparent px-2 pt-6 pb-4">
         {error && <p className="mb-2 text-[12.5px] text-bad">{error}</p>}
         <Composer

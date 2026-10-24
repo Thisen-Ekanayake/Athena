@@ -42,6 +42,7 @@ const CHAT: Chat = {
 describe('ChatPage', () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn()
+    window.scrollTo = vi.fn() as unknown as typeof window.scrollTo  // jsdom has no layout
   })
 
   it('shows the thinking, the tools, the sources and the artifacts of a saved answer', async () => {

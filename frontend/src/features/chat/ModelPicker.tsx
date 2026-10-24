@@ -30,7 +30,7 @@ export function ModelPicker({ models, model, effort, onChange, disabled }: {
     <Popover
       label="Model and effort"
       width={280}
-      estHeight={320}
+      estHeight={440}
       align="start"
       trigger={({ ref, open, toggle }) => (
         <button

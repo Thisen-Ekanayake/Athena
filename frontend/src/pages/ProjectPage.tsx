@@ -153,7 +153,7 @@ function Knowledge({ project }: { project: Project }) {
           Add papers, maps, reviews and your own files. Chats here search them and cite what they use.
         </p>
       ) : (
-        <ul className="grid pb-2">
+        <ul className="grid grid-cols-[minmax(0,1fr)] pb-2">
           {project.items.map((i) => {
             const Icon = KIND_ICONS[i.kind]
             const title = i.link ? <Link to={i.link} className="hover:underline">{i.title}</Link>
@@ -206,7 +206,7 @@ function Artifacts({ project, onOpen }: { project: Project; onOpen: (id: string)
       {project.artifacts.length === 0 ? (
         <p className="px-4 pb-4 text-[12.5px] text-fg-3">Documents the model writes in this project’s chats (drafts, notes, tables) collect here.</p>
       ) : (
-        <ul className="grid pb-2">
+        <ul className="grid grid-cols-[minmax(0,1fr)] pb-2">
           {project.artifacts.map((a) => (
             <li key={a.id}>
               <button type="button" onClick={() => onOpen(a.id)} className="flex w-full items-center gap-2.5 px-4 py-1.5 text-left hover:bg-surface-2">
@@ -260,7 +260,7 @@ export function ProjectPage() {
     <div className={cn('mx-auto max-w-6xl', artifactId && 'xl:pr-[min(46vw,640px)]')}>
       <Header project={p} />
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="grid gap-4">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
           {error && <Notice tone="error" title="Not started">{error}</Notice>}
           <Composer onSend={start} streaming={busy} placeholder={`Start a chat in ${p.name}…`} />
           {p.chats.length > 0 ? (
@@ -279,7 +279,7 @@ export function ProjectPage() {
             <p className="px-1 text-[13px] text-fg-3">No chats in this project yet. Ask something above; the answer will draw on what you add on the right.</p>
           )}
         </div>
-        <aside className="grid gap-4">
+        <aside className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
           <Instructions project={p} />
           <Knowledge project={p} />
           <Artifacts project={p} onOpen={openArtifact} />

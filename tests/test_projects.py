@@ -482,3 +482,22 @@ def test_edits_must_match_the_artifact(env):
     bo_ctx = tools.Context(user_id=uuid4(), project_id=None, conversation_id=uuid4(), message_id=None)
     assert not tools.execute(bo_ctx, "read_artifact", {"artifact_id": a["id"]})[1]["ok"]  # not theirs
     assert tools.execute(ctx, "no_such_tool", {})[1]["ok"] is False
+
+
+def test_searches_are_capped_and_papers_keep_their_numbers(monkeypatch):
+    from athena.projects import tools
+    from athena.search import arxiv_live, local, semantic_scholar
+    found = [{"id": "s2a", "title": "DoRA", "abstract": "Weight-decomposed.", "url": "https://x/dora", "year": 2024,
+              "authors": ["S. Liu"], "citation_count": 9, "source": "semantic_scholar"}]
+    asked = []
+    monkeypatch.setattr(local, "search_local", lambda q, limit: asked.append(limit) or [])
+    monkeypatch.setattr(semantic_scholar, "search_semantic_scholar", lambda q, limit: found)
+    monkeypatch.setattr(arxiv_live, "search_arxiv", lambda q, limit: [])
+    ctx = tools.Context(user_id=uuid4(), project_id=None, conversation_id=uuid4(), message_id=None)
+    ctx.add_source({"kind": "paper", "title": "LoRA", "link": "/items/1"})
+    text, info = tools.execute(ctx, "search_papers", {"query": "dora"})
+    assert info["ok"] and "[2] DoRA (2024)" in text and asked == [tools.LOCAL_RESULTS]
+    text, info = tools.execute(ctx, "search_papers", {"query": "DoRA weight decomposed"})
+    assert "[2] DoRA" in text and len(ctx.sources) == 2   # found again: same number
+    text, info = tools.execute(ctx, "search_papers", {"query": "DoRA 2024"})
+    assert not info["ok"] and "searched enough" in text

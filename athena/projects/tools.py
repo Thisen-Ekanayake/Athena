@@ -14,6 +14,8 @@ from uuid import UUID
 from loguru import logger
 
 SEARCH_RESULTS = 8
+LOCAL_RESULTS = 4         # the rest of the results come from Semantic Scholar and arXiv
+SEARCHES_PER_TURN = 2     # the 9B otherwise repeats a search with small changes to the query
 MAP_PASSAGES = 8
 EXCERPT = 500
 
@@ -77,8 +79,13 @@ class Context:
     message_id: UUID | None
     sources: list[dict] = field(default_factory=list)       # numbered, shared with retrieval
     artifacts: list[dict] = field(default_factory=list)     # written or changed this turn: [{id, title, version}]
+    searches: int = 0
 
     def add_source(self, source: dict) -> int:
+        """Number a source; one already listed under the same title and link keeps its number."""
+        for s in self.sources:
+            if s.get("title") == source.get("title") and s.get("link") == source.get("link"):
+                return s["n"]
         n = len(self.sources) + 1
         self.sources.append({"n": n} | source)
         return n
@@ -123,7 +130,10 @@ def search_papers(ctx: Context, args: dict) -> tuple[str, dict]:
     query = str(args.get("query") or "").strip()
     if len(query) < 2:
         raise ToolError("give a search query")
-    local = search_local(query, limit=SEARCH_RESULTS)
+    if ctx.searches >= SEARCHES_PER_TURN:
+        raise ToolError("you have searched enough for this answer; answer with the papers already found")
+    ctx.searches += 1
+    local = search_local(query, limit=LOCAL_RESULTS)
     live = search_semantic_scholar(query, limit=10) + search_arxiv(query, limit=10)
     found = merge_results(local, live, max_total=SEARCH_RESULTS)
     in_project = _project_refs(ctx)
