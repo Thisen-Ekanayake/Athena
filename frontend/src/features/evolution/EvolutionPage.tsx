@@ -72,18 +72,23 @@ function useFullScreen<T extends HTMLElement>() {
     document.addEventListener('fullscreenchange', sync)
     return () => document.removeEventListener('fullscreenchange', sync)
   }, [])
+  const leave = () => {
+    if (document.fullscreenElement) void document.exitFullscreen()
+    setOn(false)
+  }
   useEffect(() => {
     if (!on) return
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOn(false)
+    // Browsers usually leave full screen on Escape themselves; this covers the window-filling fallback.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (document.fullscreenElement) void document.exitFullscreen()
+      setOn(false)
+    }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [on])
   const toggle = () => {
-    if (on) {
-      if (document.fullscreenElement) void document.exitFullscreen()
-      setOn(false)
-      return
-    }
+    if (on) return leave()
     setOn(true)
     if (document.fullscreenEnabled) ref.current?.requestFullscreen().catch(() => {})
   }
@@ -459,7 +464,8 @@ export function TopicView({ slug }: { slug: string }) {
               </span>
             </div>
             {/* Full screen shows the map alone; a selected paper's thread still lights up, and its panel is there on the way back. */}
-            <div ref={mapRef} className={cn('relative', fullScreen && 'fixed inset-0 z-[60] bg-[var(--map-bg)]')}>
+            {/* min-w-0: cytoscape's canvas keeps its full-screen width until resized, and would hold the column open. */}
+            <div ref={mapRef} className={cn('relative min-w-0', fullScreen && 'fixed inset-0 z-[60] bg-[var(--map-bg)]')}>
               <EvolutionGraph
                 nodes={nodes}
                 edges={edges}
