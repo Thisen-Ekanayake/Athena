@@ -4,6 +4,7 @@ from collections import Counter
 from uuid import uuid4
 
 import pytest
+from fastapi.routing import iter_route_contexts
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -15,11 +16,14 @@ from athena.core.models import FetchLog, Source, SourceCategory, SourceType
 
 
 def _routes():
-    return [(method, route.path) for route in app.routes for method in (getattr(route, "methods", None) or [])]
+    # FastAPI keeps included routers nested in app.routes; iter_route_contexts walks them with full paths.
+    return [(method, route.path) for route in iter_route_contexts(app.routes) for method in (route.methods or [])]
 
 
 def test_no_two_routes_share_a_method_and_path():
-    assert [pair for pair, n in Counter(_routes()).items() if n > 1] == []
+    routes = _routes()
+    assert len(routes) > 100  # every router, not just the app's own /health
+    assert [pair for pair, n in Counter(routes).items() if n > 1] == []
 
 
 def test_no_docs_under_the_api_prefix():
