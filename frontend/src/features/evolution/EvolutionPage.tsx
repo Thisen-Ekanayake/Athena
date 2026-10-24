@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, GitBranch, Lightbulb, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { apiErrorMessage } from '../../api/error'
@@ -7,6 +7,7 @@ import { useIsAdmin } from '../../api/queries/auth'
 import { Button, ButtonLink } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
 import { EmptyState } from '../../ui/EmptyState'
+import { InfoTip } from '../../ui/InfoTip'
 import { Notice } from '../../ui/Notice'
 import { PageHeader } from '../../ui/PageHeader'
 import { Segmented } from '../../ui/Segmented'
@@ -434,7 +435,7 @@ export function TopicView({ slug }: { slug: string }) {
           ) : (
             <aside className="grid content-start gap-5">
               <p className="rounded-xl border border-line bg-surface p-4 text-[13px] text-fg-2">
-                Select a star in the map, or a milestone above. A thread then traces what the paper built on and what built on it.
+                Select a paper in the map, or a milestone above. A thread then traces what the paper built on and what built on it.
               </p>
               {!readOnly && <NewInMaps topic={slug} limit={5} />}
             </aside>
@@ -522,19 +523,26 @@ function SearchTopicActions({ topic, className }: { topic: EvolutionTopic; class
 }
 
 function Legend() {
-  const dot = (style: CSSProperties, label: string) => (
+  const entry = (mark: ReactNode, label: string, meaning: string) => (
     <span className="flex items-center gap-1.5">
-      <span className="inline-block h-2.5 w-2.5 rounded-full" style={style} />
-      {label}
+      {mark}
+      <span>{label}<InfoTip label={label} text={meaning} /></span>
     </span>
   )
+  const dot = (style: CSSProperties) => <span className="inline-block h-2.5 w-2.5 rounded-full" style={style} />
+  const line = (colour: string) => <span className={cn('inline-block h-0.5 w-4', colour)} />
   return (
     <span className="flex flex-wrap items-center gap-3 text-fg-3">
-      {dot({ background: 'var(--accent)' }, 'Milestone')}
-      {dot({ boxShadow: 'inset 0 0 0 2px var(--fg-2)' }, 'On the main path')}
-      {dot({ boxShadow: 'inset 0 0 0 2px var(--warn)' }, 'Seed paper')}
-      <span className="flex items-center gap-1.5"><span className="inline-block h-0.5 w-4 bg-bad" />Takes on a stated limitation</span>
-      <span className="flex items-center gap-1.5"><span className="inline-block h-0.5 w-4 bg-warn" />Loose link</span>
+      {entry(dot({ background: 'var(--accent)' }), 'Milestone',
+        'A key method paper of the topic, picked era by era for how much later work cites and builds on it.')}
+      {entry(dot({ boxShadow: 'inset 0 0 0 2px var(--fg-2)' }), 'On the main path',
+        'Part of the citation chain that carries the most of the field, from its oldest papers to its newest.')}
+      {entry(dot({ boxShadow: 'inset 0 0 0 2px var(--warn)' }), 'Seed paper',
+        'One of the papers the map was built from; the rest were found through their references and citers.')}
+      {entry(line('bg-bad'), 'Takes on a stated limitation',
+        'A later paper that cites an earlier one in a sentence addressing or criticising a limitation of it.')}
+      {entry(line('bg-warn'), 'Loose link',
+        "A later paper whose text matches a gap an earlier paper stated, though it doesn't cite it.")}
     </span>
   )
 }
