@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, GitBranch, Lightbulb, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { ArrowLeft, GitBranch, Lightbulb, Maximize2, Minimize2, RefreshCw, Search, Trash2 } from 'lucide-react'
 import { apiErrorMessage } from '../../api/error'
 import { timeAgo } from '../../components/items/format'
 import { useIsAdmin } from '../../api/queries/auth'
@@ -57,6 +57,38 @@ const LIMITS = [
   { value: '600', label: '600' },
   { value: '0', label: 'All' }, // 0 asks the API for every paper in the map
 ]
+
+/**
+ * Shows an element full screen. Without the Fullscreen API (Safari on iPhone) it fills the window
+ * instead, and Escape leaves.
+ */
+function useFullScreen<T extends HTMLElement>() {
+  const ref = useRef<T>(null)
+  const [on, setOn] = useState(false)
+  useEffect(() => {
+    const sync = () => {
+      if (!document.fullscreenElement) setOn(false)
+    }
+    document.addEventListener('fullscreenchange', sync)
+    return () => document.removeEventListener('fullscreenchange', sync)
+  }, [])
+  useEffect(() => {
+    if (!on) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOn(false)
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [on])
+  const toggle = () => {
+    if (on) {
+      if (document.fullscreenElement) void document.exitFullscreen()
+      setOn(false)
+      return
+    }
+    setOn(true)
+    if (document.fullscreenEnabled) ref.current?.requestFullscreen().catch(() => {})
+  }
+  return { ref, on, toggle }
+}
 
 type Tab = 'map' | 'path' | 'gaps' | 'ask' | 'people' | 'links' | 'changes' | 'no-full-text'
 const TABS: { id: Tab; label: string }[] = [
@@ -305,6 +337,7 @@ export function TopicView({ slug }: { slug: string }) {
   const timeline = useTopicTimeline(slug, version, readable)
   const selectInMap = (id: string) => navigateTo('map', id)
   const exporter = useRef<GraphExporter | null>(null)
+  const { ref: mapRef, on: fullScreen, toggle: toggleFullScreen } = useFullScreen<HTMLDivElement>()
 
   const back = readOnly ? null : <ButtonLink to="/evolution" variant="ghost" size="sm" className="mb-3 -ml-2.5"><ArrowLeft /> Evolution</ButtonLink>
 
@@ -398,8 +431,15 @@ export function TopicView({ slug }: { slug: string }) {
       </div>
 
       {tab === 'map' ? (
-        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
-          <div className="grid min-w-0 gap-3">
+        <div
+          ref={mapRef}
+          className={cn(
+            'grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_380px]',
+            // Full screen: the map takes the screen's height and the paper panel scrolls beside it.
+            fullScreen && 'fixed inset-0 z-[60] overflow-y-auto bg-bg p-4 xl:grid-rows-[minmax(0,1fr)] xl:items-stretch xl:overflow-hidden',
+          )}
+        >
+          <div className={cn('grid min-w-0 gap-3', fullScreen && 'h-[calc(100dvh-2rem)] grid-rows-[auto_minmax(0,1fr)] xl:h-auto')}>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[12.5px] text-fg-2">
               <span className="flex items-center gap-2">
                 Papers
@@ -414,11 +454,16 @@ export function TopicView({ slug }: { slug: string }) {
                 Loose links ({loose_edges.length})
               </label>
               <Legend />
-              {timeline.data.without_full_text.length > 0 && (
-                <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setTab('no-full-text')} title="Notable papers whose full text is not openly available, so their gaps and citing sentences are missing">
-                  Without full text ({timeline.data.without_full_text.length})
+              <span className="ml-auto flex items-center gap-1">
+                {timeline.data.without_full_text.length > 0 && (
+                  <Button variant="ghost" size="sm" onClick={() => { if (fullScreen) toggleFullScreen(); setTab('no-full-text') }} title="Notable papers whose full text is not openly available, so their gaps and citing sentences are missing">
+                    Without full text ({timeline.data.without_full_text.length})
+                  </Button>
+                )}
+                <Button variant="ghost" size="sm" onClick={toggleFullScreen} title={fullScreen ? 'Leave full screen (Esc)' : 'Show the map full screen'}>
+                  {fullScreen ? <><Minimize2 /> Exit full screen</> : <><Maximize2 /> Full screen</>}
                 </Button>
-              )}
+              </span>
             </div>
             <EvolutionGraph
               nodes={nodes}
@@ -428,6 +473,7 @@ export function TopicView({ slug }: { slug: string }) {
               onSelect={setSelectedId}
               showCitations={showCitations}
               onExporter={(e) => { exporter.current = e }}
+              className={fullScreen ? 'h-auto min-h-0' : undefined}
             />
           </div>
           {selectedId ? (

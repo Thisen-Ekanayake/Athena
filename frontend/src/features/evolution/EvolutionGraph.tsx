@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import cytoscape from 'cytoscape'
 import { forceCollide, forceSimulation, forceX, forceY, type SimulationNodeDatum } from 'd3-force'
 import { useAppStore } from '../../store/appStore'
+import { cn } from '../../ui/cn'
 import type { EvolutionEdge, EvolutionNode, LooseEdge } from './api'
 import { makeExporter, type GraphExporter } from './graphExport'
 
@@ -14,6 +15,8 @@ interface EvolutionGraphProps {
   showCitations: boolean
   /** Receives an exporter while the map is drawn, and null when it is taken down. */
   onExporter?: (exporter: GraphExporter | null) => void
+  /** Overrides the box's fixed height, e.g. to fill the screen. */
+  className?: string
 }
 
 // Graph units. Time runs left to right; each year's column is as wide as its paper count needs
@@ -243,7 +246,7 @@ function authorLine(paper: EvolutionNode) {
   return paper.author_count > paper.authors.length ? `${names} et al.` : names
 }
 
-export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations, onExporter }: EvolutionGraphProps) {
+export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations, onExporter, className }: EvolutionGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const cyRef = useRef<cytoscape.Core | null>(null)
   const onSelectRef = useRef(onSelect)
@@ -359,10 +362,14 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
     updateLabels()
     cy.on('viewport', () => setHovered(null)) // the label would drift off its node while panning
     updateAxis()
+    // Going full screen resizes the box; cytoscape only notices window resizes by itself.
+    const resize = new ResizeObserver(() => cy.resize())
+    resize.observe(containerRef.current)
     cyRef.current = cy
     onExporterRef.current?.(makeExporter(cy, xOf, firstYear, lastYear))
     return () => {
       cancelAnimationFrame(frame)
+      resize.disconnect()
       onExporterRef.current?.(null)
       setHovered(null)
       cy.destroy()
@@ -405,7 +412,7 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
   }, [selectedId, nodes])
 
   return (
-    <div className="relative h-[620px] w-full overflow-hidden rounded-xl border border-line" style={{ background: 'var(--map-bg)' }}>
+    <div className={cn('relative h-[620px] w-full overflow-hidden rounded-xl border border-line', className)} style={{ background: 'var(--map-bg)' }}>
       {/* Explicit size: an absolutely positioned container collapsed to zero height once cytoscape took it over. */}
       <div ref={containerRef} className="relative h-full w-full" aria-label="Lineage map of the topic, oldest papers on the left" />
       {hovered && (
