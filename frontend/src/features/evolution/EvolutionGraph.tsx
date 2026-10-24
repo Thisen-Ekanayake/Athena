@@ -46,6 +46,9 @@ interface LaidOutNode extends SimulationNodeDatum {
   milestone: boolean
 }
 
+// How far outside a circle, in screen pixels, the pointer still names its paper.
+const HOVER_SLACK = 4
+
 // Milestone labels are 10px; below this zoom they are under 7px on screen and unreadable.
 const LABEL_MIN_ZOOM = 0.7
 
@@ -310,30 +313,72 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
     // Open on the milestones; the whole corpus is one zoom-out away.
     const milestones = cy.nodes('.milestone')
     cy.fit(milestones.nonempty() ? milestones : undefined, 50)
-    cy.on('tap', 'node', (evt) => onSelectRef.current(evt.target.id()))
-    cy.on('tap', (evt) => {
-      if (evt.target === cy) onSelectRef.current(null)
-    })
-    // Describe the paper under the pointer; most papers carry no label.
-    const byId = new Map(nodes.map((n) => [n.id, n]))
-    cy.on('mouseover', 'node', (evt) => {
-      const paper = byId.get(evt.target.id())
-      if (!paper) return
-      const { x, y } = evt.target.renderedPosition()
-      const width = containerRef.current!.clientWidth
-      setHovered({
-        paper,
-        x,
-        y,
-        r: evt.target.renderedWidth() / 2,
-        below: y < 110, // room above for the card's three lines
-        align: x < 175 ? 'left' : x > width - 175 ? 'right' : 'center',
+    // The paper under the pointer is found here rather than by cytoscape's mouseover: its WebGL picking
+    // often answers with an edge drawn over a node, or misses circles a pixel or two wide when zoomed out.
+    const placed = nodes.map((n) => ({ paper: n, ...positions.get(n.id)!, r: nodeRadius(n) }))
+    const paperAt = (sx: number, sy: number) => {
+      const zoom = cy.zoom()
+      const pan = cy.pan()
+      const mx = (sx - pan.x) / zoom
+      const my = (sy - pan.y) / zoom
+      let best: (typeof placed)[number] | null = null
+      let bestGap = HOVER_SLACK
+      for (const p of placed) {
+        // Screen pixels between the pointer and the circle's edge; inside the circle counts as 0.
+        const gap = Math.max(0, Math.hypot(p.x - mx, p.y - my) * zoom - p.r * zoom)
+        if (gap < bestGap || (gap === bestGap && best && p.r < best.r)) {
+          best = p
+          bestGap = gap
+        }
+      }
+      return best
+    }
+    let pointer: { x: number; y: number } | null = null
+    let hoveredId: string | null = null
+    let hoverFrame = 0
+    const updateHover = () => {
+      cancelAnimationFrame(hoverFrame)
+      hoverFrame = requestAnimationFrame(() => {
+        const hit = pointer && paperAt(pointer.x, pointer.y)
+        const box = containerRef.current
+        if (!box) return
+        box.style.cursor = hit ? 'pointer' : ''
+        if (!hit) {
+          if (hoveredId !== null) setHovered(null)
+          hoveredId = null
+          return
+        }
+        const zoom = cy.zoom()
+        const pan = cy.pan()
+        const x = hit.x * zoom + pan.x
+        const y = hit.y * zoom + pan.y
+        hoveredId = hit.paper.id
+        setHovered({
+          paper: hit.paper,
+          x,
+          y,
+          r: hit.r * zoom,
+          below: y < 110, // room above for the card's three lines
+          align: x < 175 ? 'left' : x > box.clientWidth - 175 ? 'right' : 'center',
+        })
       })
-      containerRef.current!.style.cursor = 'pointer'
-    })
-    cy.on('mouseout', 'node', () => {
-      setHovered(null)
-      containerRef.current!.style.cursor = ''
+    }
+    const box = containerRef.current
+    const onMove = (e: MouseEvent) => {
+      const rect = box.getBoundingClientRect()
+      pointer = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+      updateHover()
+    }
+    const onLeave = () => {
+      pointer = null
+      updateHover()
+    }
+    box.addEventListener('mousemove', onMove)
+    box.addEventListener('mouseleave', onLeave)
+    // A click picks the same paper the card names, so a tiny circle can be selected too.
+    cy.on('tap', (evt) => {
+      const onNode = evt.target !== cy && evt.target.isNode()
+      onSelectRef.current(onNode ? evt.target.id() : paperAt(evt.renderedPosition.x, evt.renderedPosition.y)?.paper.id ?? null)
     })
 
     // Year axis: model x -> screen x follows pan and zoom.
@@ -360,7 +405,7 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
     }
     cy.on('viewport', updateLabels)
     updateLabels()
-    cy.on('viewport', () => setHovered(null)) // the label would drift off its node while panning
+    cy.on('viewport', updateHover) // the card follows its paper while the map pans and zooms
     updateAxis()
     // Going full screen resizes the box; cytoscape only notices window resizes by itself.
     const resize = new ResizeObserver(() => cy.resize())
@@ -369,6 +414,9 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
     onExporterRef.current?.(makeExporter(cy, xOf, firstYear, lastYear))
     return () => {
       cancelAnimationFrame(frame)
+      cancelAnimationFrame(hoverFrame)
+      box.removeEventListener('mousemove', onMove)
+      box.removeEventListener('mouseleave', onLeave)
       resize.disconnect()
       onExporterRef.current?.(null)
       setHovered(null)
@@ -428,8 +476,11 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
           <span className="font-medium text-fg">{hovered.paper.title}</span>
           {hovered.paper.authors.length > 0 && <span className="text-fg-2">{authorLine(hovered.paper)}</span>}
           {(hovered.paper.venue || hovered.paper.year !== null) && (
-            <span className="text-[11.5px] text-fg-3">
-              {[hovered.paper.venue, hovered.paper.year].filter((v) => v !== null && v !== '').join(' · ')}
+            // Some venue names run to four lines ("IEEE Computer Society Conference on ..."): one line, then cut.
+            <span className="flex min-w-0 gap-1 text-[11.5px] text-fg-3">
+              {hovered.paper.venue && <span className="truncate">{hovered.paper.venue}</span>}
+              {hovered.paper.venue && hovered.paper.year !== null && <span aria-hidden="true">·</span>}
+              {hovered.paper.year !== null && <span className="shrink-0 tabular-nums">{hovered.paper.year}</span>}
             </span>
           )}
         </div>
