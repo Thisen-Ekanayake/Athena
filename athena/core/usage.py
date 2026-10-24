@@ -43,6 +43,8 @@ FEATURES = {
     "feed_embed": "Feed embeddings",
     "scoring": "Scoring",
     "search": "Search",
+    "chat": "Chats",
+    "project_index": "Project indexing",
 }
 
 

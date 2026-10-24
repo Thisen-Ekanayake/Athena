@@ -20,6 +20,7 @@ import {
   type IdeaPaper,
   type IdeaTheme,
 } from './api'
+import { AddToProjectMenu } from '../projects/AddToProjectMenu'
 
 const STATUS: Record<GapTheme['status'], { label: string; icon: typeof CircleDot; tone: ChipTone }> = {
   persisting: { label: 'Still open', icon: CircleDot, tone: 'warn' },
@@ -92,7 +93,10 @@ function CheckResult({ check }: { check: IdeaCheck }) {
   const { papers, themes, verdict, verdict_error } = check.result
   return (
     <div className="grid gap-6">
-      <blockquote className="border-l-2 border-line pl-3 text-[13px] leading-relaxed text-fg-2 whitespace-pre-line">{check.idea}</blockquote>
+      <div className="flex items-start gap-3">
+        <blockquote className="min-w-0 flex-1 border-l-2 border-line pl-3 text-[13px] leading-relaxed text-fg-2 whitespace-pre-line">{check.idea}</blockquote>
+        <AddToProjectMenu membershipRef={`idea:${check.id}`} item={{ kind: 'idea_check', id: check.id }} />
+      </div>
       {verdict && (
         <section className="relative grid gap-3 rounded-xl border border-line bg-surface p-4">
           <span className="ai-ring" aria-hidden="true" />

@@ -1,6 +1,7 @@
 # The API image (docker/Dockerfile.api): no clustering, no scrapers' browser. Compile with -c requirements.txt so
 # shared packages get the worker's versions (commands in requirements.in).
 fastapi
+python-multipart  # file uploads (projects, chats)
 uvicorn
 httpx
 pydantic

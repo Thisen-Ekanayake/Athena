@@ -109,6 +109,113 @@ def chat_extra(think: bool = False) -> dict:
     return {"chat_template_kwargs": {"enable_thinking": think}} if is_llama_cpp(chat_base_url()) else {}
 
 
+# ── models and effort for chats (athena.projects) ──────────────────────
+
+# Thinking tokens per effort. Qwen's template only switches thinking on or off, so effort is a budget; llama-server
+# ends the thinking when it runs out, with Qwen's own words for that.
+EFFORT_BUDGETS = {"off": 0, "low": 1024, "medium": 4096, "high": 8192}
+EFFORTS = tuple(EFFORT_BUDGETS)
+BUDGET_MESSAGE = ("\n\nConsidering the limited time by the user, I have to give the solution based on the thinking "
+                  "directly now.\n")
+DEFAULT_VISION_MODEL = "qwen3.5-9b-vision"
+DEFAULT_CONTEXT = 8192    # a model's context when its preset does not say
+MODELS_TTL = 30.0
+_models_cache: tuple[float, list[dict]] | None = None
+
+
+def _names(setting: str, default: str = "") -> list[str]:
+    return [n.strip() for n in (get_setting(setting) or default).split(",") if n.strip()]
+
+
+def reasoning_models() -> set[str]:
+    """Models that think (CHAT_REASONING_MODELS, comma-separated): the chat offers them an effort."""
+    return set(_names("CHAT_REASONING_MODELS", DEFAULT_CHAT_MODEL))
+
+
+def vision_model() -> str:
+    """The model messages with images go to (CHAT_VISION_MODEL): on the local router, the chat model's GGUF with
+    its vision projector, a preset of its own so text chats keep the projector's VRAM."""
+    return get_setting("CHAT_VISION_MODEL") or DEFAULT_VISION_MODEL
+
+
+def _preset_context(preset: str | None) -> int | None:
+    for line in (preset or "").splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() in ("ctx-size", "c", "LLAMA_ARG_CTX_SIZE") and value.strip().isdigit():
+            return int(value.strip())
+    return None
+
+
+def _server_models() -> list[dict]:
+    """What llama-server's router lists, cached briefly; [] when it does not answer."""
+    import time
+    global _models_cache
+    if _models_cache and time.monotonic() - _models_cache[0] < MODELS_TTL:
+        return _models_cache[1]
+    try:
+        resp = httpx.get(f"{chat_base_url()}/models", headers={"Authorization": f"Bearer {chat_api_key()}"},
+                         timeout=5.0)
+        resp.raise_for_status()
+        data = resp.json().get("data") or []
+    except Exception:
+        return []
+    _models_cache = (time.monotonic(), data)
+    return data
+
+
+def chat_models() -> list[dict]:
+    """The models a chat may pick: [{id, reasoning, vision, context, loaded}].
+
+    On llama.cpp, every model the router lists except the embedder and the vision preset (images go there by
+    themselves); elsewhere (a hosted API lists everything it has), the configured chat model and the reasoning
+    ones.
+    """
+    thinking, vision = reasoning_models(), vision_model()
+    hidden = {embed_model(), vision}
+    listed = _server_models() if is_llama_cpp(chat_base_url()) else []
+    out = []
+    for m in listed:
+        mid = m.get("id") or ""
+        if not mid or mid in hidden or "embed" in mid.lower():
+            continue
+        status = m.get("status") or {}
+        modalities = (m.get("architecture") or {}).get("input_modalities") or []
+        out.append({"id": mid, "reasoning": mid in thinking, "vision": "image" in modalities,
+                    "context": _preset_context(status.get("preset")) or DEFAULT_CONTEXT,
+                    "loaded": status.get("value") == "loaded" if isinstance(status, dict) else False})
+    if not out:
+        for mid in dict.fromkeys([chat_model()] + sorted(thinking)):
+            out.append({"id": mid, "reasoning": mid in thinking, "vision": False, "context": model_context(mid),
+                        "loaded": False})
+    return out
+
+
+def model_context(model: str) -> int:
+    """The context ``model`` was started with (its router preset's ctx-size), else CHAT_CONTEXT_TOKENS."""
+    for m in _server_models() if is_llama_cpp(chat_base_url()) else []:
+        if m.get("id") == model and (ctx := _preset_context((m.get("status") or {}).get("preset"))):
+            return ctx
+    try:
+        return int(get_setting("CHAT_CONTEXT_TOKENS") or DEFAULT_CONTEXT)
+    except ValueError:
+        return DEFAULT_CONTEXT
+
+
+def effort_extra(model: str, effort: str | None) -> tuple[dict, int]:
+    """``extra_body`` for a chat turn at ``effort``, and the thinking budget it allows.
+
+    A model that does not reason, or effort off, gets thinking switched off. On llama.cpp the effort is a thinking
+    budget; a hosted API gets the OpenAI-style ``reasoning_effort`` instead.
+    """
+    budget = EFFORT_BUDGETS.get(effort or "off", 0) if model in reasoning_models() else 0
+    if not is_llama_cpp(chat_base_url()):
+        return ({"reasoning_effort": effort} if budget else {}), budget
+    if not budget:
+        return {"chat_template_kwargs": {"enable_thinking": False}}, 0
+    return {"chat_template_kwargs": {"enable_thinking": True}, "reasoning_budget_tokens": budget,
+            "reasoning_budget_message": BUDGET_MESSAGE}, budget
+
+
 def chat_json(prompt: str, schema: dict, name: str, system: str | None = None, task: str | None = None,
               max_tokens: int = 300, timeout: float = 120.0, feature: str | None = None,
               user_id=None) -> tuple[dict | None, dict]:

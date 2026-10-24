@@ -19,6 +19,9 @@ from athena.core.models.personal import (
     SavedList, SavedListItem, InboxEvent, InboxState, InboxSettings, Watch, WatchHit, ItemRead, UserNote,
     UserHighlight, ItemFeedback, InterestProfile, LitReview,
 )
+from athena.core.models.projects import (
+    Project, ProjectItem, Conversation, ChatMessage, UserFile, Artifact, ArtifactVersion,
+)
 
 __all__ = [
     "Base",
@@ -75,4 +78,11 @@ __all__ = [
     "ItemFeedback",
     "InterestProfile",
     "LitReview",
+    "Project",
+    "ProjectItem",
+    "Conversation",
+    "ChatMessage",
+    "UserFile",
+    "Artifact",
+    "ArtifactVersion",
 ]

@@ -241,6 +241,10 @@ python-dotenv==1.2.4
     # via
     #   -c requirements.txt
     #   -r requirements.api.in
+python-multipart==0.0.32
+    # via
+    #   -c requirements.txt
+    #   -r requirements.api.in
 qdrant-client==1.20.0
     # via
     #   -c requirements.txt
