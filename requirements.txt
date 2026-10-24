@@ -188,7 +188,7 @@ python-dateutil==2.9.0.post0
     #   -r requirements.in
     #   celery
     #   newspaper4k
-python-dotenv==1.2.1
+python-dotenv==1.2.2
     # via -r requirements.in
 python-igraph==1.0.0
     # via -r requirements.in
