@@ -43,6 +43,7 @@ import {
   type TopicSearchResult,
   type TopicStatus,
 } from './api'
+import { AddToProjectMenu } from '../projects/AddToProjectMenu'
 
 // The tabs beyond the map load when first opened, so the map's own chunk stays small.
 const AskMap = lazy(() => import('./AskMap').then((m) => ({ default: m.AskMap })))
@@ -402,6 +403,7 @@ export function TopicView({ slug }: { slug: string }) {
               </span>
               {!readOnly && current.id && <FollowButton target={{ kind: 'map', topic_id: current.id }} />}
               {!readOnly && <ShareMenu slug={slug} name={topic.name} />}
+              {!readOnly && topic.built_at && <AddToProjectMenu membershipRef={`map:${slug}`} item={{ kind: 'map', id: slug }} />}
               <ExportMenu slug={slug} filename={topic.slug} exporter={() => exporter.current} />
               {!readOnly && topic.built_at && <WriteReviewButton slug={slug} />}
               {!readOnly && current.origin === 'search' && <SearchTopicActions topic={current} />}

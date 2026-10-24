@@ -12,6 +12,7 @@ import { Spinner } from '../../ui/Spinner'
 import { cn } from '../../ui/cn'
 import { Oracle } from '../astrolabe/Oracle'
 import { Markdown } from './Markdown'
+import { AddToProjectMenu } from '../projects/AddToProjectMenu'
 
 /** Where a review comes from: a research map, or only search results' abstracts. */
 export function ReviewSourceChip({ review }: { review: Pick<Review, 'mode' | 'topic'> }) {
@@ -90,6 +91,7 @@ export function ReviewView({ id, compact = false }: { id: string; compact?: bool
         </div>
         {review.status === 'done' && (
           <div className="flex items-center gap-1.5">
+            <AddToProjectMenu membershipRef={`review:${review.id}`} item={{ kind: 'review', id: review.id }} compact />
             <Button variant="ghost" size="sm" onClick={copy}>{copied ? <><Check /> Copied</> : <><Copy /> Copy</>}</Button>
             <DownloadMenu options={[
               { label: 'Markdown', hint: 'The review with its references', path: `/reviews/${review.id}/export`, params: { format: 'md' }, filename: `${fileName(review.title)}.md` },

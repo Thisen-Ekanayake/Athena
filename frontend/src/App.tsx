@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from './components/layout/AppShell'
 import { ClusterPage } from './pages/ClusterPage'
@@ -31,6 +31,14 @@ const WelcomePage = lazy(() =>
 const IdeaCheckPage = lazy(() =>
   import('./features/evolution/IdeaCheckPage').then((m) => ({ default: m.IdeaCheckPage })),
 )
+
+// Projects and chats load on first use.
+const ChatPage = lazy(() => import('./pages/ChatPage').then((m) => ({ default: m.ChatPage })))
+const ChatsPage = lazy(() => import('./pages/ChatsPage').then((m) => ({ default: m.ChatsPage })))
+const ProjectPage = lazy(() => import('./pages/ProjectPage').then((m) => ({ default: m.ProjectPage })))
+const ProjectsPage = lazy(() => import('./pages/ProjectsPage').then((m) => ({ default: m.ProjectsPage })))
+
+const loading = (page: ReactNode) => <Suspense fallback={<Spinner label="Loading…" />}>{page}</Suspense>
 
 const evolution = (
   <Suspense fallback={<Spinner label="Loading…" />}>
@@ -66,6 +74,11 @@ function App() {
           {/* Saved lists became the Library's first tab. */}
           <Route path="saved" element={<Navigate to="/library" replace />} />
           <Route path="reviews/:id" element={<ReviewPage />} />
+          <Route path="projects" element={loading(<ProjectsPage />)} />
+          <Route path="projects/:id" element={loading(<ProjectPage />)} />
+          <Route path="chats" element={loading(<ChatsPage />)} />
+          <Route path="chats/new" element={loading(<ChatPage />)} />
+          <Route path="chats/:id" element={loading(<ChatPage />)} />
           <Route path="inbox" element={<InboxPage />} />
           <Route path="search" element={<SearchPage />} />
           {/* Research search and the literature review now live on the search page. */}

@@ -7,6 +7,7 @@ import { Button, ButtonLink } from '../../ui/Button'
 import { buttonClass } from '../../ui/buttonClass'
 import { SaveMenu } from '../items/SaveMenu'
 import { PaperDetail } from './PaperDetail'
+import { AddToProjectMenu } from '../../features/projects/AddToProjectMenu'
 
 /** The side panel that opens beside any list when an item is clicked. It keeps your place in the list. */
 export function PaperPanel() {
@@ -42,6 +43,7 @@ export function PaperPanel() {
         <header className="flex h-12 shrink-0 items-center gap-0.5 border-b border-line px-3">
           <span className="flex-1 px-1 text-[12px] text-fg-3">Details</span>
           <SaveMenu itemId={itemId} size="icon" />
+          <AddToProjectMenu membershipRef={`item:${itemId}`} item={{ kind: 'paper', id: itemId }} compact />
           {url && (
             <a href={url} target="_blank" rel="noopener noreferrer" title="Open the original" aria-label="Open the original" className={buttonClass('ghost', 'icon')}>
               <ExternalLink />
