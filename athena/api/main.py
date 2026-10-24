@@ -15,7 +15,7 @@ from loguru import logger
 
 from athena.api.routers import (
     feed, items, clusters, search, sources, sync, app_settings, saved, evolution, inbox, auth as auth_routes,
-    users, watches, usage, share, momentum, personal, interests, reviews, scoring, summaries,
+    users, watches, usage, share, momentum, personal, interests, reviews, scoring, summaries, projects, chats,
 )
 from athena.api import qa_api
 from athena.api.auth import active_user, require_admin
@@ -104,6 +104,8 @@ def create_app() -> FastAPI:
     app.include_router(personal.router, dependencies=login)
     app.include_router(interests.router, dependencies=login)
     app.include_router(reviews.router, dependencies=login)
+    app.include_router(projects.router, dependencies=login)
+    app.include_router(chats.router, dependencies=login)
     app.include_router(clusters.router, dependencies=login)
     app.include_router(search.router, dependencies=login)
     app.include_router(sources.router, dependencies=login)

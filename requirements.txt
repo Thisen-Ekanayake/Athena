@@ -194,6 +194,8 @@ python-dotenv==1.2.4
     # via -r requirements.in
 python-igraph==1.0.0
     # via -r requirements.in
+python-multipart==0.0.32
+    # via -r requirements.in
 pyyaml==6.0.3
     # via newspaper4k
 qdrant-client==1.20.0

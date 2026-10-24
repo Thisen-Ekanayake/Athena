@@ -10,6 +10,7 @@
 
 # Web and API
 fastapi
+python-multipart  # file uploads (projects, chats)
 uvicorn
 httpx
 requests
