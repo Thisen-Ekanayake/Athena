@@ -8,6 +8,7 @@ services:
       - "8000:8000"
     env_file: ../.env
     environment:
+      ATHENA_UPLOADS_DIR: /var/lib/athena/uploads  # projects' and chats' files
       DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
@@ -20,6 +21,7 @@ services:
       - redis
       - qdrant
     volumes:
+      - athena_uploads:/var/lib/athena/uploads
       - ..:/app
 
   worker:
@@ -29,6 +31,7 @@ services:
     command: celery -A athena.pipeline.tasks worker --loglevel=info --pool=threads -B
     env_file: ../.env
     environment:
+      ATHENA_UPLOADS_DIR: /var/lib/athena/uploads  # projects' and chats' files
       DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
@@ -43,6 +46,7 @@ services:
       - db
       - qdrant
     volumes:
+      - athena_uploads:/var/lib/athena/uploads
       - ..:/app
       - athena_staging:/tmp/athena/staging
 
@@ -142,6 +146,7 @@ services:
       - "8070:8070"
 
 volumes:
+  athena_uploads:
   # Explicit names pin the data to these exact volumes regardless of the Compose
   # project name / launch directory, so the stack can never silently start
   # against a different, empty volume set.

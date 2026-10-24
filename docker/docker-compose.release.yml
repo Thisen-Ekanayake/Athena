@@ -7,6 +7,7 @@ services:
       - "127.0.0.1:8000:8000"
     env_file: ../.env
     environment:
+      ATHENA_UPLOADS_DIR: /var/lib/athena/uploads  # projects' and chats' files
       DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
@@ -21,12 +22,15 @@ services:
       - db
       - redis
       - qdrant
+    volumes:
+      - athena_uploads:/var/lib/athena/uploads
 
   worker:
     image: ghcr.io/thisen-ekanayake/athena/worker:latest
     restart: unless-stopped
     env_file: ../.env
     environment:
+      ATHENA_UPLOADS_DIR: /var/lib/athena/uploads  # projects' and chats' files
       DATABASE_URL: postgresql://athena:athena_password@db:5432/athena_db
       REDIS_URL: redis://redis:6379/0
       QDRANT_URL: http://qdrant:6333
@@ -41,6 +45,7 @@ services:
       - db
       - qdrant
     volumes:
+      - athena_uploads:/var/lib/athena/uploads
       - athena_staging:/tmp/athena/staging
 
   # Summaries and cluster labels, one at a time (the model server answers one request at a time).
@@ -120,6 +125,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  athena_uploads:
   postgres_data:
   qdrant_data:
   athena_staging:
