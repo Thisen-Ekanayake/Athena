@@ -22,7 +22,7 @@ const TICK_GAP = 40 // px between year labels, at scale 1
 function colours() {
   const css = getComputedStyle(document.documentElement)
   const read = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback
-  return { bg: read('--map-bg', '#08090c'), text: read('--fg-3', '#767168'), line: read('--line', '#26272b') }
+  return { bg: read('--map-bg', '#08090c'), text: read('--fg-3', '#737479'), line: read('--line', '#26272b') }
 }
 
 /** Year labels for an export: model x -> image x, about TICK_GAP apart. */

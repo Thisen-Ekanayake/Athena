@@ -92,12 +92,12 @@ function themeColors() {
   return {
     accent: read('--accent', '#d6ae5f'),
     star: read('--star', '#f6e3b4'),
-    path: read('--fg-2', '#a8a297'),
+    path: read('--fg-2', '#a4a5ab'),
     strict: read('--bad', '#e5727a'),
     loose: read('--warn', '#e0965a'),
     seed: read('--warn', '#e0965a'),
     edge: read('--map-line', 'rgba(246, 227, 180, 0.2)'),
-    label: read('--fg', '#edeae4'),
+    label: read('--fg', '#ececee'),
     surface: read('--map-bg', '#08090c'),
   }
 }

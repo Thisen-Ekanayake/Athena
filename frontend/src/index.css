@@ -2,7 +2,7 @@
 
 /*
  * One dark base, two accents. <html data-accent="gold|indigo"> picks the look; the
- * accent store keeps it in sync. Neutrals lean slightly toward their accent.
+ * accent store keeps it in sync. Surfaces lean slightly toward their accent; text stays neutral.
  */
 :root,
 [data-accent="gold"] {
@@ -12,10 +12,11 @@
   --surface-3: #212228;
   --line: #25262c;
   --line-strong: #35363d;
-  --fg: #edeae4;
-  --fg-2: #a8a297;
-  --fg-3: #767168;
-  --primary: #edeae4;
+  /* Text stays neutral white and grey, as in indigo; only the accent is gold. */
+  --fg: #ececee;
+  --fg-2: #a4a5ab;
+  --fg-3: #737479;
+  --primary: #ececee;
   --on-primary: #121212;
   --accent: #d6ae5f;
   --accent-ink: #e3c27e;
