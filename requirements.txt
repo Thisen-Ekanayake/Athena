@@ -280,7 +280,7 @@ tzlocal==5.3.1
     # via celery
 umap-learn==0.5.11
     # via -r requirements.in
-urllib3==2.6.3
+urllib3==2.8.0
     # via
     #   qdrant-client
     #   requests
