@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import cytoscape from 'cytoscape'
+import { Scan } from 'lucide-react'
 import { forceCollide, forceSimulation, forceX, forceY, type SimulationNodeDatum } from 'd3-force'
 import { useAppStore } from '../../store/appStore'
+import { Button } from '../../ui/Button'
+import { cn } from '../../ui/cn'
 import type { EvolutionEdge, EvolutionNode, LooseEdge } from './api'
 import { makeExporter, type GraphExporter } from './graphExport'
 
@@ -14,6 +17,10 @@ interface EvolutionGraphProps {
   showCitations: boolean
   /** Receives an exporter while the map is drawn, and null when it is taken down. */
   onExporter?: (exporter: GraphExporter | null) => void
+  /** Overrides the box's fixed height, e.g. to fill the screen. */
+  className?: string
+  /** More buttons for the map's top-right corner, after Fit. */
+  actions?: ReactNode
 }
 
 // Graph units. Time runs left to right; each year's column is as wide as its paper count needs
@@ -42,6 +49,12 @@ interface LaidOutNode extends SimulationNodeDatum {
   r: number
   milestone: boolean
 }
+
+// How far outside a circle, in screen pixels, the pointer still names its paper.
+const HOVER_SLACK = 4
+
+// Milestone labels are 10px; below this zoom they are under 7px on screen and unreadable.
+const LABEL_MIN_ZOOM = 0.7
 
 const nodeRadius = (n: EvolutionNode) =>
   n.is_milestone ? 9 + 13 * n.milestone_score : 3 + 5 * n.milestone_score
@@ -89,12 +102,12 @@ function themeColors() {
   return {
     accent: read('--accent', '#d6ae5f'),
     star: read('--star', '#f6e3b4'),
-    path: read('--fg-2', '#a8a297'),
+    path: read('--fg-2', '#a4a5ab'),
     strict: read('--bad', '#e5727a'),
     loose: read('--warn', '#e0965a'),
     seed: read('--warn', '#e0965a'),
     edge: read('--map-line', 'rgba(246, 227, 180, 0.2)'),
-    label: read('--fg', '#edeae4'),
+    label: read('--fg', '#ececee'),
     surface: read('--map-bg', '#08090c'),
   }
 }
@@ -136,6 +149,8 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
         'min-zoomed-font-size': 7, // hide labels too small to read until the user zooms in
       },
     },
+    // The WebGL renderer ignores min-zoomed-font-size, so small labels are also hidden by class.
+    { selector: 'node.milestone.quiet', style: { label: '' } },
     { selector: 'node.main-path', style: { 'border-width': 2, 'border-color': c.path } },
     { selector: 'node.seed', style: { 'border-width': 2, 'border-color': c.seed } },
     { selector: 'node.selected', style: { 'border-width': 3, 'border-color': c.label, 'background-color': c.accent, 'background-opacity': 1 } },
@@ -176,7 +191,8 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
       },
     },
     {
-      // Loose link: no citation, only a text match between a gap and a later paper. Dashed, on request.
+      // Loose link: no citation, only a text match between a gap and a later paper; on request.
+      // Dashed in exports; the WebGL renderer draws every line solid, so its colour tells it apart.
       selector: 'edge.loose',
       style: {
         'curve-style': 'straight',
@@ -204,37 +220,47 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
       },
     },
     { selector: 'edge.strict.thread', style: { 'line-color': c.strict, 'target-arrow-color': c.strict, width: 2.4 } },
-    { selector: 'edge.faded', style: { opacity: 0.03 } },
+    // Fading must not bring back citations that are switched off: thousands of faint lines read as haze.
+    { selector: 'edge.faded', style: { opacity: showCitations ? 0.03 : 0 } },
+    { selector: 'edge.main-path.faded, edge.strict.faded, edge.loose.faded', style: { opacity: 0.03 } },
   ]
 }
 
-/** A fixed field of faint stars behind the map, seeded so it is the same on every visit. */
-const STARS = (() => {
-  let a = 7
-  const rnd = () => {
-    a = (a + 0x6d2b79f5) | 0
-    let t = Math.imul(a ^ (a >>> 15), 1 | a)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-  return Array.from({ length: 220 }, () => ({ x: rnd() * 100, y: rnd() * 100, r: 0.35 + rnd() * rnd() * 1.2, o: 0.15 + rnd() * 0.5 }))
-})()
-
-function StarField() {
-  return (
-    <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
-      {STARS.map((s, i) => <circle key={i} cx={`${s.x}%`} cy={`${s.y}%`} r={s.r} style={{ fill: 'var(--star)' }} opacity={s.o} />)}
-    </svg>
-  )
+/**
+ * WebGL2 lets the GPU draw the map; without it cytoscape's 2D canvas does, as before.
+ * A software WebGL (no usable GPU) is several times slower than the canvas, so it counts as none.
+ */
+let webglSupport: boolean | undefined
+function hasWebgl() {
+  webglSupport ??= !!document.createElement('canvas').getContext('webgl2', { failIfMajorPerformanceCaveat: true })
+  return webglSupport
 }
 
-export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations, onExporter }: EvolutionGraphProps) {
+/** The paper under the pointer, at its on-screen position. */
+interface Hovered {
+  paper: EvolutionNode
+  x: number
+  y: number
+  r: number
+  /** Which side of the node the label sits on, so it stays inside the map's box. */
+  below: boolean
+  align: 'left' | 'center' | 'right'
+}
+
+/** "A, B, C et al.": nodes carry the first three authors and the full count. */
+function authorLine(paper: EvolutionNode) {
+  const names = paper.authors.join(', ')
+  return paper.author_count > paper.authors.length ? `${names} et al.` : names
+}
+
+export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations, onExporter, className, actions }: EvolutionGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const cyRef = useRef<cytoscape.Core | null>(null)
   const onSelectRef = useRef(onSelect)
   const onExporterRef = useRef(onExporter)
   const accent = useAppStore((s) => s.accent)
   const [ticks, setTicks] = useState<{ year: number; x: number }[]>([])
+  const [hovered, setHovered] = useState<Hovered | null>(null)
 
   useEffect(() => {
     onSelectRef.current = onSelect
@@ -276,6 +302,8 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
           classes: 'loose',
         })),
     ]
+    // The WebGL renderer reads the container's inline background: arrowheads are blended over it.
+    containerRef.current.style.backgroundColor = themeColors().surface
     const cy = cytoscape({
       container: containerRef.current,
       elements,
@@ -284,13 +312,77 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
       minZoom: 0.15,
       maxZoom: 3,
       autoungrabify: true,
+      webgl: hasWebgl(),
     })
     // Open on the milestones; the whole corpus is one zoom-out away.
     const milestones = cy.nodes('.milestone')
     cy.fit(milestones.nonempty() ? milestones : undefined, 50)
-    cy.on('tap', 'node', (evt) => onSelectRef.current(evt.target.id()))
+    // The paper under the pointer is found here rather than by cytoscape's mouseover: its WebGL picking
+    // often answers with an edge drawn over a node, or misses circles a pixel or two wide when zoomed out.
+    const placed = nodes.map((n) => ({ paper: n, ...positions.get(n.id)!, r: nodeRadius(n) }))
+    const paperAt = (sx: number, sy: number) => {
+      const zoom = cy.zoom()
+      const pan = cy.pan()
+      const mx = (sx - pan.x) / zoom
+      const my = (sy - pan.y) / zoom
+      let best: (typeof placed)[number] | null = null
+      let bestGap = HOVER_SLACK
+      for (const p of placed) {
+        // Screen pixels between the pointer and the circle's edge; inside the circle counts as 0.
+        const gap = Math.max(0, Math.hypot(p.x - mx, p.y - my) * zoom - p.r * zoom)
+        if (gap < bestGap || (gap === bestGap && best && p.r < best.r)) {
+          best = p
+          bestGap = gap
+        }
+      }
+      return best
+    }
+    let pointer: { x: number; y: number } | null = null
+    let hoveredId: string | null = null
+    let hoverFrame = 0
+    const updateHover = () => {
+      cancelAnimationFrame(hoverFrame)
+      hoverFrame = requestAnimationFrame(() => {
+        const hit = pointer && paperAt(pointer.x, pointer.y)
+        const box = containerRef.current
+        if (!box) return
+        box.style.cursor = hit ? 'pointer' : ''
+        if (!hit) {
+          if (hoveredId !== null) setHovered(null)
+          hoveredId = null
+          return
+        }
+        const zoom = cy.zoom()
+        const pan = cy.pan()
+        const x = hit.x * zoom + pan.x
+        const y = hit.y * zoom + pan.y
+        hoveredId = hit.paper.id
+        setHovered({
+          paper: hit.paper,
+          x,
+          y,
+          r: hit.r * zoom,
+          below: y < 110, // room above for the card's three lines
+          align: x < 175 ? 'left' : x > box.clientWidth - 175 ? 'right' : 'center',
+        })
+      })
+    }
+    const box = containerRef.current
+    const onMove = (e: MouseEvent) => {
+      const rect = box.getBoundingClientRect()
+      pointer = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+      updateHover()
+    }
+    const onLeave = () => {
+      pointer = null
+      updateHover()
+    }
+    box.addEventListener('mousemove', onMove)
+    box.addEventListener('mouseleave', onLeave)
+    // A click picks the same paper the card names, so a tiny circle can be selected too.
     cy.on('tap', (evt) => {
-      if (evt.target === cy) onSelectRef.current(null)
+      const onNode = evt.target !== cy && evt.target.isNode()
+      onSelectRef.current(onNode ? evt.target.id() : paperAt(evt.renderedPosition.x, evt.renderedPosition.y)?.paper.id ?? null)
     })
 
     // Year axis: model x -> screen x follows pan and zoom.
@@ -310,12 +402,28 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
       })
     }
     cy.on('viewport', updateAxis)
+    let quiet: boolean | null = null
+    const updateLabels = () => {
+      const next = cy.zoom() < LABEL_MIN_ZOOM
+      if (next !== quiet) cy.nodes('.milestone').toggleClass('quiet', (quiet = next))
+    }
+    cy.on('viewport', updateLabels)
+    updateLabels()
+    cy.on('viewport', updateHover) // the card follows its paper while the map pans and zooms
     updateAxis()
+    // Going full screen resizes the box; cytoscape only notices window resizes by itself.
+    const resize = new ResizeObserver(() => cy.resize())
+    resize.observe(containerRef.current)
     cyRef.current = cy
     onExporterRef.current?.(makeExporter(cy, xOf, firstYear, lastYear))
     return () => {
       cancelAnimationFrame(frame)
+      cancelAnimationFrame(hoverFrame)
+      box.removeEventListener('mousemove', onMove)
+      box.removeEventListener('mouseleave', onLeave)
+      resize.disconnect()
       onExporterRef.current?.(null)
+      setHovered(null)
       cy.destroy()
       cyRef.current = null
     }
@@ -355,11 +463,47 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
     cy.animate({ center: { eles: node }, zoom: Math.max(cy.zoom(), 0.9) }, { duration: 300 })
   }, [selectedId, nodes])
 
+  // Zoom and pan so every paper drawn fits the box.
+  const fitAll = () => {
+    const cy = cyRef.current
+    if (!cy) return
+    const fit = { eles: cy.elements(), padding: 30 }
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) cy.fit(fit.eles, fit.padding)
+    else cy.animate({ fit }, { duration: 300 })
+  }
+
   return (
-    <div className="relative h-[620px] w-full overflow-hidden rounded-xl border border-line" style={{ background: 'var(--map-bg)' }}>
-      <StarField />
+    <div className={cn('relative h-[620px] w-full overflow-hidden rounded-xl border border-line', className)} style={{ background: 'var(--map-bg)' }}>
       {/* Explicit size: an absolutely positioned container collapsed to zero height once cytoscape took it over. */}
       <div ref={containerRef} className="relative h-full w-full" aria-label="Lineage map of the topic, oldest papers on the left" />
+      <div className="absolute top-3 right-3 z-20 flex gap-2">
+        <Button variant="secondary" size="sm" onClick={fitAll} title="Zoom out to show every paper drawn">
+          <Scan /> Fit
+        </Button>
+        {actions}
+      </div>
+      {hovered && (
+        <div
+          role="tooltip"
+          className="pointer-events-none absolute z-10 grid w-max max-w-[340px] gap-0.5 rounded-md border border-line-strong bg-surface-2 px-2.5 py-1.5 text-[12px] leading-snug shadow-lg"
+          style={{
+            left: hovered.x,
+            top: hovered.below ? hovered.y + hovered.r + 6 : hovered.y - hovered.r - 6,
+            transform: `translate(${{ left: '-12px', center: '-50%', right: 'calc(-100% + 12px)' }[hovered.align]}, ${hovered.below ? '0' : '-100%'})`,
+          }}
+        >
+          <span className="font-medium text-fg">{hovered.paper.title}</span>
+          {hovered.paper.authors.length > 0 && <span className="text-fg-2">{authorLine(hovered.paper)}</span>}
+          {(hovered.paper.venue || hovered.paper.year !== null) && (
+            // Some venue names run to four lines ("IEEE Computer Society Conference on ..."): one line, then cut.
+            <span className="flex min-w-0 gap-1 text-[11.5px] text-fg-3">
+              {hovered.paper.venue && <span className="truncate">{hovered.paper.venue}</span>}
+              {hovered.paper.venue && hovered.paper.year !== null && <span aria-hidden="true">·</span>}
+              {hovered.paper.year !== null && <span className="shrink-0 tabular-nums">{hovered.paper.year}</span>}
+            </span>
+          )}
+        </div>
+      )}
       <div className="pointer-events-none absolute right-0 bottom-0 left-0 h-7 border-t border-line" style={{ background: 'color-mix(in srgb, var(--map-bg) 85%, transparent)' }}>
         {ticks.map((t) => (
           <span key={t.year} className="absolute top-1.5 -translate-x-1/2 font-mono text-[10px] text-fg-3 tabular-nums" style={{ left: t.x }}>
