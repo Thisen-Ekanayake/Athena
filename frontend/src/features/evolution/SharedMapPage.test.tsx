@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { mockApi, renderWithProviders } from '../../test/utils'
 import type { EvolutionNode, EvolutionTopic } from './api'
@@ -49,6 +49,36 @@ describe('SharedMapPage', () => {
     expect(screen.queryByRole('button', { name: /Follow/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Share/ })).not.toBeInTheDocument()
     expect(calls.filter((c) => c.method === 'POST')).toEqual([expect.objectContaining({ url: '/share/good-token/view' })])
+  })
+
+  it('explains each legend mark, offers every paper and shows the map full screen', async () => {
+    const calls = mockApi({
+      'GET /share/good-token': { data: topic },
+      'GET /share/good-token/graph': {
+        data: { topic, nodes: [ddpm, ldm], edges: [], loose_edges: [], total_papers: 2, strict_links: 0, year_range: [2020, 2022] },
+      },
+      'GET /share/good-token/timeline': { data: { topic, years: [{ year: 2020, papers: [ddpm] }], without_full_text: [] } },
+      'POST /share/good-token/view': { data: {} },
+    })
+    open('good-token')
+
+    const info = await screen.findByRole('button', { name: 'What "Milestone" means' })
+    expect(info).toHaveAccessibleDescription(/key method paper/)
+    for (const label of ['On the main path', 'Seed paper', 'Takes on a stated limitation', 'Loose link']) {
+      expect(screen.getByRole('button', { name: `What "${label}" means` })).toHaveAccessibleDescription(/\w/)
+    }
+
+    fireEvent.click(screen.getByRole('button', { name: 'All' }))
+    expect(await screen.findByTestId('graph')).toBeInTheDocument()
+    expect(calls).toContainEqual(expect.objectContaining({ url: '/share/good-token/graph', params: { limit: 0 } }))
+
+    // jsdom has no Fullscreen API, so the map fills the window instead; Escape leaves.
+    fireEvent.click(screen.getByRole('button', { name: /Full screen/ }))
+    const map = screen.getByTestId('graph').closest('.fixed')
+    expect(map).not.toBeNull()
+    expect(screen.getByRole('button', { name: /Exit full screen/ })).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.getByTestId('graph').closest('.fixed')).toBeNull()
   })
 
   it('explains a link that no longer opens a map, and counts the visit once', async () => {
