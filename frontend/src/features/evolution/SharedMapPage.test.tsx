@@ -15,7 +15,7 @@ const topic: EvolutionTopic = {
 }
 
 const node = (id: string, title: string, year: number, milestone: boolean): EvolutionNode => ({
-  id, openalex_id: `W${id}`, title, year, year_source: 'openalex', authors: ['A. Author'], venue: null, cited_by_count: 100,
+  id, openalex_id: `W${id}`, title, year, year_source: 'openalex', authors: ['A. Author'], author_count: 1, venue: null, cited_by_count: 100,
   kind: 'method', role: 'core', named_method: null, in_degree: 3, pagerank: 0.1, citation_percentile: 0.9, specificity: 0.5,
   on_main_path: milestone, milestone_score: milestone ? 0.9 : 0.2, score_detail: {}, is_milestone: milestone,
   is_milestone_auto: milestone, milestone_override: null, override_note: null, full_text_status: 'parsed',

@@ -13,7 +13,9 @@ export interface EvolutionNode {
   title: string
   year: number | null
   year_source: string | null
+  /** The first three; ``author_count`` is the full list's length. */
   authors: string[]
+  author_count: number
   venue: string | null
   cited_by_count: number
   kind: 'method' | 'survey' | 'dataset' | 'benchmark'

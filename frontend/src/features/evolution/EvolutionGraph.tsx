@@ -228,14 +228,19 @@ function hasWebgl() {
 
 /** The paper under the pointer, at its on-screen position. */
 interface Hovered {
-  title: string
-  year: number | null
+  paper: EvolutionNode
   x: number
   y: number
   r: number
   /** Which side of the node the label sits on, so it stays inside the map's box. */
   below: boolean
   align: 'left' | 'center' | 'right'
+}
+
+/** "A, B, C et al.": nodes carry the first three authors and the full count. */
+function authorLine(paper: EvolutionNode) {
+  const names = paper.authors.join(', ')
+  return paper.author_count > paper.authors.length ? `${names} et al.` : names
 }
 
 export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations, onExporter }: EvolutionGraphProps) {
@@ -306,7 +311,7 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
     cy.on('tap', (evt) => {
       if (evt.target === cy) onSelectRef.current(null)
     })
-    // Name the paper under the pointer; most papers carry no label.
+    // Describe the paper under the pointer; most papers carry no label.
     const byId = new Map(nodes.map((n) => [n.id, n]))
     cy.on('mouseover', 'node', (evt) => {
       const paper = byId.get(evt.target.id())
@@ -314,13 +319,12 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
       const { x, y } = evt.target.renderedPosition()
       const width = containerRef.current!.clientWidth
       setHovered({
-        title: paper.title,
-        year: paper.year,
+        paper,
         x,
         y,
         r: evt.target.renderedWidth() / 2,
-        below: y < 70,
-        align: x < 160 ? 'left' : x > width - 160 ? 'right' : 'center',
+        below: y < 110, // room above for the card's three lines
+        align: x < 175 ? 'left' : x > width - 175 ? 'right' : 'center',
       })
       containerRef.current!.style.cursor = 'pointer'
     })
@@ -407,15 +411,20 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
       {hovered && (
         <div
           role="tooltip"
-          className="pointer-events-none absolute z-10 w-max max-w-[320px] rounded-md border border-line-strong bg-surface-2 px-2.5 py-1.5 text-[12px] leading-snug text-fg shadow-lg"
+          className="pointer-events-none absolute z-10 grid w-max max-w-[340px] gap-0.5 rounded-md border border-line-strong bg-surface-2 px-2.5 py-1.5 text-[12px] leading-snug shadow-lg"
           style={{
             left: hovered.x,
             top: hovered.below ? hovered.y + hovered.r + 6 : hovered.y - hovered.r - 6,
             transform: `translate(${{ left: '-12px', center: '-50%', right: 'calc(-100% + 12px)' }[hovered.align]}, ${hovered.below ? '0' : '-100%'})`,
           }}
         >
-          {hovered.title}
-          {hovered.year !== null && <span className="ml-1.5 font-mono text-[11px] text-fg-3 tabular-nums">{hovered.year}</span>}
+          <span className="font-medium text-fg">{hovered.paper.title}</span>
+          {hovered.paper.authors.length > 0 && <span className="text-fg-2">{authorLine(hovered.paper)}</span>}
+          {(hovered.paper.venue || hovered.paper.year !== null) && (
+            <span className="text-[11.5px] text-fg-3">
+              {[hovered.paper.venue, hovered.paper.year].filter((v) => v !== null && v !== '').join(' · ')}
+            </span>
+          )}
         </div>
       )}
       <div className="pointer-events-none absolute right-0 bottom-0 left-0 h-7 border-t border-line" style={{ background: 'color-mix(in srgb, var(--map-bg) 85%, transparent)' }}>
