@@ -1,6 +1,74 @@
 import { Fragment, type ReactNode } from 'react'
 
-const BLOCK_START = /^(#{1,4}\s|[-*]\s|\d+\.\s|```|>\s?|\|)/
+const BLOCK_START = /^(#{1,4}\s|\s{0,3}[-*]\s|\s{0,3}\d+\.\s|```|>\s?|\|)/
+const LIST_ITEM = /^\s{0,3}([-*]|\d+\.)\s/
+const ANY_ITEM = /^(\s*)([-*]|\d+\.)\s+(.*)$/
+
+interface ListItem {
+  text: string
+  marker: string
+  children: ListItem[]
+}
+
+/**
+ * The list starting at line ``start``: items nest by indentation, an indented line without a marker continues the
+ * item above, and a blank line between items does not end the list.
+ */
+function parseList(lines: string[], start: number): { items: ListItem[]; next: number } {
+  const root: ListItem[] = []
+  const stack = [{ indent: ANY_ITEM.exec(lines[start])![1].length, items: root }]
+  let last: ListItem | null = null
+  let i = start
+  while (i < lines.length) {
+    const line = lines[i]
+    if (!line.trim()) {
+      let j = i
+      while (j < lines.length && !lines[j].trim()) j++
+      if (j < lines.length && ANY_ITEM.test(lines[j])) {
+        i = j
+        continue
+      }
+      break
+    }
+    const m = ANY_ITEM.exec(line)
+    if (!m) {
+      if (!last || !/^\s/.test(line)) break
+      last.text += ' ' + line.trim()
+      i++
+      continue
+    }
+    const indent = m[1].length
+    while (stack.length > 1 && indent < stack[stack.length - 1].indent) stack.pop()
+    const top = stack[stack.length - 1]
+    const item: ListItem = { text: m[3], marker: m[2], children: [] }
+    if (indent > top.indent && top.items.length) {
+      const parent = top.items[top.items.length - 1]
+      stack.push({ indent, items: parent.children })
+      parent.children.push(item)
+    } else {
+      top.items.push(item)
+    }
+    last = item
+    i++
+  }
+  return { items: root, next: i }
+}
+
+function renderList(items: ListItem[], inl: (s: string) => ReactNode): ReactNode {
+  const ordered = /^\d/.test(items[0].marker)
+  const List = ordered ? 'ol' : 'ul'
+  const first = ordered ? parseInt(items[0].marker, 10) : 1
+  return (
+    <List start={ordered && first !== 1 ? first : undefined} className={ordered ? 'grid list-decimal gap-1.5 pl-5' : 'grid list-disc gap-1.5 pl-5'}>
+      {items.map((item, k) => (
+        <li key={k}>
+          {inl(item.text)}
+          {item.children.length > 0 && <div className="mt-1.5">{renderList(item.children, inl)}</div>}
+        </li>
+      ))}
+    </List>
+  )
+}
 
 /**
  * The Markdown reviews and chats use: headings, paragraphs, bullet and numbered lists, code blocks, quotes, tables,
@@ -72,19 +140,10 @@ export function Markdown({ text, idPrefix = 'ref', onCite, className }: {
       )
       continue
     }
-    const ordered = /^\d+\.\s/.test(line)
-    if (ordered || /^[-*]\s/.test(line)) {
-      const items: string[] = []
-      while (i < lines.length && (ordered ? /^\d+\.\s/ : /^[-*]\s/).test(lines[i])) {
-        items.push(lines[i].replace(ordered ? /^\d+\.\s+/ : /^[-*]\s+/, ''))
-        i++
-      }
-      const List = ordered ? 'ol' : 'ul'
-      blocks.push(
-        <List key={i} className={ordered ? 'grid list-decimal gap-1.5 pl-5' : 'grid list-disc gap-1.5 pl-5'}>
-          {items.map((item, k) => <li key={k}>{inl(item)}</li>)}
-        </List>,
-      )
+    if (LIST_ITEM.test(line)) {
+      const { items, next } = parseList(lines, i)
+      i = next
+      blocks.push(<Fragment key={i}>{renderList(items, inl)}</Fragment>)
       continue
     }
     const para: string[] = []
