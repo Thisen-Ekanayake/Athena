@@ -524,3 +524,18 @@ def test_searches_are_capped_and_papers_keep_their_numbers(monkeypatch):
     assert "[2] DoRA" in text and len(ctx.sources) == 2   # found again: same number
     text, info = tools.execute(ctx, "search_papers", {"query": "DoRA 2024"})
     assert not info["ok"] and "searched enough" in text
+
+
+def test_off_topic_library_hits_are_left_out(monkeypatch):
+    from athena.projects import tools
+    from athena.search import arxiv_live, local, semantic_scholar
+    hit = {"abstract": "", "url": "", "year": 2025, "authors": [], "source": "local"}
+    monkeypatch.setattr(local, "search_local", lambda q, limit: [
+        hit | {"id": "a", "title": "Lehmer's problem", "score": 0.49},
+        hit | {"id": "b", "title": "Sinhala NER", "score": 0.66},
+        hit | {"id": "c", "title": "HelaBERT for Sinhala", "score": 0.0}])  # a keyword hit: the title matches
+    monkeypatch.setattr(semantic_scholar, "search_semantic_scholar", lambda q, limit: [])
+    monkeypatch.setattr(arxiv_live, "search_arxiv", lambda q, limit: [])
+    ctx = tools.Context(user_id=uuid4(), project_id=None, conversation_id=uuid4(), message_id=None)
+    text, info = tools.execute(ctx, "search_papers", {"query": "HelaBERT"})
+    assert [r["title"] for r in info["results"]] == ["Sinhala NER", "HelaBERT for Sinhala"]

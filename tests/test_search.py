@@ -80,6 +80,16 @@ class TestMerger:
         local = [_paper("X", source="local")]
         assert merger.merge_results(local, [], max_total=0) == []
 
+    def test_keep_order_takes_the_sources_ranking_over_citations(self):
+        s2 = [_paper("Old classic", source="semantic_scholar", citations=900),
+              _paper("Other", source="semantic_scholar", citations=40)]
+        arxiv = [_paper("HelaBERT", source="arxiv", citations=0), _paper("old classic", source="arxiv")]
+        live = merger.interleave(s2, arxiv)
+        assert [p["title"] for p in live] == ["Old classic", "HelaBERT", "Other", "old classic"]
+        assert [p["title"] for p in merger.merge_results([], live, max_total=2, keep_order=True)] == \
+            ["Old classic", "HelaBERT"]
+        assert "HelaBERT" not in [p["title"] for p in merger.merge_results([], live, max_total=2)]
+
 
 # ────────────────────────────────────────────────────────────────────────
 # semantic_scholar.py

@@ -15,6 +15,7 @@ from loguru import logger
 
 SEARCH_RESULTS = 8
 LOCAL_RESULTS = 4         # the rest of the results come from Semantic Scholar and arXiv
+LOCAL_FLOOR = 0.6         # library hits below this similarity are off topic (relevant ones score 0.6-0.8)
 SEARCHES_PER_TURN = 2     # the 9B otherwise repeats a search with small changes to the query
 MAP_PASSAGES = 8
 EXCERPT = 500
@@ -127,7 +128,7 @@ def _session():
 def search_papers(ctx: Context, args: dict) -> tuple[str, dict]:
     from athena.search.arxiv_live import search_arxiv
     from athena.search.local import search_local
-    from athena.search.merger import merge_results
+    from athena.search.merger import _normalise_title, interleave, merge_results
     from athena.search.semantic_scholar import search_semantic_scholar
 
     query = str(args.get("query") or "").strip()
@@ -136,9 +137,11 @@ def search_papers(ctx: Context, args: dict) -> tuple[str, dict]:
     if ctx.searches >= SEARCHES_PER_TURN:
         raise ToolError("you have searched enough for this answer; answer with the papers already found")
     ctx.searches += 1
-    local = search_local(query, limit=LOCAL_RESULTS)
-    live = search_semantic_scholar(query, limit=10) + search_arxiv(query, limit=10)
-    found = merge_results(local, live, max_total=SEARCH_RESULTS)
+    words = set(_normalise_title(query).split())
+    local = [p for p in search_local(query, limit=LOCAL_RESULTS)
+             if (p.get("score") or 0) >= LOCAL_FLOOR or words <= set(_normalise_title(p.get("title")).split())]
+    live = interleave(search_semantic_scholar(query, limit=10), search_arxiv(query, limit=10))
+    found = merge_results(local, live, max_total=SEARCH_RESULTS, keep_order=True)
     in_project = _project_refs(ctx)
     results, lines = [], []
     for p in found:
