@@ -142,6 +142,12 @@ def test_the_system_prompt_carries_project_instructions():
     assert "Draft (id a1" in text
 
 
+def test_the_system_prompt_lists_the_maps():
+    text = chat.system_prompt(turn(maps=["PEFT (peft): Adapting large models."]))
+    assert "- PEFT (peft): Adapting large models." in text and "query_map" in text
+    assert "(none yet)" in chat.system_prompt(turn())
+
+
 # ── routes ───────────────────────────────────────────────────────────
 
 
@@ -371,6 +377,7 @@ def test_a_turn_thinks_writes_an_artifact_and_is_saved(env, monkeypatch, usage_r
 
     first = model.calls[0]
     assert first["extra_body"]["reasoning_budget_tokens"] == 4096 and first["tools"]
+    assert "- PEFT (peft)" in first["messages"][0]["content"]
     assert first["messages"][-1] == {"role": "user", "content": "Draft me notes"}
     assert model.calls[1]["messages"][-1]["role"] == "tool"
 
@@ -482,6 +489,15 @@ def test_edits_must_match_the_artifact(env):
     bo_ctx = tools.Context(user_id=uuid4(), project_id=None, conversation_id=uuid4(), message_id=None)
     assert not tools.execute(bo_ctx, "read_artifact", {"artifact_id": a["id"]})[1]["ok"]  # not theirs
     assert tools.execute(ctx, "no_such_tool", {})[1]["ok"] is False
+
+
+@pytestmark_api
+def test_an_unknown_map_lists_the_maps(env):
+    from athena.projects import tools
+    ctx = tools.Context(user_id=uuid4(), project_id=None, conversation_id=uuid4(), message_id=None)
+    text, info = tools.execute(ctx, "query_map", {"map": "transformers", "aspect": "gaps"})
+    assert not info["ok"] and "- PEFT (peft)" in text
+    assert info["summary"] == "no map called 'transformers'"   # the step shown on the page stays short
 
 
 def test_searches_are_capped_and_papers_keep_their_numbers(monkeypatch):

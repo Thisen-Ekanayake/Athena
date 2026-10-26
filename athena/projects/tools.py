@@ -103,14 +103,17 @@ def execute(ctx: Context, name: str, raw_args: str | dict) -> tuple[str, dict]:
     try:
         return handler(ctx, args)
     except ToolError as exc:
-        return f"Error: {exc}", {"ok": False, "summary": str(exc)}
+        return f"Error: {exc}{exc.more}", {"ok": False, "summary": str(exc)}
     except Exception as exc:
         logger.warning(f"Chat tool {name} failed: {exc}")
         return f"Error: the tool failed ({str(exc)[:200]}).", {"ok": False, "summary": "The tool failed"}
 
 
 class ToolError(Exception):
-    pass
+    """A tool call the model can correct; ``more`` goes to the model only, not into the step's summary."""
+    def __init__(self, message: str, more: str = ""):
+        super().__init__(message)
+        self.more = more
 
 
 def _session():
@@ -169,6 +172,23 @@ def _project_refs(ctx: Context) -> set[str]:
 # ── maps ─────────────────────────────────────────────────────────────
 
 
+MAPS_LISTED = 40
+
+
+def ready_maps(session) -> list[str]:
+    """One line per built map, for the system prompt and for a failed lookup: "Name (slug): description"."""
+    from sqlalchemy import select
+
+    from athena.core.models import EvoTopic
+    topics = session.execute(select(EvoTopic).where(EvoTopic.built_at.isnot(None))
+                             .order_by(EvoTopic.name)).scalars().all()
+    lines = [f"{t.name} ({t.slug})" + (f": {t.description[:160]}" if t.description else "")
+             for t in topics[:MAPS_LISTED]]
+    if len(topics) > MAPS_LISTED:
+        lines.append(f"…and {len(topics) - MAPS_LISTED} more; query_map also finds a map by a topic's name")
+    return lines
+
+
 def _find_map(session, name: str):
     from sqlalchemy import func, select
 
@@ -179,7 +199,9 @@ def _find_map(session, name: str):
         select(EvoTopic).where(func.lower(EvoTopic.name) == name.lower())).scalars().first() \
         or evo.find_topic(session, name)
     if topic is None:
-        raise ToolError(f"no map called {name!r}")
+        maps = ready_maps(session)
+        raise ToolError(f"no map called {name!r}", "; the maps are:\n" + "\n".join(f"- {m}" for m in maps)
+                        if maps else "; there are no maps yet")
     if topic.built_at is None:
         raise ToolError(f"the map {topic.name} is not built yet")
     return topic
