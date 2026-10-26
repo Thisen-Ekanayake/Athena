@@ -20,6 +20,7 @@ passages and files, then as many earlier turns as fit.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -136,6 +137,17 @@ def user_content(turn: Turn, passages: list[dict], budget: int, image_urls: dict
         return text, notices
     return [{"type": "image_url", "image_url": {"url": image_urls[a["id"]]}} for a in images] + \
         [{"type": "text", "text": text}], notices
+
+
+CITATION = re.compile(r" ?\[(\d+)\](?![(:])")
+
+
+def drop_unknown_citations(text: str, sources: int) -> str:
+    """The answer without [n] markers that point at no source (the model made them up), outside code."""
+    def clean(part: str) -> str:
+        return CITATION.sub(lambda m: m.group(0) if 1 <= int(m.group(1)) <= sources else "", part)
+    parts = re.split(r"(```.*?```|`[^`\n]*`)", text, flags=re.S)
+    return "".join(p if i % 2 else clean(p) for i, p in enumerate(parts))
 
 
 def fit_history(history: list[dict], budget: int) -> list[dict]:
@@ -272,7 +284,7 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
                 reasoning_ms += int((time.monotonic() - think_started) * 1000)
             text = "".join(text_parts)
             if text.strip():
-                content_parts.append(text)
+                content_parts.append(text.strip())
             if not calls:
                 break
             messages.append({"role": "assistant", "content": text or None, "tool_calls": [
@@ -307,7 +319,7 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
         status, error = "failed", f"The model did not answer: {str(exc)[:300]}"
         yield {"type": "error", "message": error}
     finally:
-        answer = "\n\n".join(content_parts)
+        answer = drop_unknown_citations("\n\n".join(content_parts), len(ctx.sources))
         prompt_tokens = counted_in or estimate
         output_tokens = counted_out or tokens(answer + "".join(reasoning_parts))
         fields = {"content": answer, "reasoning": "".join(reasoning_parts) or None,

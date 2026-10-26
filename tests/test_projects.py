@@ -148,6 +148,13 @@ def test_the_system_prompt_lists_the_maps():
     assert "(none yet)" in chat.system_prompt(turn())
 
 
+def test_made_up_citations_are_dropped():
+    assert chat.drop_unknown_citations("Search papers [1]. Done [3].", 0) == "Search papers. Done."
+    assert chat.drop_unknown_citations("LoRA [1][2] and DoRA [3].", 2) == "LoRA [1][2] and DoRA."
+    assert chat.drop_unknown_citations("Use `x[1]` or\n```\na[2]\n```\nsee [docs](u) [1](u)", 0) == \
+        "Use `x[1]` or\n```\na[2]\n```\nsee [docs](u) [1](u)"
+
+
 # ── routes ───────────────────────────────────────────────────────────
 
 
