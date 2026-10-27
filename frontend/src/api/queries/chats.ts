@@ -29,6 +29,10 @@ export interface ChatSummary {
   project_name: string | null
   model: string | null
   effort: Effort | null
+  /** Listed first */
+  pinned: boolean
+  /** Out of the lists; `useChats({ archived: true })` shows only these */
+  archived: boolean
   created_at: string
   updated_at: string
 }
@@ -104,12 +108,15 @@ export const useChatModels = () =>
     staleTime: 30_000,
   })
 
-export const useChats = (params: { projectId?: string; standalone?: boolean; q?: string; limit?: number } = {}) =>
+export const useChats = (params: { projectId?: string; standalone?: boolean; q?: string; limit?: number; archived?: boolean } = {}) =>
   useQuery({
     queryKey: ['chats', params],
     queryFn: async () =>
       (await apiClient.get<{ chats: ChatSummary[] }>('/chats', {
-        params: { project_id: params.projectId, standalone: params.standalone || undefined, q: params.q || undefined, limit: params.limit },
+        params: {
+          project_id: params.projectId, standalone: params.standalone || undefined, q: params.q || undefined, limit: params.limit,
+          archived: params.archived || undefined,
+        },
       })).data.chats,
   })
 
@@ -126,7 +133,7 @@ export const createChat = async (body: { project_id?: string | null; model?: str
 export const useUpdateChat = () => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ id, ...body }: { id: string; title?: string; project_id?: string | null }) =>
+    mutationFn: async ({ id, ...body }: { id: string; title?: string; project_id?: string | null; pinned?: boolean; archived?: boolean }) =>
       (await apiClient.patch<ChatSummary>(`/chats/${id}`, body)).data,
     onSuccess: (chat) => {
       qc.invalidateQueries({ queryKey: ['chats'] })

@@ -14,7 +14,7 @@ const PROJECT: Project = {
   ],
   files: [{ id: 'f1', filename: 'notes.pdf', mime: 'application/pdf', kind: 'pdf', size: 20480, pages: 3, status: 'ready', error: null, index_status: 'failed', chars: 5200, caption: null, project_id: 'p1', conversation_id: null, created_at: '' }],
   artifacts: [{ id: 'a1', title: 'Related work', version: 3, project_id: 'p1', conversation_id: 'c1', index_status: 'indexed', created_at: '', updated_at: '2026-10-24T09:00:00Z', chars: 900 }],
-  chats: [{ id: 'c1', title: 'LoRA questions', project_id: 'p1', project_name: 'Thesis', model: null, effort: null, created_at: '', updated_at: '2026-10-24T09:00:00Z' }],
+  chats: [{ id: 'c1', title: 'LoRA questions', project_id: 'p1', project_name: 'Thesis', model: null, effort: null, pinned: false, archived: false, created_at: '', updated_at: '2026-10-24T09:00:00Z' }],
 }
 
 describe('ProjectPage', () => {
