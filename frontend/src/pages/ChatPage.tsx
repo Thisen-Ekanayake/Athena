@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Archive, ArchiveRestore, Check, FolderInput, FolderKanban, MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from 'lucide-react'
 import { apiErrorMessage } from '../api/error'
-import { createChat, useChat, useDeleteChat, useUpdateChat, type Chat } from '../api/queries/chats'
+import { createChat, useChat, useDeleteChat, useUpdateChat, type Chat, type ChatMessage } from '../api/queries/chats'
 import { uploadChatFiles, useProject, useProjects } from '../api/queries/projects'
 import { useChatStreams, type Draft } from '../store/chatStore'
 import { Button } from '../ui/Button'
@@ -90,29 +90,13 @@ function ChatHeader({ chat }: { chat: Chat }) {
   const [title, setTitle] = useState(chat.title)
 
   return (
-    <header className="sticky top-0 z-10 -mx-4 flex items-center gap-2 border-b border-line bg-bg/90 px-4 py-2 backdrop-blur md:-mx-8 md:px-8">
-      <div className="min-w-0 flex-1">
-        {chat.project_id && (
-          <Link to={`/projects/${chat.project_id}`} className="inline-flex items-center gap-1 text-[12px] text-fg-3 hover:text-fg-2">
-            <FolderKanban className="h-3 w-3" aria-hidden="true" />{chat.project_name}
-          </Link>
-        )}
-        {renaming ? (
-          <form className="flex gap-1.5" onSubmit={(e) => {
-            e.preventDefault()
-            if (title.trim()) update.mutate({ id: chat.id, title: title.trim() }, { onSuccess: () => setRenaming(false) })
-          }}>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Chat title" autoFocus className={cn(inputClass, 'flex-1')} />
-            <Button type="submit" variant="secondary" size="sm">Save</Button>
-            <Button variant="ghost" size="sm" onClick={() => setRenaming(false)}>Cancel</Button>
-          </form>
-        ) : (
-          <h1 className="truncate text-[15px] font-medium text-fg">{chat.title}</h1>
-        )}
-      </div>
+    // No title bar: the chat starts with the first message. Its project and menu sit in the top-left corner, across
+    // from the first (right-aligned) message, and take no room.
+    <header className="absolute top-3 left-0 z-10 flex max-w-[60%] items-center gap-1.5">
       <Popover
         label="Chat actions"
         width={240}
+        align="start"
         trigger={({ ref, open, toggle }) => (
           <Button ref={ref} variant="ghost" size="icon-sm" onClick={toggle} aria-expanded={open} aria-label="Chat actions" title="Chat actions"><MoreHorizontal /></Button>
         )}
@@ -155,8 +139,31 @@ function ChatHeader({ chat }: { chat: Chat }) {
           </div>
         )}
       </Popover>
+      {renaming ? (
+        <form className="flex gap-1.5 rounded-lg bg-bg" onSubmit={(e) => {
+          e.preventDefault()
+          if (title.trim()) update.mutate({ id: chat.id, title: title.trim() }, { onSuccess: () => setRenaming(false) })
+        }}>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Chat title" autoFocus className={cn(inputClass, 'w-64')} />
+          <Button type="submit" variant="secondary" size="sm">Save</Button>
+          <Button variant="ghost" size="sm" onClick={() => setRenaming(false)}>Cancel</Button>
+        </form>
+      ) : chat.project_id && (
+        <Link to={`/projects/${chat.project_id}`} className="inline-flex min-w-0 items-center gap-1 truncate text-[12px] text-fg-3 hover:text-fg-2">
+          <FolderKanban className="h-3 w-3 shrink-0" aria-hidden="true" />{chat.project_name}
+        </Link>
+      )}
     </header>
   )
+}
+
+/** What the conversation fills of the context: the last answer's own count (its last call's prompt and reply);
+ * for answers from before that was kept, an estimate from the text plus the system prompt and tools. */
+function contextUsed(messages: ChatMessage[]): { tokens: number; estimated: boolean } {
+  const last = [...messages].reverse().find((m) => m.role === 'assistant' && m.status !== 'streaming')
+  if (last?.stats?.context_used) return { tokens: last.stats.context_used, estimated: false }
+  const chars = messages.reduce((n, m) => n + m.content.length, 0)
+  return { tokens: messages.length ? Math.round(chars / 3.5) + 2000 : 0, estimated: messages.length > 0 }
 }
 
 const fromDraft = (d: Draft): AssistantTurn => ({
@@ -225,7 +232,7 @@ function ChatView({ id }: { id: string }) {
   }
 
   return (
-    <div className="mx-auto grid max-w-3xl">
+    <div className="relative mx-auto grid max-w-3xl">
       <ChatHeader chat={c} />
       <div className="grid gap-6 py-6">
         {messages.map((m) => (m.role === 'user' ? (
@@ -240,6 +247,7 @@ function ChatView({ id }: { id: string }) {
               id: m.id, content: m.content, reasoning: m.reasoning, reasoningMs: m.reasoning_ms, thinking: false, steps: m.steps,
               sources: m.sources, artifacts: m.artifacts, notices: [], status: m.status, error: m.error, model: m.model,
               effort: m.effort, tokens: m.input_tokens + m.output_tokens || null, live: false, stats: m.stats,
+              tokensIn: m.input_tokens, tokensOut: m.output_tokens,
             }}
           />
         )))}
@@ -260,6 +268,7 @@ function ChatView({ id }: { id: string }) {
           onStop={() => stop(id)}
           streaming={streaming}
           initial={{ model: c.model, effort: c.effort, context: c.context }}
+          contextUsed={contextUsed(c.messages)}
           placeholder={c.project_name ? `Ask about ${c.project_name}…` : 'Reply…'}
         />
         {c.artifacts.length > 0 && (

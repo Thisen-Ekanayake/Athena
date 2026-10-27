@@ -91,6 +91,8 @@ export interface TurnStats {
   gpu_layers?: number
   layers?: number
   context?: number
+  /** What the context held at the end of the answer: the last call's prompt and answer tokens */
+  context_used?: number
 }
 
 export interface ChatSummary {

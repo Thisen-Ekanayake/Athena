@@ -66,7 +66,22 @@ describe('ChatPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /Add/ }))
     expect(await screen.findByText('In project')).toBeInTheDocument()
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ kind: 'paper', meta: { title: 'DoRA' } })
-    expect(screen.getByText(/qwen3.5-9b · medium effort · 1,000 tokens/)).toBeInTheDocument()
+    expect(screen.queryByRole('term')).not.toBeInTheDocument()  // the details stay folded until asked for
+    await userEvent.click(screen.getByRole('button', { name: 'Show details' }))
+    const details = screen.getByLabelText('How this answer ran')
+    expect(details).toHaveTextContent(/Model\s*qwen3.5-9b/)
+    expect(details).toHaveTextContent(/Effort\s*medium/)
+  })
+
+  it('shows how full the context is beside the send button', async () => {
+    const answered = { ...CHAT, messages: [CHAT.messages[0], { ...CHAT.messages[1], stats: { context_used: 5120, context: 20480 } }] }
+    mockApi({ 'GET /chats/c1': { data: answered }, 'GET /chat/models': { data: MODELS }, 'GET /projects': { data: { projects: [] } } })
+    renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
+    expect(await screen.findByRole('button', { name: '5,120 / 20,480 tokens of context used (25%)' })).toBeInTheDocument()
+    expect(screen.getByRole('tooltip')).toHaveTextContent('5,120 / 20,480 tokens')
+    // No title bar: the chat starts with its first message; its menu stays
+    expect(screen.queryByRole('heading', { name: 'LoRA questions' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Chat actions' })).toBeInTheDocument()
   })
 
   it('offers an effort only for a model that thinks', async () => {

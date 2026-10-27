@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  Brain, Check, ChevronRight, Copy, ExternalLink, FileText, Map as MapIcon, NotebookPen, Plus,
+  Brain, Check, ChevronDown, ChevronRight, Copy, ExternalLink, FileText, Map as MapIcon, NotebookPen, Plus,
   RotateCcw, Search, TriangleAlert,
 } from 'lucide-react'
 import type { ArtifactRef } from '../../api/queries/artifacts'
@@ -35,18 +35,27 @@ export interface AssistantTurn {
   loading?: LoadState | null
   /** How the answer ran: speed, device, time to the first token */
   stats?: TurnStats | null
+  tokensIn?: number
+  tokensOut?: number
 }
 
-/** "38 tok/s · GPU · first token 0.4 s · loaded in 5.2 s" */
-function statsText(s: TurnStats | null | undefined) {
-  if (!s) return null
-  const device = s.device === 'split' && s.gpu_layers != null ? `GPU + CPU (${s.gpu_layers}/${s.layers} layers)` : s.device ? DEVICE_LABEL[s.device] : null
-  return [
-    s.tps ? `${s.tps >= 10 ? Math.round(s.tps) : s.tps} tok/s` : null,
-    device,
-    s.ttft_ms != null ? `first token ${secs(s.ttft_ms / 1000)}` : null,
-    s.load_ms ? `loaded in ${secs(s.load_ms / 1000)}` : null,
-  ].filter(Boolean).join(' · ')
+/** How an answer ran, as label/value rows for its details: model, effort, tokens, speed, device, timings. */
+function detailRows(turn: AssistantTurn): [string, string][] {
+  const s = turn.stats ?? {}
+  const device = s.device === 'split' && s.gpu_layers != null ? `GPU + CPU (${s.gpu_layers}/${s.layers} layers on the GPU)`
+    : s.device === 'gpu' && s.layers ? `GPU (${s.layers}/${s.layers} layers)` : s.device ? DEVICE_LABEL[s.device] : null
+  const rows: [string, string | null][] = [
+    ['Model', turn.model],
+    ['Effort', turn.effort && turn.effort !== 'off' ? turn.effort : turn.effort === 'off' ? 'no thinking' : null],
+    ['Tokens', turn.tokensIn != null && turn.tokensOut != null ? `${turn.tokensIn.toLocaleString()} in · ${turn.tokensOut.toLocaleString()} out`
+      : turn.tokens ? turn.tokens.toLocaleString() : null],
+    ['Context', s.context_used && s.context ? `${s.context_used.toLocaleString()} / ${s.context.toLocaleString()} tokens used` : null],
+    ['Speed', s.tps ? `${s.tps >= 10 ? Math.round(s.tps) : s.tps} tokens/s writing${s.prompt_tps ? ` · ${Math.round(s.prompt_tps).toLocaleString()} tokens/s reading` : ''}` : null],
+    ['Device', device],
+    ['First token', s.ttft_ms != null ? `after ${secs(s.ttft_ms / 1000)}` : null],
+    ['Load', s.load_ms ? `the model loaded in ${secs(s.load_ms / 1000)} first` : null],
+  ]
+  return rows.filter((r): r is [string, string] => !!r[1])
 }
 
 export function UserMessage({ content, attachments }: { content: string; attachments: ChatMessage['attachments'] }) {
@@ -214,6 +223,7 @@ export function AssistantMessage({ turn, projectId, onOpenArtifact, onRetry }: {
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const cite = (n: number) => {
     setSourcesOpen(true)
     requestAnimationFrame(() => {
@@ -257,9 +267,23 @@ export function AssistantMessage({ turn, projectId, onOpenArtifact, onRetry }: {
             </Button>
           )}
           {onRetry && <Button variant="ghost" size="icon-sm" aria-label="Answer again" title="Answer again" onClick={onRetry}><RotateCcw /></Button>}
-          <span className="ml-1 font-mono">{[turn.model, turn.effort && turn.effort !== 'off' ? `${turn.effort} effort` : null, turn.tokens ? `${turn.tokens.toLocaleString()} tokens` : null].filter(Boolean).join(' · ')}</span>
-          {statsText(turn.stats) && <span className="font-mono text-fg-3/80" title="How this answer ran">· {statsText(turn.stats)}</span>}
+          {detailRows(turn).length > 0 && (
+            <Button variant="ghost" size="icon-sm" aria-label={detailsOpen ? 'Hide details' : 'Show details'} title={detailsOpen ? 'Hide details' : 'How this answer ran'}
+              aria-expanded={detailsOpen} onClick={() => setDetailsOpen((o) => !o)}>
+              <ChevronDown className={cn('transition-transform', detailsOpen && 'rotate-180')} />
+            </Button>
+          )}
         </div>
+      )}
+      {!turn.live && detailsOpen && (
+        <dl className="grid max-w-md grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-lg border border-line bg-surface px-3 py-2 text-[12px]" aria-label="How this answer ran">
+          {detailRows(turn).map(([label, value]) => (
+            <div key={label} className="contents">
+              <dt className="text-fg-3">{label}</dt>
+              <dd className="font-mono text-fg-2">{value}</dd>
+            </div>
+          ))}
+        </dl>
       )}
     </div>
   )

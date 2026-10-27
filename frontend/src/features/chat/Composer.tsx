@@ -3,6 +3,7 @@ import { ArrowUp, FileText, Image as ImageIcon, Paperclip, Square, TriangleAlert
 import { useChatModels, useModelState, warmModel, type Effort } from '../../api/queries/chats'
 import { Button } from '../../ui/Button'
 import { cn } from '../../ui/cn'
+import { ContextMeter } from './ContextMeter'
 import { LoadCard } from './LoadCard'
 import { ModelPicker, type ModelChoice } from './ModelPicker'
 
@@ -38,7 +39,7 @@ export interface Outgoing {
 }
 
 /** Where messages are written: the text, attached files, the model, context and effort, and send or stop. */
-export function Composer({ onSend, onStop, streaming, initial, placeholder = 'Ask anything…', autoFocus, className }: {
+export function Composer({ onSend, onStop, streaming, initial, placeholder = 'Ask anything…', autoFocus, className, contextUsed }: {
   onSend: (m: Outgoing) => void | Promise<void>
   onStop?: () => void
   streaming?: boolean
@@ -47,6 +48,8 @@ export function Composer({ onSend, onStop, streaming, initial, placeholder = 'As
   placeholder?: string
   autoFocus?: boolean
   className?: string
+  /** How much of the context the conversation fills, for the ring before the send button */
+  contextUsed?: { tokens: number; estimated: boolean } | null
 }) {
   const models = useChatModels()
   const [text, setText] = useState('')
@@ -214,6 +217,9 @@ export function Composer({ onSend, onStop, streaming, initial, placeholder = 'As
         </span>
         <ModelPicker models={models.data} model={model} effort={effort} context={context} onChange={choose} />
         <span className="ml-auto" />
+        {contextUsed && (context ?? current?.context) && (
+          <ContextMeter used={contextUsed.tokens + Math.ceil(text.length / 4)} total={(context ?? current?.context)!} estimated={contextUsed.estimated} />
+        )}
         {streaming ? (
           <Button variant="secondary" size="icon-sm" onClick={onStop} aria-label="Stop" title="Stop">
             <Square className="fill-current" />
