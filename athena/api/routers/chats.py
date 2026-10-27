@@ -1,10 +1,14 @@
 """
 Chats with the local models, alone or in a project, and the artifacts they write (athena.projects).
 
-GET    /api/v1/chat/models                       — the models a chat may pick, which ones think, the effort levels
+GET    /api/v1/chat/models                       — the models a chat may pick, which ones think, the effort levels;
+                                                   with the registry, each one's contexts with device and speed
+POST   /api/v1/chat/models/warm                  — {model, context?, vision?}: start loading it now (picked, typing)
+GET    /api/v1/chat/models/state?model=&context=&vision=
+                                                 — how far its load has got (athena.model_server.loading)
 GET    /api/v1/chats?project_id=&standalone=&q=&archived=
                                                  — yours, pinned first then most recent; archived=true: only those
-POST   /api/v1/chats                             — {project_id?, model?, effort?}
+POST   /api/v1/chats                             — {project_id?, model?, effort?, context?}
 GET    /api/v1/chats/{id}                        — the chat with its messages, files and artifacts
 PATCH  /api/v1/chats/{id}                        — {title}, {project_id} (null: out of its project), {pinned},
                                                    {archived}; any of them
@@ -44,6 +48,7 @@ from athena.api.deps import get_db
 from athena.api.routers.projects import _forget, store_upload
 from athena.core import llm, usage
 from athena.core.models import ChatMessage, Conversation, Project, User, UserFile
+from athena.model_server import loading
 from athena.database import projects as db
 from athena.projects import chat, files as uploads, index, tasks, tools
 
@@ -57,6 +62,7 @@ class ChatCreate(BaseModel):
     project_id: UUID | None = None
     model: str | None = Field(None, max_length=200)
     effort: Effort | None = None
+    context: int | None = Field(None, ge=512, le=1_048_576)
 
 
 class ChatUpdate(BaseModel):
@@ -70,6 +76,7 @@ class MessageSend(BaseModel):
     content: str = Field("", max_length=100_000)
     model: str | None = Field(None, max_length=200)
     effort: Effort | None = None
+    context: int | None = Field(None, ge=512, le=1_048_576)
     attachment_ids: list[UUID] = Field(default_factory=list, max_length=20)
     retry: bool = False
 
@@ -133,7 +140,33 @@ def chat_models(user: User = Depends(auth.active_user)):
     return {"models": models, "default": default if any(m["id"] == default for m in models)
             else (models[0]["id"] if models else default),
             "efforts": [{"id": e, "budget": b} for e, b in llm.EFFORT_BUDGETS.items()], "default_effort": "low",
-            "vision_model": llm.vision_model()}
+            "vision_model": llm.vision_model(), "registry": any("contexts" in m for m in models)}
+
+
+class Warm(BaseModel):
+    model: str = Field(..., max_length=200)
+    context: int | None = Field(None, ge=512, le=1_048_576)
+    vision: bool = False
+
+
+@router.post("/chat/models/warm")
+def warm_model(body: Warm, user: User = Depends(auth.active_user)):
+    """Load the model now, so it is ready by the time the message is sent; the state to show meanwhile."""
+    return loading.warm(body.model, body.context, body.vision) or {"status": "unknown"}
+
+
+@router.get("/chat/models/state")
+def model_state(model: str, context: int | None = None, vision: bool = False,
+                user: User = Depends(auth.active_user)):
+    return loading.state(model, context, vision) or {"status": "unknown"}
+
+
+def _context_for(model: dict | None, context: int | None) -> int | None:
+    """``context`` when the model offers it, else its default; None for a model without registry contexts."""
+    if not model or not model.get("contexts"):
+        return None
+    offered = {c["tokens"] for c in model["contexts"]}
+    return context if context in offered else model["default_context"]
 
 
 # ── chats ────────────────────────────────────────────────────────────
@@ -151,7 +184,7 @@ def list_chats(project_id: UUID | None = None, standalone: bool = False, q: str 
 def create_chat(body: ChatCreate, session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
     project = _own_project(session, body.project_id, user)
     c = db.create_conversation(session, user.id, project.id if project else None, model=body.model,
-                               effort=body.effort)
+                               effort=body.effort, context=body.context)
     return db.conversation_dict(c, project)
 
 
@@ -270,7 +303,13 @@ async def send_message(chat_id: UUID, body: MessageSend, session: Session = Depe
     if models and model not in models:
         raise HTTPException(status_code=422, detail=f"The model {model} is not available")
     effort = body.effort or c.effort or "low"
-    c.model, c.effort = model, effort
+    context = _context_for(models.get(model), body.context or c.context)
+    if any(f.kind == "image" for f in files):
+        try:
+            llm.chat_preset(model, context, images=True)
+        except llm.TextOnlyModel as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+    c.model, c.effort, c.context = model, effort, context
     first_turn = not history
     if not body.retry:
         db.add_message(session, c, "user", question, attachments=[
@@ -287,7 +326,7 @@ async def send_message(chat_id: UUID, body: MessageSend, session: Session = Depe
                    db.artifacts_of(session, user.id, project_id=project.id if project else None,
                                    conversation_id=None if project else c.id)],
         history=_history(history), question=question, attachments=[_attachment(f) for f in files], model=model,
-        effort=effort, first_turn=first_turn, maps=tools.ready_maps(session))
+        effort=effort, first_turn=first_turn, maps=tools.ready_maps(session), context=context)
     reply_id, title_wanted = reply.id, first_turn and c.title == "New chat"
 
     def retrieve(q: str):
@@ -316,7 +355,8 @@ async def send_message(chat_id: UUID, body: MessageSend, session: Session = Depe
         return title
 
     async def stream():
-        yield _sse({"type": "start", "message_id": str(reply_id), "model": model, "effort": effort})
+        yield _sse({"type": "start", "message_id": str(reply_id), "model": model, "effort": effort,
+                    "context": context})
         answer, wrote = "", False
         async for event in chat.run(turn, retrieve, tools.execute, save):
             if event["type"] == "done":
