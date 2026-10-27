@@ -20,13 +20,14 @@ from athena.model_server import files, gguf, gpu, lane, loading, presets, regist
 REAL_SNAPSHOT = registry.snapshot
 
 
-def write_gguf(path, kv: dict, padding: int = 4096):
-    """A GGUF file with ``kv`` in its header and no tensors."""
+def write_gguf(path, kv: dict, padding: int = 4096, tensors: list[tuple] = ()):
+    """A GGUF file with ``kv`` in its header, ``tensors`` [(name, dims, ggml type, offset)] and ``padding`` bytes
+    after them (where the tensor data goes)."""
     def string(s: str) -> bytes:
         b = s.encode()
         return struct.pack("<Q", len(b)) + b
 
-    parts = [b"GGUF", struct.pack("<I", 3), struct.pack("<Q", 0), struct.pack("<Q", len(kv))]
+    parts = [b"GGUF", struct.pack("<I", 3), struct.pack("<Q", len(tensors)), struct.pack("<Q", len(kv))]
     for key, value in kv.items():
         parts.append(string(key))
         if isinstance(value, bool):
@@ -38,6 +39,9 @@ def write_gguf(path, kv: dict, padding: int = 4096):
         elif isinstance(value, list):
             parts += [struct.pack("<I", 9), struct.pack("<I", 8), struct.pack("<Q", len(value))]
             parts += [string(v) for v in value]
+    for name, dims, kind, offset in tensors:
+        parts += [string(name), struct.pack("<I", len(dims))] + [struct.pack("<Q", d) for d in dims]
+        parts += [struct.pack("<I", kind), struct.pack("<Q", offset)]
     path.write_bytes(b"".join(parts) + b"\0" * padding)
     return path
 
@@ -73,6 +77,15 @@ def test_projectors_and_embedders_are_told_apart(tmp_path):
     model = write_gguf(tmp_path / "Qwen3.5-9B-Q4_K_M.gguf", qwen_header())
     found = files.projectors_for(str(model), gguf.describe(str(model)))
     assert [p["filename"] for p in found] == ["mmproj-F16.gguf"] and found[0]["match"]
+
+
+def test_a_download_cut_short_is_found(tmp_path):
+    header = qwen_header()
+    whole = write_gguf(tmp_path / "whole.gguf", header, tensors=[("w", [256, 4], 12, 0)], padding=600)
+    assert gguf.completeness(str(whole))["complete"]
+    cut = write_gguf(tmp_path / "cut.gguf", header, tensors=[("w", [256, 4], 12, 0)], padding=100)
+    found = gguf.completeness(str(cut))
+    assert not found["complete"] and found["needed_bytes"] > found["size_bytes"]
 
 
 def test_other_files_are_refused(tmp_path):
@@ -185,7 +198,7 @@ def test_the_hand_written_presets_are_taken_in(store):
     assert set(rows) == {"qwen3.5-9b", "qwen3-embedding-8b"}
     qwen = rows["qwen3.5-9b"]
     assert qwen["vision"] and qwen["reasoning"] and qwen["default_context"] == 20480
-    assert [c["context"] for c in qwen["contexts"]] == [8192, 16384, 20480, 32768, 65536]
+    assert [c["context"] for c in qwen["contexts"]] == [8192, 16384, 20480, 32768, 65536, 131072, 262144]
     text = registry.GPU_FILE.read_text()
     assert "[qwen3.5-9b]" in text and "[qwen3.5-9b-vision]" in text and "[qwen3.5-9b@32k]" in text
     assert "[qwen3-embedding-8b]" in text and "pooling = last" in text
@@ -367,6 +380,48 @@ def test_models_in_use_cannot_be_removed_and_bad_input_is_refused(api, tmp_path)
     assert api.post("/api/v1/models", json={"path": proj}).status_code == 422
     other = str(tmp_path / "models" / "emb.gguf")
     assert api.post("/api/v1/models", json={"path": other, "name": "Bad Name!"}).status_code == 422
+
+
+def test_the_default_moves_when_it_is_turned_off_and_turned_off_models_unload(api, tmp_path, monkeypatch):
+    settings = {}
+    import athena.core.config_store as store
+    monkeypatch.setattr(store, "set_setting", lambda k, v: settings.__setitem__(k, v))
+    monkeypatch.setattr(llm, "get_setting", lambda key, default="": settings.get(key, default))
+    unloaded = []
+    monkeypatch.setattr(loading, "unload", lambda row: unloaded.append(row["name"]) or [])
+    qwen = next(m for m in api.get("/api/v1/models").json()["models"] if m["name"] == "qwen3.5-9b")
+    assert qwen["is_default"] and 262144 in qwen["context_steps"]
+    # the only chat model cannot go off: summaries need one
+    assert api.patch(f"/api/v1/models/{qwen['id']}", json={"enabled": False}).status_code == 409
+    path = write_gguf(tmp_path / "models" / "small-Q4_K_M.gguf", qwen_header(**{"general.name": "Small"}))
+    small = api.post("/api/v1/models", json={"path": str(path), "name": "small"}).json()
+    off = api.patch(f"/api/v1/models/{qwen['id']}", json={"enabled": False})
+    assert off.status_code == 200 and not off.json()["enabled"]
+    assert settings["LLM_CHAT_MODEL"] == "small" and unloaded == ["qwen3.5-9b"]
+    assert "[qwen3.5-9b]" not in registry.GPU_FILE.read_text()
+    back = api.post(f"/api/v1/models/{qwen['id']}/default").json()  # turns it on again too
+    assert back["enabled"] and back["is_default"] and settings["LLM_CHAT_MODEL"] == "qwen3.5-9b"
+    emb = next(m for m in api.get("/api/v1/models").json()["models"] if m["role"] == "embed")
+    assert api.post(f"/api/v1/models/{emb['id']}/default").status_code == 422
+    assert api.patch(f"/api/v1/models/{emb['id']}", json={"enabled": False}).status_code == 409
+    assert api.post(f"/api/v1/models/{small['id']}/unload").json() == {"unloaded": []}
+
+
+def test_incomplete_files_are_refused_and_typed_paths_are_opened(api, tmp_path, monkeypatch):
+    cut = write_gguf(tmp_path / "models" / "cut-Q4_K_M.gguf", qwen_header(), tensors=[("w", [256, 64], 12, 0)],
+                     padding=100)
+    seen = api.post("/api/v1/models/inspect", json={"path": str(cut)}).json()
+    assert seen["info"]["complete"] is False
+    refused = api.post("/api/v1/models", json={"path": str(cut), "name": "cut"})
+    assert refused.status_code == 422 and "incomplete" in refused.json()["detail"]
+    added = []
+    monkeypatch.setattr(files, "add_root", lambda p: added.append(p) or [])
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    model = write_gguf(elsewhere / "m.gguf", qwen_header())
+    got = api.post("/api/v1/models/locate", json={"path": str(model)}).json()
+    assert got == {"folder": str(elsewhere), "file": str(model)} and added == [str(elsewhere)]
+    assert api.post("/api/v1/models/locate", json={"path": str(tmp_path / "nope")}).status_code == 404
 
 
 def test_docker_setups_see_the_registry_read_only(api, monkeypatch, tmp_path):

@@ -12,6 +12,11 @@ POST   /api/v1/models                    — {path, name, mmproj_path?, role, re
 PATCH  /api/v1/models/{id}               — any of those but path, or {enabled}
 DELETE /api/v1/models/{id}
 POST   /api/v1/models/{id}/benchmark     — {force}: measure its speed again (only missing contexts without force)
+POST   /api/v1/models/{id}/default       — make a chat model the default (LLM_CHAT_MODEL)
+POST   /api/v1/models/{id}/unload        — take it out of GPU or CPU memory now
+POST   /api/v1/models/locate             — {path}: a folder or .gguf file typed in; its folder is allowed from then on
+
+Turning the default chat model off makes another chat model the default; turning any model off unloads it.
 """
 from __future__ import annotations
 
@@ -72,7 +77,7 @@ def _describe(path: str, kind: str = "model") -> dict:
     if not files.allowed(path) or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="That file is not in a folder models may come from")
     try:
-        info = gguf.describe(path)
+        info = gguf.describe(path, check=kind == "model")
     except (OSError, gguf.NotGGUF) as exc:
         raise HTTPException(status_code=422, detail=f"Not a model llama.cpp can load: {exc}")
     if info["kind"] != kind:
@@ -105,6 +110,12 @@ def _check_name(session: Session, name: str, model_id=None) -> str:
     if other is not None and other.id != model_id:
         raise HTTPException(status_code=409, detail=f"A model is already called {name}")
     return name
+
+
+def _incomplete(info: dict) -> str:
+    have, need = info.get("size_bytes") or 0, info.get("needed_bytes") or 0
+    return (f"This file is incomplete: it holds {have / 1e9:.1f} GB of the {need / 1e9:.1f} GB its weights need, "
+            "so llama.cpp cannot load it. A download was probably cut short; download it again.")
 
 
 def _uses(name: str) -> list[str]:
@@ -145,11 +156,19 @@ def _view() -> dict:
                              "status": "failed" if st and st[1] else (st[0] if st else None)})
         exists = os.path.exists(registry.resolve(r["path"]))
         changed = exists and registry.fingerprint(r["path"]) != r["fingerprint"]
+        whole = registry.completeness(r["path"], r["fingerprint"]) if exists else {}
+        trained = (r["info"] or {}).get("context_train") or 32768
         out.append({k: r[k] for k in ("id", "name", "path", "mmproj_path", "size_bytes", "mmproj_bytes", "info",
                                       "role", "reasoning", "tools", "vision", "placement", "default_context",
                                       "enabled", "layers")}
                    | {"contexts": contexts, "exists": exists, "changed": changed, "used_for": _uses(r["name"]),
-                      "benchmarked": any(b["source"] == "benchmark" for b in mine)})
+                      "benchmarked": any(b["source"] == "benchmark" for b in mine),
+                      "complete": r["complete"], "needed_bytes": whole.get("needed_bytes"),
+                      "is_default": r["role"] == "chat" and llm.chat_model() == r["name"],
+                      "loaded": any(c["status"] in ("loaded", "loading") for c in contexts),
+                      "last_benchmark": bench.last(r["id"]),
+                      "context_steps": sorted({c for c in registry.ALL_STEPS if c <= trained}
+                                              | {c["tokens"] for c in contexts})})
     wanted = {"gpu": set(), "cpu": set()}
     for r in rows:
         if r["enabled"]:
@@ -189,6 +208,22 @@ def add_folder(body: PathBody, user: User = Depends(auth.require_admin)):
         raise HTTPException(status_code=422, detail=str(exc))
 
 
+@router.post("/locate")
+def locate(body: PathBody, user: User = Depends(auth.require_admin)):
+    """A path typed in: a folder to browse or a .gguf file to pick. Its folder joins the allowed folders."""
+    path = os.path.realpath(os.path.expanduser(body.path.strip()))
+    if os.path.isdir(path):
+        folder, picked = path, None
+    elif os.path.isfile(path) and path.lower().endswith(".gguf"):
+        folder, picked = os.path.dirname(path), path
+    else:
+        raise HTTPException(status_code=404, detail="No folder or .gguf file at that path on this machine")
+    if not files.allowed(folder):
+        files.add_root(folder)
+        registry.invalidate()
+    return {"folder": folder, "file": picked}
+
+
 @router.post("/inspect")
 def inspect(body: PathBody, session: Session = Depends(get_db), user: User = Depends(auth.require_admin)):
     info = _describe(body.path)
@@ -214,6 +249,8 @@ def inspect(body: PathBody, session: Session = Depends(get_db), user: User = Dep
 def add_model(body: ModelAdd, session: Session = Depends(get_db), user: User = Depends(auth.require_admin)):
     _writable()
     info = _describe(body.path)
+    if not info.get("complete", True):
+        raise HTTPException(status_code=422, detail=_incomplete(info))
     role = body.role or info["role"]
     name = _check_name(session, body.name or gguf.suggested_name(info))
     mmproj = None
@@ -259,8 +296,8 @@ def update_model(model_id: UUID, body: ModelFields, session: Session = Depends(g
     for key in ("reasoning", "tools", "placement", "enabled"):
         if (value := getattr(body, key)) is not None:
             fields[key] = value
-    if body.enabled is False and _uses(m.name):
-        raise HTTPException(status_code=409, detail=f"{m.name} is used for {', '.join(_uses(m.name))}")
+    if body.enabled is False and m.enabled:
+        _hand_over(session, m)
     remeasure = False
     if body.contexts is not None or body.default_context is not None or body.role is not None:
         contexts, default = _contexts(body.contexts if body.contexts is not None else m.contexts,
@@ -272,12 +309,35 @@ def update_model(model_id: UUID, body: ModelFields, session: Session = Depends(g
     if os.path.exists(registry.resolve(m.path)) and registry.fingerprint(m.path) != m.fingerprint:
         fields["fingerprint"], remeasure = registry.fingerprint(m.path), True
         fields["size_bytes"] = files.total_size(registry.resolve(m.path))
+    row = registry.find(m.name)
     db.update_model(session, m, **fields)
+    if body.enabled is False and row:
+        loading.unload(row)  # off: out of memory now, not when the router next needs the room
     registry.invalidate()
     registry.write_presets()
     if remeasure or "contexts" in fields:
         registry.prepare_soon(m.id, benchmark=m.role == "chat" and m.enabled)
     return next(x for x in _view()["models"] if x["id"] == str(m.id))
+
+
+def _hand_over(session: Session, m) -> None:
+    """Before ``m`` goes off or away: background work stops naming it. The default chat model passes to another
+    chat model; task overrides naming it go back to the default. The embedder cannot go: every stored vector came
+    from it."""
+    from athena.core.config_store import set_setting
+    if llm.embed_model() == m.name:
+        raise HTTPException(status_code=409, detail=f"{m.name} makes the embeddings; switching it means re-embedding "
+                                                    "everything (Embeddings, below)")
+    if llm.chat_model() == m.name:
+        others = [r for r in registry.snapshot() if r["role"] == "chat" and r["enabled"] and r.get("complete", True)
+                  and r["name"] != m.name]
+        if not others:
+            raise HTTPException(status_code=409, detail=f"{m.name} is the only chat model; add or turn on another "
+                                                        "first, since summaries and Q&A need one")
+        set_setting("LLM_CHAT_MODEL", others[0]["name"])
+    for task in ("SUMMARY", "QA", "LIT_REVIEW"):
+        if llm.chat_model(task.lower()) == m.name:
+            set_setting(f"LLM_{task}_MODEL", "")
 
 
 @router.delete("/{model_id}", status_code=204)
@@ -286,9 +346,9 @@ def remove_model(model_id: UUID, session: Session = Depends(get_db), user: User 
     m = db.get_model(session, model_id)
     if m is None:
         raise HTTPException(status_code=404, detail="Model not found")
-    if uses := _uses(m.name):
-        raise HTTPException(status_code=409, detail=f"{m.name} is used for {', '.join(uses)}; point those at another "
-                                                    "model first")
+    _hand_over(session, m)
+    if row := registry.find(m.name):
+        loading.unload(row)
     db.remove_model(session, m)
     registry.invalidate()
     registry.write_presets()
@@ -307,3 +367,31 @@ async def benchmark(model_id: UUID, body: BenchBody, session: Session = Depends(
         raise HTTPException(status_code=409, detail=f"{running.get('model')} is being benchmarked")
     await run_in_threadpool(bench.start, str(m.id), body.force)
     return {"started": True}
+
+
+@router.post("/{model_id}/default")
+def make_default(model_id: UUID, session: Session = Depends(get_db), user: User = Depends(auth.require_admin)):
+    """The chat model new chats start with and background work (summaries, Q&A, titles) uses."""
+    from athena.core.config_store import set_setting
+    m = db.get_model(session, model_id)
+    if m is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+    if m.role != "chat":
+        raise HTTPException(status_code=422, detail="Only a chat model can be the default; the embedding model is set "
+                                                    "under Embeddings below")
+    if not m.enabled:
+        db.update_model(session, m, enabled=True)
+        registry.invalidate()
+        registry.write_presets()
+    set_setting("LLM_CHAT_MODEL", m.name)
+    registry.invalidate()
+    return next(x for x in _view()["models"] if x["id"] == str(m.id))
+
+
+@router.post("/{model_id}/unload")
+def unload_model(model_id: UUID, session: Session = Depends(get_db), user: User = Depends(auth.require_admin)):
+    m = db.get_model(session, model_id)
+    if m is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+    row = registry.find(m.name)
+    return {"unloaded": loading.unload(row) if row else []}

@@ -41,12 +41,13 @@ def logged_in_admin(request):
 def model_registry(monkeypatch):
     """No model registry and no chat lane in Redis unless a test sets them: the real ones read the database and
     Redis of whatever machine runs the tests. Returns the list ``registry.snapshot()`` serves."""
-    from athena.model_server import lane, registry
+    from athena.model_server import bench, lane, loading, registry
     from tests.fakes import FakeRedis
     rows: list[dict] = []
     fake = FakeRedis()
     monkeypatch.setattr(registry, "snapshot", lambda: rows)
-    monkeypatch.setattr(lane, "_redis", lambda: fake)
+    for module in (lane, bench, loading):
+        monkeypatch.setattr(module, "_redis", lambda: fake)
     return rows
 
 
