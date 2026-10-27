@@ -68,8 +68,8 @@ def test_the_router_lists_chat_models_without_embedder_or_vision(settings, monke
     ])
     models = {m["id"]: m for m in llm.chat_models()}
     assert set(models) == {"qwen3.5-9b", "gemma-4b"}
-    assert models["qwen3.5-9b"] == {"id": "qwen3.5-9b", "reasoning": True, "vision": False, "context": 20480,
-                                    "loaded": True}
+    assert models["qwen3.5-9b"] == {"id": "qwen3.5-9b", "reasoning": True, "vision": False, "tools": True,
+                                    "context": 20480, "loaded": True}
     assert models["gemma-4b"]["reasoning"] is False and models["gemma-4b"]["vision"] is True
     assert models["gemma-4b"]["context"] == llm.DEFAULT_CONTEXT
     assert llm.model_context("qwen3.5-9b") == 20480

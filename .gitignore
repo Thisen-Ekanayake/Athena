@@ -166,3 +166,7 @@ scripts/evolution_bench/out/
 
 # The AUR package has its own repository (aur/.git, pushed to aur.archlinux.org)
 aur/
+
+# Router presets the model registry writes (athena/model_server)
+config/llama-router.generated.ini
+config/llama-router.cpu.ini

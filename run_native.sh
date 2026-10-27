@@ -47,7 +47,7 @@ terminate() {
 stop_all() {
   echo ">> Stopping local processes..."
   local targets=()
-  for svc in api worker beat summary evolution frontend llm; do
+  for svc in api worker beat summary evolution frontend llm llm-cpu; do
     pidfile="$RUN_DIR/$svc.pid"
     if [ -f "$pidfile" ]; then
       pid="$(cat "$pidfile")"
@@ -63,7 +63,7 @@ stop_all() {
   # A model server whose pid file is gone (one that outlived an earlier --stop was adopted by the next
   # start without one) is found by its preset; its model instances are its children.
   targets=()
-  for pid in $(pgrep -f '^[^ ]*llama-server .*--models-preset config/llama-router\.ini'); do
+  for pid in $(pgrep -f '^[^ ]*llama-server .*--models-preset config/llama-router[a-z.]*\.ini'); do
     targets+=("$pid" $(pgrep -P "$pid"))
     echo "   stopping llm (pid $pid)"
   done
@@ -160,7 +160,9 @@ wait_for_http() {
 echo ">> Starting local services..."
 # The model server: llama-server in router mode serves the chat and embedding models and swaps them on
 # the GPU. Skipped when LLM_BASE_URL (env or .env) points elsewhere, or something already holds :8080.
-# A server address saved in Settings is not visible here.
+# A server address saved in Settings is not visible here. Its presets come from the model registry
+# (Settings -> Models and keys, athena/model_server), which starts from config/llama-router.ini; a second
+# router on :8081 holds a model placed on the CPU beside the GPU one.
 env_value() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2-; }
 LLM_URL="${LLM_BASE_URL:-$(env_value LLM_BASE_URL)}"
 LLAMA_BIN="${LLAMA_SERVER_BIN:-$(env_value LLAMA_SERVER_BIN)}"
@@ -170,7 +172,15 @@ case "${LLM_URL:-http://127.0.0.1:8080/v1}" in
     if lsof -tiTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
       echo "   a model server is already listening on :8080; using it"
     elif command -v "$LLAMA_BIN" >/dev/null 2>&1; then
-      start_proc llm "$LLAMA_BIN" --models-preset config/llama-router.ini --models-max 1 --host 127.0.0.1 --port 8080
+      python3 -m athena.model_server.registry >"$RUN_DIR/presets.log" 2>&1 \
+        || echo "   the registry's presets were not written (see $RUN_DIR/presets.log); using config/llama-router.ini"
+      PRESET=config/llama-router.ini
+      [ -s config/llama-router.generated.ini ] && PRESET=config/llama-router.generated.ini
+      start_proc llm "$LLAMA_BIN" --models-preset "$PRESET" --models-max 1 --host 127.0.0.1 --port 8080
+      if [ -s config/llama-router.cpu.ini ] && ! lsof -tiTCP:8081 -sTCP:LISTEN >/dev/null 2>&1; then
+        start_proc llm-cpu "$LLAMA_BIN" --models-preset config/llama-router.cpu.ini --models-max 1 \
+          --host 127.0.0.1 --port 8081
+      fi
     else
       echo "WARNING: '$LLAMA_BIN' not found, so AI features have no model server (see config/llama-router.ini)." >&2
     fi ;;

@@ -7,6 +7,7 @@ and wires up DB + Redis connections.
 import secrets
 
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import JSONResponse
@@ -16,6 +17,7 @@ from loguru import logger
 from athena.api.routers import (
     feed, items, clusters, search, sources, sync, app_settings, saved, evolution, inbox, auth as auth_routes,
     users, watches, usage, share, momentum, personal, interests, reviews, scoring, summaries, projects, chats,
+    model_registry,
 )
 from athena.api import qa_api
 from athena.api.auth import active_user, require_admin
@@ -44,6 +46,11 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         from athena.database.db import init_db
         init_db()
+        from athena.model_server import registry
+        try:  # the first start takes in config/llama-router.ini; later ones keep the presets current
+            await run_in_threadpool(registry.write_presets)
+        except Exception as exc:
+            logger.warning(f"Model registry presets not written: {exc}")
         yield
 
     # Disable built-in docs and schema; we mount our own routes with auth below.
@@ -111,6 +118,7 @@ def create_app() -> FastAPI:
     app.include_router(sources.router, dependencies=login)
     app.include_router(sync.router, dependencies=login)  # starting one is for admins; the route says so
     app.include_router(app_settings.router, dependencies=admin)
+    app.include_router(model_registry.router, dependencies=admin)
     app.include_router(saved.router, dependencies=login)
     app.include_router(evolution.router, dependencies=login)
     app.include_router(inbox.router, dependencies=login)

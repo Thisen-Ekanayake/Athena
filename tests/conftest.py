@@ -37,6 +37,19 @@ def logged_in_admin(request):
     app.dependency_overrides.pop(active_user, None)
 
 
+@pytest.fixture(autouse=True)
+def model_registry(monkeypatch):
+    """No model registry and no chat lane in Redis unless a test sets them: the real ones read the database and
+    Redis of whatever machine runs the tests. Returns the list ``registry.snapshot()`` serves."""
+    from athena.model_server import lane, registry
+    from tests.fakes import FakeRedis
+    rows: list[dict] = []
+    fake = FakeRedis()
+    monkeypatch.setattr(registry, "snapshot", lambda: rows)
+    monkeypatch.setattr(lane, "_redis", lambda: fake)
+    return rows
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "real_auth: use real sessions instead of the logged-in admin")
     config.addinivalue_line("markers", "network: needs the internet; CI runs -m 'not network'")
