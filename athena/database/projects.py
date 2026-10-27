@@ -246,11 +246,13 @@ def describe_items(session: Session, items: list[ProjectItem]) -> list[dict]:
 def conversation_dict(c: Conversation, project: Project | None = None) -> dict:
     return {"id": str(c.id), "title": c.title, "project_id": str(c.project_id) if c.project_id else None,
             "project_name": project.name if project else None, "model": c.model, "effort": c.effort,
+            "pinned": c.pinned_at is not None, "archived": c.archived_at is not None,
             "created_at": _iso(c.created_at), "updated_at": _iso(c.updated_at)}
 
 
 def list_conversations(session: Session, user_id: UUID, project_id: UUID | None = None, standalone: bool = False,
-                       limit: int = 50, query: str | None = None) -> list[dict]:
+                       limit: int = 50, query: str | None = None, archived: bool = False) -> list[dict]:
+    """Pinned chats first, then the most recent. Archived chats only when asked for, and then only those."""
     stmt = select(Conversation, Project).outerjoin(Project, Project.id == Conversation.project_id).where(
         Conversation.user_id == user_id)
     if project_id is not None:
@@ -259,7 +261,10 @@ def list_conversations(session: Session, user_id: UUID, project_id: UUID | None 
         stmt = stmt.where(Conversation.project_id.is_(None))
     if query:
         stmt = stmt.where(Conversation.title.ilike(f"%{query}%"))
-    rows = session.execute(stmt.order_by(Conversation.updated_at.desc()).limit(limit)).all()
+    stmt = stmt.where(Conversation.archived_at.isnot(None) if archived else Conversation.archived_at.is_(None))
+    order = (Conversation.updated_at.desc(),) if archived else \
+        (Conversation.pinned_at.is_(None), Conversation.pinned_at.desc(), Conversation.updated_at.desc())
+    rows = session.execute(stmt.order_by(*order).limit(limit)).all()
     return [conversation_dict(c, p) for c, p in rows]
 
 
@@ -285,6 +290,18 @@ def move_conversation(session: Session, c: Conversation, project_id: UUID | None
     session.execute(update(Artifact).where(Artifact.conversation_id == c.id).values(
         project_id=project_id, index_status="pending" if project_id else "none"))
     touch_project(session, project_id, commit=False)
+    session.commit()
+
+
+def mark_conversation(session: Session, c: Conversation, pinned: bool | None = None,
+                      archived: bool | None = None) -> None:
+    """Pin or unpin, archive or unarchive. Archiving unpins: an archived chat is out of the lists."""
+    if pinned is not None:
+        c.pinned_at = _now() if pinned else None
+    if archived is not None:
+        c.archived_at = _now() if archived else None
+        if archived:
+            c.pinned_at = None
     session.commit()
 
 

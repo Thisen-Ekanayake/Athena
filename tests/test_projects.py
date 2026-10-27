@@ -282,6 +282,29 @@ def test_chats_move_between_projects_with_their_artifacts(env):
 
 
 @pytestmark_api
+def test_chats_pin_first_and_archived_leave_the_lists(env):
+    admin, bo, ids, Session, queued = env
+    first, second, third = (admin.post("/api/v1/chats", json={}).json()["id"] for _ in range(3))
+
+    def listed(query=""):
+        return [c["id"] for c in admin.get(f"/api/v1/chats{query}").json()["chats"]]
+
+    pinned = admin.patch(f"/api/v1/chats/{first}", json={"pinned": True}).json()
+    assert pinned["pinned"] is True and pinned["archived"] is False
+    assert listed()[0] == first
+    archived = admin.patch(f"/api/v1/chats/{second}", json={"archived": True}).json()
+    assert archived["archived"] is True
+    assert second not in listed() and listed("?archived=true") == [second]
+
+    archived = admin.patch(f"/api/v1/chats/{first}", json={"archived": True}).json()
+    assert archived["pinned"] is False  # archiving unpins
+    back = admin.patch(f"/api/v1/chats/{first}", json={"archived": False}).json()
+    assert back["archived"] is False and back["pinned"] is False
+    assert set(listed()) == {first, third}
+    assert bo.patch(f"/api/v1/chats/{third}", json={"pinned": True}).status_code == 404
+
+
+@pytestmark_api
 def test_artifacts_keep_every_version(env):
     admin, bo, ids, Session, queued = env
     a = admin.post("/api/v1/artifacts", json={"title": "Related work", "content": "## LoRA\nDraft."}).json()
