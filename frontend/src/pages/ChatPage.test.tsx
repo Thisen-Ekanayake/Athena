@@ -76,10 +76,15 @@ describe('ChatPage', () => {
     await waitFor(() => expect(picker).toHaveTextContent('qwen3.5-9b· Medium'))  // once the models are in
     await userEvent.click(picker)
     const dialog = screen.getByRole('dialog', { name: 'Model, context and effort' })
-    expect(within(dialog).getByRole('radiogroup', { name: 'Effort' })).toBeInTheDocument()
-    await userEvent.click(within(dialog).getByRole('radio', { name: /gemma-4b/ }))
-    expect(within(dialog).queryByRole('radiogroup', { name: 'Effort' })).not.toBeInTheDocument()
+    await userEvent.click(within(dialog).getByRole('button', { name: /Effort/ }))
+    await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Effort' })).getByRole('radio', { name: /High/ }))
+    expect(screen.getByTitle('Model, context and effort')).toHaveTextContent('· High')  // picked, and the menu closed
+    expect(screen.queryByRole('radiogroup', { name: 'Effort' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTitle('Model, context and effort'))
+    await userEvent.click(screen.getByRole('radio', { name: /gemma-4b/ }))
     expect(screen.getByTitle('Model, context and effort')).toHaveTextContent('gemma-4b')
+    await userEvent.click(screen.getByTitle('Model, context and effort'))
+    expect(within(screen.getByRole('dialog')).queryByRole('button', { name: /Effort/ })).not.toBeInTheDocument()
   })
 
   const context = (tokens: number, device: 'gpu' | 'split' | 'cpu', tps: number, loaded = false) => ({
@@ -106,10 +111,12 @@ describe('ChatPage', () => {
     const picker = await screen.findByTitle('Model, context and effort')
     await waitFor(() => expect(picker).toHaveTextContent('· 16k'))
     await userEvent.click(picker)
+    expect(screen.getByRole('button', { name: /Context.*16k · 38 tok\/s/ })).toBeInTheDocument()
+    await userEvent.hover(screen.getByRole('button', { name: /Context/ }))
     const contexts = screen.getByRole('radiogroup', { name: 'Context size' })
-    expect(within(contexts).getByRole('radio', { name: /16k.*GPU.*38 tok\/s/ })).toHaveAttribute('aria-checked', 'true')
-    await userEvent.click(within(contexts).getByRole('radio', { name: /64k.*GPU \+ CPU 20\/33.*14 tok\/s/ }))
-    expect(screen.getByText(/Switching to 64k reloads the model/)).toBeInTheDocument()
+    expect(within(contexts).getByRole('radio', { name: /16k.*GPU.*loaded.*38 tok\/s/ })).toHaveAttribute('aria-checked', 'true')
+    await userEvent.click(within(contexts).getByRole('radio', { name: /64k.*GPU \+ CPU 20\/33.*reloads in ~5\.0 s.*14 tok\/s/ }))
+    expect(picker).toHaveTextContent('· 64k')
     await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.url === '/chat/models/warm')?.body)
       .toEqual({ model: 'qwen3.5-9b', context: 65536 }))
   })
@@ -124,6 +131,7 @@ describe('ChatPage', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Attach images' })).toBeDisabled())  // once the models are in
     expect(screen.getByRole('button', { name: 'Attach files' })).toBeEnabled()
     await userEvent.click(screen.getByTitle('Model, context and effort'))
-    expect(within(screen.getByRole('radio', { name: /^tiny/ })).getByText('text only')).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /^tiny.*text only/ })).toBeInTheDocument()
+    expect(screen.getByText(/tiny reads text and files only/)).toBeInTheDocument()
   })
 })

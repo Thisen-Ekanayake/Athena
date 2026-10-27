@@ -46,6 +46,8 @@ export function Popover({ trigger, children, width = 260, estHeight = 300, align
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node
       if (triggerRef.current?.contains(t) || panelRef.current?.contains(t)) return
+      // A submenu a panel opens beside itself, in a portal of its own (features/chat/ModelPicker)
+      if (t instanceof Element && t.closest('[data-popover-keep]')) return
       close()
     }
     const onKey = (e: KeyboardEvent) => {
