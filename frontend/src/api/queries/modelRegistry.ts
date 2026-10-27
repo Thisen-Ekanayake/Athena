@@ -18,6 +18,9 @@ export interface GgufInfo {
   thinks?: boolean
   tools?: boolean
   match?: boolean
+  /** The file holds all its weights (false: a download cut short) */
+  complete?: boolean
+  needed_bytes?: number | null
 }
 
 export interface RegistryContext {
@@ -67,6 +70,16 @@ export interface RegistryModel {
   /** Settings that send this model's name (default chat model, embeddings, ...) */
   used_for: string[]
   benchmarked: boolean
+  /** The file holds all its weights; an incomplete one is never offered or loaded */
+  complete: boolean
+  needed_bytes: number | null
+  /** The chat model new chats and background work use */
+  is_default: boolean
+  /** In GPU or CPU memory now */
+  loaded: boolean
+  last_benchmark: { state: 'running' | 'done' | 'failed'; error?: string | null; results?: Record<string, { gen_tps?: number; error?: string }>; at: number } | null
+  /** Context sizes the admin may tick, up to what it was trained for */
+  context_steps: number[]
 }
 
 export interface GpuInfo {
@@ -179,6 +192,14 @@ export const useRemoveModel = () => useRegistryMutation((id: string) => apiClien
 
 export const useBenchmark = () =>
   useRegistryMutation(({ id, force }: { id: string; force: boolean }) => apiClient.post(`/models/${id}/benchmark`, { force }))
+
+export const useMakeDefault = () => useRegistryMutation((id: string) => apiClient.post(`/models/${id}/default`))
+
+export const useUnloadModel = () => useRegistryMutation((id: string) => apiClient.post(`/models/${id}/unload`))
+
+/** A folder or .gguf file typed in; its folder joins the allowed ones. */
+export const locatePath = async (path: string) =>
+  (await apiClient.post<{ folder: string; file: string | null }>('/models/locate', { path })).data
 
 export const useAddFolder = () => {
   const qc = useQueryClient()

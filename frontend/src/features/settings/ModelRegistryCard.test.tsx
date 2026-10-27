@@ -17,7 +17,14 @@ const REGISTRY: Registry = {
     mmproj_bytes: 918_000_000, info: { architecture: 'qwen35', params: '9B', quant: 'Q4_K_M' }, role: 'chat', reasoning: true, tools: true,
     vision: true, placement: 'auto', default_context: 20480, enabled: true, layers: 33,
     contexts: [ctx(20480, 'gpu', 38.2, 'loaded'), ctx(65536, 'split', 14)], exists: true, changed: false,
-    used_for: ['default chat model'], benchmarked: true,
+    used_for: ['default chat model'], benchmarked: true, complete: true, needed_bytes: 5_680_000_000, is_default: true,
+    loaded: true, last_benchmark: null, context_steps: [8192, 16384, 20480, 32768, 65536, 131072, 262144],
+  }, {
+    id: 'm2', name: 'qwen3.8-27b', path: '/models/Qwen3.8-27B-q4_k_m.gguf', mmproj_path: null, size_bytes: 10_544_480_256,
+    mmproj_bytes: null, info: { architecture: 'qwen35', params: '27B', quant: 'Q4_K_M' }, role: 'chat', reasoning: true, tools: true,
+    vision: false, placement: 'auto', default_context: 16384, enabled: true, layers: 65, contexts: [ctx(16384, 'cpu', 2)], exists: true,
+    changed: false, used_for: [], benchmarked: false, complete: false, needed_bytes: 17_457_944_384, is_default: false, loaded: false,
+    last_benchmark: null, context_steps: [16384],
   }],
   gpu: { name: 'NVIDIA GeForce RTX 4060 Laptop GPU', total_mb: 8188, used_mb: 6616, llama_mb: 5788, others_mb: 828, available_mb: 6336 },
   servers: {
@@ -45,8 +52,21 @@ describe('the model registry', () => {
     const rows = screen.getAllByRole('row')
     expect(rows[1]).toHaveTextContent(/20k.*default.*GPU.*5\.9 GB.*38 tok\/s.*5\.2 s.*loaded/)
     expect(rows[2]).toHaveTextContent(/64k.*GPU \+ CPU · 27\/33 layers on GPU.*14 tok\/s/)
-    // In use by background work: it cannot be removed or turned off
-    expect(screen.getByRole('button', { name: 'Remove qwen3.5-9b' })).toBeDisabled()
+    expect(screen.queryByText(/qwen3.8-27b/)).not.toBeInTheDocument()  // one model at a time
+  })
+
+  it('picks a model from the menu, says when its file is incomplete, and makes another the default', async () => {
+    mockApi({ 'GET /models': { data: REGISTRY } })
+    renderWithProviders(<ModelRegistryCard />)
+    await userEvent.click(await screen.findByTitle('Pick a model to see and change'))
+    await userEvent.click(screen.getByRole('radio', { name: /qwen3.8-27b.*incomplete/ }))
+    expect(screen.getByText(/It holds 10\.5 GB of the 17\.5 GB its weights need/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Benchmark/ })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: /Make default/ })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTitle('Pick a model to see and change'))
+    await userEvent.click(screen.getByRole('radio', { name: /qwen3.5-9b/ }))
+    expect(screen.getByRole('button', { name: /Unload/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Make default/ })).not.toBeInTheDocument()  // already is
   })
 
   it('adds a model picked from a folder, with its projector and context sizes', async () => {
@@ -57,13 +77,14 @@ describe('the model registry', () => {
         { name: 'mmproj-gemma.gguf', path: '/models/mmproj-gemma.gguf', kind: 'mmproj', size_bytes: 800_000_000 },
       ] } },
       'POST /models/inspect': { data: SEEN },
-      'POST /models': { status: 201, data: {} },
+      'POST /models/locate': { data: { folder: '/models', file: '/models/gemma-3-4b-Q4_K_M.gguf' } },
+      'POST /models': { status: 201, data: { id: 'm3' } },
     })
     renderWithProviders(<ModelRegistryCard />)
     await userEvent.click(await screen.findByRole('button', { name: /Add model/ }))
     const dialog = screen.getByRole('dialog', { name: 'Add a model' })
-    await userEvent.click(await within(dialog).findByRole('button', { name: /gemma-3-4b-Q4_K_M\.gguf/ }))
-    expect(within(dialog).getByRole('button', { name: /mmproj-gemma/ })).toBeDisabled()  // a projector is not a model
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'Model path' }), '/models/gemma-3-4b-Q4_K_M.gguf{Enter}')
+    expect(await within(dialog).findByRole('button', { name: /mmproj-gemma/ })).toBeDisabled()  // a projector is not a model
     expect(await within(dialog).findByDisplayValue('gemma-3-4b')).toBeInTheDocument()
     expect(within(dialog).getByRole('combobox', { name: /Vision projector/ })).toHaveValue('/models/mmproj-gemma.gguf')
     await userEvent.click(within(dialog).getByRole('checkbox', { name: 'Offer 64k' }))

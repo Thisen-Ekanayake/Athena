@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUp, Brain, ChevronRight, Eye, File, Folder, FolderPlus, HardDrive, Wrench, X } from 'lucide-react'
+import { ArrowUp, Brain, ChevronRight, Eye, File, Folder, HardDrive, Wrench, X } from 'lucide-react'
 import { apiErrorMessage } from '../../api/error'
-import { inspectModel, useAddFolder, useAddModel, useBrowse, type Inspection, type Placement } from '../../api/queries/modelRegistry'
+import { useQueryClient } from '@tanstack/react-query'
+import { inspectModel, locatePath, useAddModel, useBrowse, type Inspection, type Placement } from '../../api/queries/modelRegistry'
 import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
 import { Notice } from '../../ui/Notice'
@@ -11,22 +12,47 @@ import { cn } from '../../ui/cn'
 import { inputClass } from '../../ui/inputClass'
 import { PLACEMENTS, bytes, deviceText, megabytes, tokens } from '../chat/modelFormat'
 
-const STEPS = [4096, 8192, 16384, 32768, 65536, 131072]
+const STEPS = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
 
 /** Folders and .gguf files on the server, inside the folders models may come from. */
 function Browser({ onPick, picked }: { onPick: (path: string) => void; picked: string | null }) {
   const [path, setPath] = useState<string | null>(null)
-  const [folder, setFolder] = useState('')
+  const [typed, setTyped] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const qc = useQueryClient()
   const browse = useBrowse(path)
-  const addFolder = useAddFolder()
   const data = browse.data
+  const shown = typed ?? data?.path ?? ''
+
+  /** A folder or file path typed or pasted in: open the folder (allowing it from now on) and pick the file. */
+  const open = async () => {
+    if (!shown.trim()) return
+    setBusy(true)
+    setError(null)
+    try {
+      const found = await locatePath(shown.trim())
+      await qc.invalidateQueries({ queryKey: ['model-browse'] })
+      setPath(found.folder)
+      setTyped(null)
+      if (found.file) onPick(found.file)
+    } catch (e) {
+      setError(apiErrorMessage(e, 'Nothing at that path.'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="grid min-h-0 grid-rows-[auto_1fr_auto] gap-2">
-      <div className="flex min-w-0 items-center gap-1.5 text-[12px] text-fg-3">
-        <Button variant="ghost" size="icon-sm" disabled={!data?.path} onClick={() => setPath(data?.parent ?? null)} aria-label="Up a folder" title="Up a folder"><ArrowUp /></Button>
-        <HardDrive className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        <span className="truncate font-mono" title={data?.path ?? undefined}>{data?.path ?? 'Folders models may come from'}</span>
-      </div>
+      <form className="flex min-w-0 items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); void open() }}>
+        <Button variant="ghost" size="icon-sm" disabled={!data?.path} onClick={() => { setTyped(null); setPath(data?.parent ?? null) }} aria-label="Up a folder" title="Up a folder"><ArrowUp /></Button>
+        <HardDrive className="h-3.5 w-3.5 shrink-0 text-fg-3" aria-hidden="true" />
+        <input value={shown} onChange={(e) => setTyped(e.target.value)} aria-label="Model path"
+          placeholder="Paste a path: /data/models/model.gguf or a folder"
+          className={cn(inputClass, 'h-7 flex-1 font-mono text-[12px]')} />
+        <Button type="submit" size="sm" disabled={busy || !shown.trim() || shown === data?.path}>{busy ? 'Opening…' : 'Open'}</Button>
+      </form>
       <ul className="min-h-[220px] overflow-y-auto rounded-lg border border-line bg-surface-2/40 py-1" aria-label="Files">
         {browse.isLoading && <li className="px-3 py-2"><Spinner label="Reading the folder…" /></li>}
         {browse.isError && <li className="px-3 py-2 text-[12.5px] text-bad">{apiErrorMessage(browse.error, 'The folder could not be read.')}</li>}
@@ -52,21 +78,15 @@ function Browser({ onPick, picked }: { onPick: (path: string) => void; picked: s
           </li>
         ))}
       </ul>
-      <form className="flex items-center gap-1.5" onSubmit={(e) => {
-        e.preventDefault()
-        if (folder.trim()) addFolder.mutate(folder.trim(), { onSuccess: () => { setPath(folder.trim()); setFolder('') } })
-      }}>
-        <FolderPlus className="h-3.5 w-3.5 shrink-0 text-fg-3" aria-hidden="true" />
-        <input value={folder} onChange={(e) => setFolder(e.target.value)} placeholder="Models elsewhere? Add a folder, e.g. /data/gguf" aria-label="Add a folder" className={cn(inputClass, 'h-7 flex-1 font-mono text-[12px]')} />
-        <Button type="submit" size="sm" disabled={!folder.trim() || addFolder.isPending}>Add folder</Button>
-      </form>
-      {addFolder.isError && <p className="text-[12px] text-bad">{apiErrorMessage(addFolder.error, 'That folder could not be added.')}</p>}
+      {error ? <p className="text-[12px] text-bad">{error}</p> : (
+        <p className="text-[11.5px] text-fg-3">Browse, or paste the path of a model or folder anywhere on this machine; its folder is remembered.</p>
+      )}
     </div>
   )
 }
 
 /** The form for one picked file: name, projector, abilities, placement and the context sizes users may pick. */
-function Details({ seen, onDone }: { seen: Inspection; onDone: () => void }) {
+function Details({ seen, onDone }: { seen: Inspection; onDone: (id?: string) => void }) {
   const add = useAddModel()
   const info = seen.info
   const [name, setName] = useState(seen.name)
@@ -96,7 +116,7 @@ function Details({ seen, onDone }: { seen: Inspection; onDone: () => void }) {
       add.mutate({
         path: info.path, name: name.trim(), role, mmproj_path: role === 'chat' && mmproj ? mmproj : null, reasoning, tools: toolsOn,
         placement, contexts: role === 'chat' ? contexts : undefined, default_context: role === 'chat' ? defaultContext : undefined,
-      }, { onSuccess: onDone })
+      }, { onSuccess: (made) => onDone((made as { id?: string } | undefined)?.id) })
     }}>
       <div className="grid gap-1">
         <p className="truncate font-mono text-[12.5px] text-fg" title={info.path}>{info.filename}</p>
@@ -105,6 +125,12 @@ function Details({ seen, onDone }: { seen: Inspection; onDone: () => void }) {
             .filter(Boolean).map((t) => <Chip key={String(t)}>{t}</Chip>)}
         </p>
         {seen.already && <p className="text-[12px] text-warn">This file is already registered; add it again only to serve it under another name.</p>}
+        {info.complete === false && (
+          <Notice tone="error" title="This file is incomplete">
+            It holds {bytes(info.size_bytes)} of the {bytes(info.needed_bytes)} its weights need, so llama.cpp cannot load it. A download was probably
+            cut short; download it again.
+          </Notice>
+        )}
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="grid gap-1">
@@ -165,7 +191,7 @@ function Details({ seen, onDone }: { seen: Inspection; onDone: () => void }) {
       </div>
       {add.isError && <p className="text-[12.5px] text-bad">{apiErrorMessage(add.error, 'The model could not be added.')}</p>}
       <div className="flex justify-end gap-2">
-        <Button type="submit" variant="primary" disabled={add.isPending || !name.trim() || (role === 'chat' && contexts.length === 0)}>
+        <Button type="submit" variant="primary" disabled={add.isPending || !name.trim() || info.complete === false || (role === 'chat' && contexts.length === 0)}>
           {add.isPending ? 'Adding…' : 'Add model'}
         </Button>
       </div>
@@ -174,7 +200,7 @@ function Details({ seen, onDone }: { seen: Inspection; onDone: () => void }) {
 }
 
 /** Pick a GGUF file on the server and register it. */
-export function AddModelDialog({ onClose }: { onClose: () => void }) {
+export function AddModelDialog({ onClose }: { onClose: (addedId?: string) => void }) {
   const [picked, setPicked] = useState<string | null>(null)
   const [seen, setSeen] = useState<Inspection | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -202,7 +228,7 @@ export function AddModelDialog({ onClose }: { onClose: () => void }) {
         className="flex max-h-[calc(100vh-2rem)] w-full max-w-4xl flex-col rounded-xl border border-line bg-surface shadow-pop focus:outline-none">
         <header className="flex items-center gap-3 border-b border-line px-4 py-3">
           <h2 id="add-model-title" className="flex-1 text-[14px] font-semibold text-fg">Add a model</h2>
-          <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close"><X /></Button>
+          <Button variant="ghost" size="icon-sm" onClick={() => onClose()} aria-label="Close"><X /></Button>
         </header>
         <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
           <Browser onPick={pick} picked={picked} />

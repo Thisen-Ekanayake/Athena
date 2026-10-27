@@ -1,17 +1,18 @@
 import { useState } from 'react'
-import { Brain, Eye, Gauge, Plus, Power, RefreshCw, Trash2, Type, Wrench } from 'lucide-react'
+import { Brain, Check, ChevronDown, CircleStop, Eye, Gauge, Plus, Power, RefreshCw, Star, Trash2, Type, Wrench } from 'lucide-react'
 import { apiErrorMessage } from '../../api/error'
 import {
-  useBenchmark, useRegistry, useRemoveModel, useUpdateModel, type GpuInfo, type Registry, type RegistryModel,
+  useBenchmark, useMakeDefault, useRegistry, useRemoveModel, useUnloadModel, useUpdateModel, type GpuInfo, type Registry,
+  type RegistryModel,
 } from '../../api/queries/modelRegistry'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { Chip } from '../../ui/Chip'
 import { Notice } from '../../ui/Notice'
+import { Popover } from '../../ui/Popover'
 import { Segmented } from '../../ui/Segmented'
 import { Spinner } from '../../ui/Spinner'
 import { cn } from '../../ui/cn'
-import { inputClass } from '../../ui/inputClass'
 import { PLACEMENTS, bytes, deviceText, megabytes, seconds, speedText, tokens } from '../chat/modelFormat'
 import { AddModelDialog } from './AddModelDialog'
 
@@ -78,82 +79,172 @@ function Servers({ data }: { data: Registry }) {
   )
 }
 
-/** Context sizes as an editable list in thousands: "8, 16, 32". */
+/** Which context sizes users may pick (ticks, up to what the model was trained for) and the default. */
 function ContextsEditor({ m, onSave, saving }: { m: RegistryModel; onSave: (contexts: number[], fallback: number) => void; saving: boolean }) {
-  const [text, setText] = useState(m.contexts.map((c) => Math.round(c.tokens / 1024)).join(', '))
+  const [chosen, setChosen] = useState<number[]>(m.contexts.map((c) => c.tokens))
   const [fallback, setFallback] = useState(m.default_context)
-  const parsed = Array.from(new Set(text.split(/[\s,]+/).map((t) => Math.round(Number(t) * 1024)).filter((n) => n >= 512))).sort((a, b) => a - b)
+  const fallbackNow = chosen.includes(fallback) ? fallback : chosen[0]
+  const toggle = (c: number) => setChosen((all) => (all.includes(c) ? all.filter((x) => x !== c) : [...all, c].sort((a, b) => a - b)))
   return (
-    <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => {
+    <form className="grid gap-2 rounded-lg border border-line bg-surface-2/40 p-3" onSubmit={(e) => {
       e.preventDefault()
-      if (parsed.length) onSave(parsed, parsed.includes(fallback) ? fallback : parsed[0])
+      if (chosen.length) onSave(chosen, fallbackNow)
     }}>
-      <label className="grid gap-1">
-        <span className="text-[11.5px] text-fg-3">Context sizes, in thousands of tokens</span>
-        <input value={text} onChange={(e) => setText(e.target.value)} className={cn(inputClass, 'h-7 w-56 font-mono text-[12px]')} />
-      </label>
-      <label className="grid gap-1">
-        <span className="text-[11.5px] text-fg-3">Default</span>
-        <select value={fallback} onChange={(e) => setFallback(Number(e.target.value))} className={cn(inputClass, 'h-7 text-[12px]')}>
-          {parsed.map((c) => <option key={c} value={c}>{tokens(c)}</option>)}
-        </select>
-      </label>
-      <Button type="submit" size="sm" disabled={saving || !parsed.length}>{saving ? 'Saving…' : 'Save sizes'}</Button>
+      <p className="text-[11.5px] text-fg-3">
+        Sizes users may pick, up to the {tokens(m.info.context_train ?? 0)} it was trained for. Each is a preset of its own; large ones split onto the CPU and run slower.
+      </p>
+      <ul className="flex flex-wrap gap-1.5" aria-label="Context sizes">
+        {m.context_steps.map((c) => {
+          const on = chosen.includes(c)
+          return (
+            <li key={c} className={cn('flex items-center gap-2 rounded-lg border px-2 py-1 text-[12px]', on ? 'border-accent-line bg-accent-soft text-fg' : 'border-line text-fg-3')}>
+              <label className="flex items-center gap-1.5">
+                <input type="checkbox" checked={on} onChange={() => toggle(c)} className="accent-[var(--accent)]" aria-label={`Offer ${tokens(c)}`} />
+                <span className="font-mono">{tokens(c)}</span>
+              </label>
+              <label className="flex items-center gap-1 text-[11px] text-fg-3" title="New chats start at this size; background work uses it">
+                <input type="radio" name={`default-${m.id}`} checked={fallbackNow === c} disabled={!on} onChange={() => setFallback(c)} className="accent-[var(--accent)]" />
+                default
+              </label>
+            </li>
+          )
+        })}
+      </ul>
+      <div><Button type="submit" size="sm" disabled={saving || !chosen.length}>{saving ? 'Saving…' : 'Save sizes'}</Button></div>
     </form>
   )
 }
 
-function ModelRow({ m, benchmarking }: { m: RegistryModel; benchmarking: Registry['benchmark'] }) {
+function statusDot(m: RegistryModel) {
+  if (!m.complete || !m.exists) return <span className="h-2 w-2 shrink-0 rounded-full bg-bad" title="Cannot load" />
+  if (!m.enabled) return <span className="h-2 w-2 shrink-0 rounded-full bg-fg-3/40" title="Off" />
+  if (m.loaded) return <span className="h-2 w-2 shrink-0 rounded-full bg-good" title="Loaded" />
+  return <span className="h-2 w-2 shrink-0 rounded-full border border-fg-3/60" title="Not loaded" />
+}
+
+/** The registry's models in a menu; the page shows the one picked. */
+function ModelSelect({ models, selected, onSelect }: { models: RegistryModel[]; selected: RegistryModel; onSelect: (id: string) => void }) {
+  const group = (role: RegistryModel['role']) => models.filter((m) => m.role === role)
+  return (
+    <Popover label="Registered models" width={360} estHeight={420} align="start" trigger={({ ref, open, toggle }) => (
+      <button ref={ref} type="button" onClick={toggle} aria-expanded={open} title="Pick a model to see and change"
+        className={cn('flex h-9 min-w-0 max-w-full items-center gap-2 rounded-lg border border-line bg-surface-2 px-3 text-left hover:border-line-strong', open && 'border-line-strong')}>
+        {statusDot(selected)}
+        <span className="truncate font-mono text-[13px] text-fg">{selected.name}</span>
+        {selected.is_default && <Chip tone="accent">default</Chip>}
+        <span className="truncate text-[11.5px] text-fg-3">{[selected.info.params, selected.info.quant, bytes(selected.size_bytes)].filter(Boolean).join(' · ')}</span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-fg-3" aria-hidden="true" />
+      </button>
+    )}>
+      {(close) => (
+        <div className="grid max-h-[420px] overflow-y-auto py-1">
+          {(['chat', 'embed'] as const).map((role) => group(role).length > 0 && (
+            <div key={role} role="radiogroup" aria-label={role === 'chat' ? 'Chat models' : 'Embedding models'}>
+              <p className="px-3 pt-2 pb-1 text-[11px] font-medium tracking-wide text-fg-3 uppercase">{role === 'chat' ? 'Chat' : 'Embeddings'}</p>
+              {group(role).map((m) => (
+                <button key={m.id} type="button" role="radio" aria-checked={m.id === selected.id} onClick={() => { onSelect(m.id); close() }}
+                  className="mx-1 flex w-[calc(100%-0.5rem)] items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left hover:bg-surface-2">
+                  {statusDot(m)}
+                  <span className="grid min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate font-mono text-[12.5px] text-fg">{m.name}</span>
+                      {m.is_default && <Chip tone="accent">default</Chip>}
+                      {!m.complete && <Chip tone="bad">incomplete</Chip>}
+                      {!m.enabled && m.complete && <Chip>off</Chip>}
+                    </span>
+                    <span className="truncate text-[11px] text-fg-3">
+                      {[m.info.params, m.info.quant, bytes(m.size_bytes), m.vision ? 'images' : m.role === 'chat' ? 'text only' : null, m.loaded ? 'loaded' : null].filter(Boolean).join(' · ')}
+                    </span>
+                  </span>
+                  {m.id === selected.id && <Check className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden="true" />}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </Popover>
+  )
+}
+
+function ModelDetail({ m, benchmarking }: { m: RegistryModel; benchmarking: Registry['benchmark'] }) {
   const update = useUpdateModel()
   const remove = useRemoveModel()
   const bench = useBenchmark()
+  const makeDefault = useMakeDefault()
+  const unload = useUnloadModel()
   const [editing, setEditing] = useState(false)
   const running = benchmarking?.state === 'running' && benchmarking.model_id === m.id
-  const error = update.error ?? remove.error ?? bench.error
+  const error = update.error ?? remove.error ?? bench.error ?? makeDefault.error ?? unload.error
   const info = m.info
+  const lastFailed = m.last_benchmark && m.last_benchmark.state !== 'running' && m.last_benchmark.error
+  const usable = m.complete && m.exists
+  const turnOff = () => {
+    const note = m.is_default ? `${m.name} is the default chat model. Turning it off unloads it and makes another chat model the default.`
+      : `Turn ${m.name} off? It is unloaded now and chats stop offering it.`
+    if (window.confirm(note)) update.mutate({ id: m.id, enabled: false })
+  }
   return (
-    <li className={cn('grid gap-3 px-4 py-3.5', !m.enabled && 'opacity-60')}>
+    <div className="grid gap-3">
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
         <div className="grid min-w-0 flex-1 gap-1">
           <p className="flex flex-wrap items-center gap-1.5">
-            <span className="font-mono text-[13px] font-medium text-fg">{m.name}</span>
             <Chip>{m.role === 'chat' ? 'Chat' : 'Embeddings'}</Chip>
-            {m.role === 'chat' && (m.vision
-              ? <Chip tone="accent"><Eye />images</Chip>
-              : <Chip><Type />text only</Chip>)}
+            {m.is_default && <Chip tone="accent">default chat model</Chip>}
+            {m.role === 'chat' && (m.vision ? <Chip tone="accent"><Eye />images</Chip> : <Chip><Type />text only</Chip>)}
             {m.reasoning && <Chip><Brain />thinks</Chip>}
             {m.role === 'chat' && m.tools && <Chip><Wrench />tools</Chip>}
-            {m.used_for.map((u) => <Chip key={u} tone="good">{u}</Chip>)}
+            {m.used_for.filter((u) => u !== 'default chat model').map((u) => <Chip key={u} tone="good">{u}</Chip>)}
+            {m.loaded && <Chip tone="good">loaded</Chip>}
             {!m.enabled && <Chip tone="warn">off</Chip>}
             {!m.exists && <Chip tone="bad">file missing</Chip>}
+            {!m.complete && m.exists && <Chip tone="bad">file incomplete</Chip>}
             {m.changed && <Chip tone="warn">file changed</Chip>}
           </p>
           <p className="text-[11.5px] text-fg-3">
-            {[info.architecture, info.params, info.quant, `${m.layers - 1} layers`, bytes(m.size_bytes), m.mmproj_bytes ? `+ ${bytes(m.mmproj_bytes)} projector` : null].filter(Boolean).join(' · ')}
+            {[info.architecture, info.params, info.quant, `${m.layers - 1} layers`, info.context_train ? `trained for ${tokens(info.context_train)}` : null, bytes(m.size_bytes), m.mmproj_bytes ? `+ ${bytes(m.mmproj_bytes)} projector` : null].filter(Boolean).join(' · ')}
           </p>
           <p className="truncate font-mono text-[11px] text-fg-3/80" title={m.path}>{m.path}</p>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1">
+          {m.role === 'chat' && !m.is_default && usable && (
+            <Button variant="secondary" size="sm" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate(m.id)}
+              title="New chats start with it; summaries and Q&A use it">
+              <Star />Make default
+            </Button>
+          )}
+          {m.loaded && (
+            <Button variant="ghost" size="sm" disabled={unload.isPending} onClick={() => unload.mutate(m.id)} title="Free its GPU or CPU memory now; it loads again when needed">
+              <CircleStop />Unload
+            </Button>
+          )}
           {m.role === 'chat' && (
-            <Button variant="ghost" size="sm" disabled={running || bench.isPending || !m.enabled} onClick={() => bench.mutate({ id: m.id, force: m.benchmarked })}
-              title={m.benchmarked ? 'Measure every context again' : 'Measure the contexts not measured yet'}>
+            <Button variant="ghost" size="sm" disabled={running || bench.isPending || !m.enabled || !usable} onClick={() => bench.mutate({ id: m.id, force: m.benchmarked })}
+              title={!usable ? 'The file cannot be loaded' : m.benchmarked ? 'Measure every context again' : 'Measure the contexts not measured yet'}>
               <Gauge className={cn(running && 'animate-pulse')} />{running ? `Benchmarking ${benchmarking?.step}/${benchmarking?.of}` : m.benchmarked ? 'Re-benchmark' : 'Benchmark'}
             </Button>
           )}
-          <Button variant="ghost" size="icon-sm" disabled={update.isPending || m.used_for.length > 0} onClick={() => update.mutate({ id: m.id, enabled: !m.enabled })}
-            aria-label={m.enabled ? `Turn ${m.name} off` : `Turn ${m.name} on`} title={m.used_for.length ? `Used for ${m.used_for.join(', ')}` : m.enabled ? 'Turn off: chats stop offering it' : 'Turn on'}>
-            <Power />
+          <Button variant="ghost" size="sm" disabled={update.isPending} onClick={() => (m.enabled ? turnOff() : update.mutate({ id: m.id, enabled: true }))}
+            title={m.enabled ? 'Turn off: unloads it, and chats stop offering it' : 'Turn on'}>
+            <Power />{m.enabled ? 'Turn off' : 'Turn on'}
           </Button>
-          <Button variant="ghost" size="icon-sm" disabled={remove.isPending || m.used_for.length > 0} aria-label={`Remove ${m.name}`}
-            title={m.used_for.length ? `Used for ${m.used_for.join(', ')}: point those at another model first` : 'Remove from the registry (the file stays)'}
-            onClick={() => window.confirm(`Remove ${m.name} from the registry? The file stays where it is.`) && remove.mutate(m.id)}>
+          <Button variant="ghost" size="icon-sm" disabled={remove.isPending} aria-label={`Remove ${m.name}`} title="Remove from the registry (the file stays)"
+            onClick={() => window.confirm(`Remove ${m.name} from the registry? The file stays where it is.${m.is_default ? ' Another chat model becomes the default.' : ''}`) && remove.mutate(m.id)}>
             <Trash2 />
           </Button>
         </div>
       </div>
+      {!m.complete && m.exists && (
+        <Notice tone="error" title="The file is incomplete, so llama.cpp cannot load it">
+          It holds {bytes(m.size_bytes)} of the {bytes(m.needed_bytes)} its weights need; a download was probably cut short. Download it again, then turn the model on.
+        </Notice>
+      )}
+      {lastFailed && usable && (
+        <Notice tone="warn" title="The last benchmark did not finish">{m.last_benchmark?.error}</Notice>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <Segmented label={`Where ${m.name} loads`} value={m.placement} options={PLACEMENTS} onChange={(placement) => update.mutate({ id: m.id, placement })} />
-        {m.role === 'chat' && <Button variant="ghost" size="sm" onClick={() => setEditing((e) => !e)}>{editing ? 'Close' : 'Edit context sizes'}</Button>}
+        {m.role === 'chat' && <Button variant="ghost" size="sm" onClick={() => setEditing((e) => !e)}>{editing ? 'Close' : 'Context sizes'}</Button>}
       </div>
       {editing && <ContextsEditor m={m} saving={update.isPending} onSave={(contexts, fallback) => update.mutate({ id: m.id, contexts, default_context: fallback }, { onSuccess: () => setEditing(false) })} />}
       <div className="overflow-x-auto">
@@ -190,7 +281,7 @@ function ModelRow({ m, benchmarking }: { m: RegistryModel; benchmarking: Registr
         </table>
       </div>
       {error && <p className="text-[12px] text-bad">{apiErrorMessage(error, 'That did not work.')}</p>}
-    </li>
+    </div>
   )
 }
 
@@ -200,6 +291,7 @@ function ModelRow({ m, benchmarking }: { m: RegistryModel; benchmarking: Registr
  */
 export function ModelRegistryCard() {
   const [adding, setAdding] = useState(false)
+  const [picked, setPicked] = useState<string | null>(null)
   // After an add, Athena measures and benchmarks the model: keep the numbers fresh for a while.
   const [polling, setPolling] = useState(false)
   const registry = useRegistry(polling)
@@ -207,6 +299,7 @@ export function ModelRegistryCard() {
   if (registry.isLoading) return <Card className="p-4"><Spinner label="Reading the model registry…" /></Card>
   if (!data) return <Notice tone="error" title="The registry could not be read">{apiErrorMessage(registry.error, 'Try again in a moment.')}</Notice>
   const bench = data.benchmark
+  const selected = data.models.find((m) => m.id === picked) ?? data.models.find((m) => m.is_default) ?? data.models[0]
   return (
     <Card className="grid gap-0 overflow-hidden">
       <div className="grid gap-4 border-b border-line p-4">
@@ -222,18 +315,22 @@ export function ModelRegistryCard() {
             Benchmarking <span className="font-mono">{bench.model}</span> at {tokens(bench.context ?? 0)} ({bench.step} of {bench.of}); chats go first and pause it.
           </p>
         )}
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-[12.5px] text-fg-3">{data.models.length} {data.models.length === 1 ? 'model' : 'models'} · each context size is a preset of its own, loaded when first used</p>
-          <Button variant="primary" size="sm" disabled={!data.writable} onClick={() => setAdding(true)}><Plus />Add model</Button>
-        </div>
       </div>
-      <ul className="divide-y divide-line">
-        {data.models.map((m) => <ModelRow key={m.id} m={m} benchmarking={bench} />)}
-      </ul>
-      {adding && <AddModelDialog onClose={() => {
+      <div className="grid gap-4 p-4">
+        <div className="flex flex-wrap items-center gap-2">
+          {selected && <ModelSelect models={data.models} selected={selected} onSelect={setPicked} />}
+          <span className="text-[12px] text-fg-3">{data.models.length} {data.models.length === 1 ? 'model' : 'models'}</span>
+          <Button variant="primary" size="sm" className="ml-auto" disabled={!data.writable} onClick={() => setAdding(true)}><Plus />Add model</Button>
+        </div>
+        {selected ? <ModelDetail key={selected.id} m={selected} benchmarking={bench} /> : <p className="text-[12.5px] text-fg-3">No models yet. Add one from a folder on this machine.</p>}
+      </div>
+      {adding && <AddModelDialog onClose={(addedId) => {
         setAdding(false)
-        setPolling(true)
-        setTimeout(() => setPolling(false), 120_000)
+        if (addedId) {
+          setPicked(addedId)
+          setPolling(true)
+          setTimeout(() => setPolling(false), 120_000)
+        }
       }} />}
     </Card>
   )
