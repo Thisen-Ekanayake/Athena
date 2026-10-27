@@ -1,19 +1,19 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { Link, NavLink, useMatch, useNavigate } from 'react-router-dom'
 import {
-  Archive, ChevronRight, FolderKanban, GitBranch, House, Layers, Library, LogOut, MessageSquare, MoreHorizontal, Newspaper,
-  Pencil, Pin, PinOff, Settings, SquarePen, Trash2, TrendingUp, type LucideIcon,
+  ChevronRight, FolderKanban, GitBranch, House, Layers, Library, LogOut, MessageSquare, Newspaper, Pin, Settings, SquarePen,
+  TrendingUp, type LucideIcon,
 } from 'lucide-react'
 import { useCurrentUser, useLogout } from '../../api/queries/auth'
-import { useChats, useDeleteChat, useUpdateChat, type ChatSummary } from '../../api/queries/chats'
+import { useChats, type ChatSummary } from '../../api/queries/chats'
 import { useProjects } from '../../api/queries/projects'
 import { useChatStreams } from '../../store/chatStore'
 import { useAppStore, type Accent } from '../../store/appStore'
 import { Button } from '../../ui/Button'
 import { MarqueeText } from '../../ui/MarqueeText'
 import { OwlCoin } from '../../ui/OwlCoin'
-import { Popover } from '../../ui/Popover'
 import { cn } from '../../ui/cn'
+import { ChatActions, HIDE_ON_HOVER, RenameField, SHOW_ON_HOVER } from '../../features/chat/ChatActions'
 import { SyncPanel } from './SyncPanel'
 
 const NAV: { to: string; label: string; icon: LucideIcon; end?: boolean }[] = [
@@ -112,8 +112,6 @@ function RecentChats({ compact, onNavigate }: { compact: boolean; onNavigate?: (
   )
 }
 
-const menuItem = 'flex items-center gap-2 px-3 py-1.5 text-left hover:bg-surface-2'
-
 /**
  * One chat in the sidebar. Hovered, its title scrolls when too long and it shows a menu (rename, archive, delete) and
  * a pin. A pinned chat keeps a small pin.
@@ -122,115 +120,22 @@ function ChatRow({ chat, streaming, onNavigate }: { chat: ChatSummary; streaming
   const [hover, setHover] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const active = !!useMatch(`/chats/${chat.id}`)
-  const update = useUpdateChat()
-  const remove = useDeleteChat()
   const navigate = useNavigate()
 
   if (renaming) {
-    return (
-      <li>
-        <RenameField
-          initial={chat.title}
-          onDone={(title) => {
-            setRenaming(false)
-            if (title) update.mutate({ id: chat.id, title })
-          }}
-        />
-      </li>
-    )
+    return <li><RenameField chat={chat} onDone={() => setRenaming(false)} className="h-7 text-[12.5px]" /></li>
   }
-  // The actions show while hovered, focused, or while their menu is open.
-  const shown = 'group-hover:flex group-focus-within:flex group-has-[[aria-expanded=true]]:flex'
   return (
     <li onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} className={subRow(active)}>
       <NavLink to={`/chats/${chat.id}`} onClick={onNavigate} className="flex h-full min-w-0 flex-1 items-center gap-1.5 pr-1 pl-2">
         <MarqueeText text={chat.title} active={hover} className="min-w-0 flex-1" />
         {streaming && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" aria-label="Answering" />}
-        {chat.pinned && <Pin className="h-3 w-3 shrink-0 text-fg-3 group-hover:hidden group-focus-within:hidden group-has-[[aria-expanded=true]]:hidden" aria-label="Pinned" />}
+        {chat.pinned && <Pin className={cn('h-3 w-3 shrink-0 text-fg-3', HIDE_ON_HOVER)} aria-label="Pinned" />}
       </NavLink>
-      <div className={cn('hidden shrink-0 items-center pr-0.5', shown)}>
-        <Popover
-          label="Chat actions"
-          width={180}
-          estHeight={120}
-          align="start"
-          trigger={({ ref, open, toggle }) => (
-            <button
-              ref={ref}
-              type="button"
-              onClick={toggle}
-              aria-expanded={open}
-              aria-label={`Actions for ${chat.title}`}
-              title="More"
-              className="flex h-6 w-6 items-center justify-center rounded-md text-fg-3 hover:bg-surface hover:text-fg"
-            >
-              <MoreHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
-          )}
-        >
-          {(close) => (
-            <div className="grid py-1 text-[13px]">
-              <button type="button" className={menuItem} onClick={() => {
-                close()
-                setRenaming(true)
-              }}><Pencil className="h-3.5 w-3.5 text-fg-3" aria-hidden="true" />Rename</button>
-              <button type="button" className={menuItem} onClick={() => {
-                close()
-                update.mutate({ id: chat.id, archived: true })
-              }}><Archive className="h-3.5 w-3.5 text-fg-3" aria-hidden="true" />Archive</button>
-              <button type="button" className={cn(menuItem, 'text-bad')} onClick={() => {
-                close()
-                if (window.confirm(`Delete “${chat.title}”? Its artifacts stay.`)) {
-                  remove.mutate(chat.id, { onSuccess: () => active && navigate('/chats') })
-                }
-              }}><Trash2 className="h-3.5 w-3.5" aria-hidden="true" />Delete</button>
-            </div>
-          )}
-        </Popover>
-        <button
-          type="button"
-          onClick={() => update.mutate({ id: chat.id, pinned: !chat.pinned })}
-          aria-pressed={chat.pinned}
-          aria-label={chat.pinned ? `Unpin ${chat.title}` : `Pin ${chat.title}`}
-          title={chat.pinned ? 'Unpin' : 'Pin'}
-          className={cn('flex h-6 w-6 items-center justify-center rounded-md hover:bg-surface hover:text-fg', chat.pinned ? 'text-accent' : 'text-fg-3')}
-        >
-          {chat.pinned ? <PinOff className="h-3.5 w-3.5" aria-hidden="true" /> : <Pin className="h-3.5 w-3.5" aria-hidden="true" />}
-        </button>
+      <div className={cn('shrink-0 items-center pr-0.5', SHOW_ON_HOVER)}>
+        <ChatActions chat={chat} onRename={() => setRenaming(true)} onDeleted={() => active && navigate('/chats')} />
       </div>
     </li>
-  )
-}
-
-/** The title in place: Enter or leaving the field saves, Escape keeps the old one (`onDone(null)`). */
-function RenameField({ initial, onDone }: { initial: string; onDone: (title: string | null) => void }) {
-  const [value, setValue] = useState(initial)
-  const finished = useRef(false)
-  const finish = (save: boolean) => {
-    if (finished.current) return
-    finished.current = true
-    const title = value.trim()
-    onDone(save && title && title !== initial ? title : null)
-  }
-  return (
-    <input
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onFocus={(e) => e.target.select()}
-      onBlur={() => finish(true)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault()
-          finish(true)
-        } else if (e.key === 'Escape') {
-          finish(false)
-        }
-      }}
-      autoFocus
-      maxLength={120}
-      aria-label="Chat title"
-      className="h-7 w-full rounded-md border border-line-strong bg-surface px-2 text-[12.5px] text-fg outline-none"
-    />
   )
 }
 

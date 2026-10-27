@@ -43,7 +43,7 @@ export function ChatsPage() {
         />
       </div>
       {chats.isLoading ? <Spinner label="Loading chats…" /> : chats.data?.length ? (
-        <ul className="grid divide-y divide-line rounded-xl border border-line bg-surface">
+        <ul className="grid divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
           {chats.data.map((c) => (
             <li key={c.id} className="flex items-center hover:bg-surface-2">
               <Link to={`/chats/${c.id}`} className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3">

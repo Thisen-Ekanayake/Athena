@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { Project } from '../api/queries/projects'
@@ -36,5 +36,27 @@ describe('ProjectPage', () => {
     await userEvent.type(screen.getByRole('textbox', { name: 'Instructions' }), 'Use British spelling.')
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ instructions: 'Use British spelling.' })
+  })
+
+  it('pins, renames and archives its chats from their rows', async () => {
+    const calls = mockApi({
+      'GET /projects/p1': { data: PROJECT },
+      'GET /chat/models': { data: { models: [], default: 'qwen3.5-9b', efforts: [], default_effort: 'low', vision_model: '' } },
+      'PATCH /chats/c1': ({ body }) => ({ data: { ...PROJECT.chats[0], ...(body as object) } }),
+    })
+    renderWithProviders(<ProjectPage />, { route: '/projects/p1', path: '/projects/:id' })
+    await userEvent.click(await screen.findByRole('button', { name: 'Pin LoRA questions' }))
+    await waitFor(() => expect(calls).toContainEqual(expect.objectContaining({ method: 'PATCH', body: { pinned: true } })))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Actions for LoRA questions' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Rename' }))
+    const field = screen.getByRole('textbox', { name: 'Chat title' })
+    await userEvent.clear(field)
+    await userEvent.type(field, 'Adapters{Enter}')
+    await waitFor(() => expect(calls).toContainEqual(expect.objectContaining({ method: 'PATCH', body: { title: 'Adapters' } })))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Actions for LoRA questions' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Archive' }))
+    await waitFor(() => expect(calls).toContainEqual(expect.objectContaining({ method: 'PATCH', body: { archived: true } })))
   })
 })
