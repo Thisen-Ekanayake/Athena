@@ -80,6 +80,11 @@ def _value(f: BinaryIO, kind: int):
 
 def read_header(path: str) -> dict:
     """Every key/value in the header; long arrays (the vocabulary) come back as None."""
+    return _parse(path)[0]
+
+
+def _parse(path: str, tensors: bool = False) -> tuple[dict, int | None]:
+    """(header, bytes the tensor data needs to end at) — the second only with ``tensors``."""
     with open(path, "rb") as raw:
         f = _Buffered(raw)
         if f.read(4) != MAGIC:
@@ -87,13 +92,48 @@ def read_header(path: str) -> dict:
         version = _read(f, "<I")
         if version < 2:
             raise NotGGUF(f"GGUF version {version} is too old for llama.cpp")
-        _read(f, "<Q")  # tensors
+        n_tensors = _read(f, "<Q")
         count = _read(f, "<Q")
         out = {}
         for _ in range(count):
             key = _string(f)
             out[key] = _value(f, _read(f, "<I"))
-        return out
+        if not tensors:
+            return out, None
+        end = 0
+        for _ in range(n_tensors):
+            _skip_string(f)
+            dims = [_read(f, "<Q") for _ in range(_read(f, "<I"))]
+            kind, offset = _read(f, "<I"), _read(f, "<Q")
+            elements = 1
+            for d in dims:
+                elements *= d
+            block, size = TYPE_SIZES.get(kind, (1, 0))
+            end = max(end, offset + elements // block * size)
+        align = int(out.get("general.alignment") or 32)
+        start = f.tell()
+        start += (align - start % align) % align
+        return out, start + end
+
+
+# ggml tensor types: (elements per block, bytes per block), for how long a file must be
+TYPE_SIZES = {
+    0: (1, 4), 1: (1, 2), 2: (32, 18), 3: (32, 20), 6: (32, 22), 7: (32, 24), 8: (32, 34), 9: (32, 36),
+    10: (256, 84), 11: (256, 110), 12: (256, 144), 13: (256, 176), 14: (256, 210), 15: (256, 292),
+    16: (256, 66), 17: (256, 74), 18: (256, 98), 19: (256, 50), 20: (32, 18), 21: (256, 110), 22: (256, 82),
+    23: (256, 136), 24: (1, 1), 25: (1, 2), 26: (1, 4), 27: (1, 8), 28: (1, 8), 29: (256, 56), 30: (1, 2),
+    34: (256, 54), 35: (256, 66), 39: (32, 17),
+}
+
+
+def completeness(path: str) -> dict:
+    """{complete, needed_bytes, size_bytes}: whether the file holds all of its tensors' data. A download cut short
+    loads in llama.cpp as "data is not within the file bounds". Split models (several parts) are not checked."""
+    header, needed = _parse(path, tensors=True)
+    size = os.path.getsize(path)
+    if int(header.get("split.count") or 1) > 1 or not needed:
+        return {"complete": True, "needed_bytes": None, "size_bytes": size}
+    return {"complete": size >= needed, "needed_bytes": needed, "size_bytes": size}
 
 
 class _Buffered:
@@ -112,6 +152,9 @@ class _Buffered:
         out = self.buf[self.pos:self.pos + n]
         self.pos += len(out)
         return out
+
+    def tell(self) -> int:
+        return self.raw.tell() - (len(self.buf) - self.pos)
 
     def seek(self, n: int, whence: int = os.SEEK_CUR) -> None:
         assert whence == os.SEEK_CUR
@@ -141,8 +184,9 @@ def _size_label(header: dict, size: int, quant: str | None, filename: str) -> st
     return None
 
 
-def describe(path: str) -> dict:
-    """What Athena needs to register ``path``: kind (model | mmproj), name, size, layers, context, capabilities."""
+def describe(path: str, check: bool = False) -> dict:
+    """What Athena needs to register ``path``: kind (model | mmproj), name, size, layers, context, capabilities.
+    With ``check``, also whether the file holds all its tensor data (``complete``, ``needed_bytes``)."""
     header = read_header(path)
     size = os.path.getsize(path)
     filename = os.path.basename(path)
@@ -168,6 +212,7 @@ def describe(path: str) -> dict:
     embedding = bool(a("pooling_type") is not None or arch in EMBED_ARCHES or "embed" in filename.lower())
     return {
         "kind": "model", "path": path, "filename": filename, "size_bytes": size,
+        **({"complete": True} if not check else {k: v for k, v in completeness(path).items() if k != "size_bytes"}),
         "name": header.get("general.name"),
         "architecture": arch,
         "params": _size_label(header, size, quant, filename),

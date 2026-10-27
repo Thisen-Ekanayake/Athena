@@ -24,6 +24,7 @@ from athena.model_server import lane
 
 LOAD_KEY = "athena:model_load:{preset}"
 LOAD_TIMEOUT = 600.0
+MISSING_WAIT = 30.0      # seconds a preset the router does not list yet may take to appear after a reload
 POLL = 0.5
 _threads: dict[str, threading.Thread] = {}
 _guard = threading.Lock()
@@ -98,46 +99,81 @@ def expected_seconds(t: dict) -> float:
 
 
 def ensure_loaded(t: dict, timeout: float = LOAD_TIMEOUT, for_chat: bool = True) -> bool:
-    """Load ``t``'s preset and wait until it is ready; True when it is. Records the load time. A load for a chat
-    keeps background work waiting (``lane``); a benchmark's does not, or it would wait for itself."""
-    preset, url = t["preset"], t["url"]
+    """Load ``t``'s preset and wait until it is ready; True when it is (``load`` says why not)."""
+    return load(t, timeout, for_chat) is None
+
+
+def load(t: dict, timeout: float = LOAD_TIMEOUT, for_chat: bool = True) -> str | None:
+    """Load ``t``'s preset and wait until it is ready: None when it is, else why not. Records the load time. A load
+    for a chat keeps background work waiting (``lane``); a benchmark's does not, or it would wait for itself.
+
+    A preset the router does not list yet (its file was just rewritten) gets one reload and up to MISSING_WAIT
+    seconds to appear; a load the router reports failed ends at once, with llama-server's exit code."""
     from athena.core import llm
+    from athena.model_server import registry
+    preset, url = t["preset"], t["url"]
     key = LOAD_KEY.format(preset=preset)
-    started = None
+    started, asked, reloaded = None, False, None
     deadline = time.monotonic() + timeout
-    asked = False
-    while time.monotonic() < deadline:
-        listed = {m.get("id"): m for m in router_models(url)}
-        status = _status(listed.get(preset))
-        if status == "loaded":
-            if started is not None:
-                _record(t, time.time() - started)
-            _clear(key)
-            return True
-        if status == "failed" and asked:
-            _clear(key)
-            return False
-        if status == "loading" and started is None:
-            started = time.time()
-            _mark(key, started, t)
-        if status in ("unloaded", "failed", "unknown") and preset in listed:
-            _mark(key, None, t)  # the router first unloads the model it holds; the request returns once it starts
-            try:
-                resp = httpx.post(f"{llm.server_root(url)}/models/load", json={"model": preset}, timeout=600.0)
-                if resp.status_code < 400:
-                    asked, started = True, time.time()
-                    _mark(key, started, t)
-                elif "already" not in resp.text:  # full: its model is busy with a batch, which gives way
-                    _mark(key, None, t, waiting=True)
-            except httpx.HTTPError as exc:
-                logger.info(f"Loading {preset}: {exc}")
-        elif preset not in listed and not listed:
-            return False  # the router is not there
-        if for_chat:
-            lane.hold(what=preset)
-        time.sleep(POLL)
-    _clear(key)
-    return False
+    try:
+        while time.monotonic() < deadline:
+            models = router_models(url)
+            if not models:
+                return f"The model server at {url} is not answering."
+            listed = {m.get("id"): m for m in models}
+            status = _status(listed.get(preset))
+            if status == "loaded":
+                if started is not None:
+                    _record(t, time.time() - started)
+                return None
+            if status == "failed" and asked:
+                code = ((listed.get(preset) or {}).get("status") or {}).get("exit_code")
+                return (f"llama-server could not load {preset} (exit code {code}); its log says why, often a file "
+                        "that is incomplete or too large for memory.")
+            if preset not in listed:
+                if reloaded is None:
+                    registry.reload_router(url)
+                    reloaded = time.monotonic()
+                elif time.monotonic() - reloaded > MISSING_WAIT:
+                    return (f"The model server does not know {preset}. Restart it (./run_native.sh) so it reads "
+                            "the registry's presets.")
+            elif status == "loading" and started is None:
+                started = time.time()
+                _mark(key, started, t)
+            elif status in ("unloaded", "failed", "unknown"):
+                _mark(key, None, t)  # the router first unloads the model it holds; the request returns once it starts
+                try:
+                    resp = httpx.post(f"{llm.server_root(url)}/models/load", json={"model": preset}, timeout=600.0)
+                    if resp.status_code < 400:
+                        asked, started = True, time.time()
+                        _mark(key, started, t)
+                    elif "already" not in resp.text:  # full: its model is busy with a batch, which gives way
+                        _mark(key, None, t, waiting=True)
+                except httpx.HTTPError as exc:
+                    logger.info(f"Loading {preset}: {exc}")
+            if for_chat:
+                lane.hold(what=preset)
+            time.sleep(POLL)
+        return f"{preset} did not load within {int(timeout)} s."
+    finally:
+        _clear(key)
+
+
+def unload(row: dict) -> list[str]:
+    """Take every preset of a registered model out of memory, on both routers; returns the ones unloaded."""
+    from athena.core import llm
+    from athena.model_server import registry
+    names = {p for c in row["contexts"] for p in (c["preset"], c["vision_preset"]) if p}
+    done = []
+    for url in (llm.chat_base_url(), registry.cpu_base_url()):
+        for m in router_models(url):
+            if m.get("id") in names and _status(m) in ("loaded", "loading"):
+                try:
+                    httpx.post(f"{llm.server_root(url)}/models/unload", json={"model": m["id"]}, timeout=30.0)
+                    done.append(m["id"])
+                except httpx.HTTPError as exc:
+                    logger.info(f"Unloading {m['id']}: {exc}")
+    return done
 
 
 def _mark(key: str, started: float | None, t: dict, waiting: bool = False) -> None:

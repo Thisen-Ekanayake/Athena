@@ -32,13 +32,16 @@ BASE_FILE = CONFIG / "llama-router.ini"
 GPU_FILE = CONFIG / "llama-router.generated.ini"
 CPU_FILE = CONFIG / "llama-router.cpu.ini"
 DEFAULT_CPU_URL = "http://127.0.0.1:8081/v1"
-CONTEXT_STEPS = (8192, 16384, 32768, 65536)
+CONTEXT_STEPS = (8192, 16384, 32768, 65536, 131072, 262144)
+# Every size an admin may tick, up to what the model was trained for
+ALL_STEPS = (2048, 4096) + CONTEXT_STEPS + (524288, 1048576)
 SNAPSHOT_SECONDS = 10.0
 HEADER = ("Written by Athena from the model registry (Settings -> Models and keys); edits here are overwritten.\n"
           "The hand-written presets it started from are in config/llama-router.ini.")
 
 _snapshot: tuple[float, list[dict]] | None = None
 _lock = threading.Lock()
+_complete: dict[tuple[str, str], dict] = {}
 
 
 # ── where things are ────────────────────────────────────────────────────
@@ -73,6 +76,17 @@ def fingerprint(path: str) -> str:
 def default_contexts(context_train: int | None, default: int) -> list[int]:
     ceiling = min(context_train or 32768, max(CONTEXT_STEPS))
     return sorted({c for c in CONTEXT_STEPS if c <= ceiling} | {default})
+
+
+def completeness(path: str, print_: str) -> dict:
+    """gguf.completeness for a registered file, kept per file version (it reads the tensor table)."""
+    key = (path, print_)
+    if key not in _complete:
+        try:
+            _complete[key] = gguf.completeness(resolve(path))
+        except (OSError, gguf.NotGGUF) as exc:
+            _complete[key] = {"complete": False, "needed_bytes": None, "size_bytes": None, "error": str(exc)}
+    return _complete[key]
 
 
 # ── taking in the hand-written presets ─────────────────────────────────
@@ -202,7 +216,7 @@ def build(models: list, info: dict | None) -> list[dict]:
                     "info": m.info or {}, "role": m.role, "reasoning": bool(m.reasoning), "tools": bool(m.tools),
                     "vision": bool(m.mmproj_path), "placement": m.placement, "default_context": m.default_context,
                     "contexts": rows, "options": m.options or {}, "enabled": bool(m.enabled),
-                    "layers": layers_of(m)})
+                    "layers": layers_of(m), "complete": completeness(m.path, m.fingerprint)["complete"]})
     return out
 
 
@@ -218,8 +232,8 @@ def render(rows: list[dict]) -> dict[str, str]:
             common = {k: v for k, v in star.values.items() if k not in ("n-gpu-layers", "ngl")}
     files: dict[str, list] = {"gpu": [presets.Section("*", dict(common))], "cpu": [presets.Section("*", dict(common))]}
     for r in rows:
-        if not r["enabled"]:
-            continue
+        if not r["enabled"] or not r.get("complete", True):
+            continue  # off, or a file llama.cpp cannot load
         template = (r["info"] or {}).get("has_template", True)
         for c in r["contexts"]:
             kwargs = {"path": r["path"], "context": c["context"], "role": r["role"], "placement": r["placement"],
@@ -245,16 +259,16 @@ def write_presets(reload: bool = True) -> dict:
     if reload:
         from athena.core import llm
         for kind, url in (("gpu", llm.chat_base_url()), ("cpu", cpu_base_url())):
-            if changed[kind]:
-                reload_router(url)
+            if changed[kind]:  # off the request: loads that need a new preset ask for a reload themselves
+                threading.Thread(target=reload_router, args=(url,), daemon=True, name=f"reload-{kind}").start()
     return {"changed": any(changed.values()), **changed}
 
 
 def reload_router(url: str) -> bool:
     """Ask a router to read its preset file again; False when it does not answer."""
     from athena.core import llm
-    try:
-        httpx.get(f"{llm.server_root(url)}/models", params={"reload": "1"}, timeout=10.0).raise_for_status()
+    try:  # a reload waits for a busy model whose preset changed, so it can take a while
+        httpx.get(f"{llm.server_root(url)}/models", params={"reload": "1"}, timeout=120.0).raise_for_status()
         return True
     except httpx.HTTPError as exc:
         logger.info(f"Registry: the router at {url} did not reload: {exc}")

@@ -18,6 +18,7 @@ from loguru import logger
 from athena.model_server import lane, loading, registry, stats
 
 STATUS_KEY = "athena:model_bench"
+MODEL_KEY = "athena:model_bench:{id}"
 LOCK_KEY = "athena:model_bench_lock"
 LOCK_SECONDS = 1800
 BENCH = "benchmark"
@@ -35,10 +36,23 @@ def _redis():
 
 
 def _status(**fields) -> None:
+    """The running (or last) benchmark, and each model's last one, which Settings shows under the model."""
     try:
-        _redis().set(STATUS_KEY, json.dumps(fields | {"at": time.time()}), ex=3600)
+        value = json.dumps(fields | {"at": time.time()})
+        _redis().set(STATUS_KEY, value, ex=3600)
+        if fields.get("model_id"):
+            _redis().set(MODEL_KEY.format(id=fields["model_id"]), value, ex=7 * 86400)
     except Exception:
         pass
+
+
+def last(model_id: str) -> dict | None:
+    """A model's last benchmark: {state, results, error, at}."""
+    try:
+        raw = _redis().get(MODEL_KEY.format(id=model_id))
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
 
 
 def status() -> dict | None:
@@ -62,10 +76,14 @@ def _plan(model_id: str, context: int) -> dict:
     return (c or {}).get("plan") or {"device": "gpu"}
 
 
+class LoadFailed(RuntimeError):
+    """The model did not load; larger contexts of it will not either."""
+
+
 def one(t: dict) -> dict:
     """Load ``t``'s preset and time an answer; {gen_tps, prompt_tps}."""
-    if not loading.ensure_loaded(t, for_chat=False):
-        raise RuntimeError(f"{t['preset']} did not load")
+    if reason := loading.load(t, for_chat=False):
+        raise LoadFailed(reason)
     body = {"model": t["preset"], "messages": [{"role": "user", "content": PROMPT}], "max_tokens": ANSWER_TOKENS,
             "temperature": 0, "ignore_eos": True, "cache_prompt": False,
             "chat_template_kwargs": {"enable_thinking": False}}
@@ -88,6 +106,10 @@ def run(model_id: str, force: bool = False) -> dict:
         row = next((x for x in registry.snapshot() if x["id"] == model_id), None)
         if row is None or row["role"] != "chat" or not row["enabled"]:
             return {"skipped": "not a chat model"}
+        if not row["complete"]:
+            _status(model=row["name"], model_id=model_id, state="failed",
+                    error="The file is incomplete (a download cut short?), so llama.cpp cannot load it.")
+            return {"skipped": "incomplete file"}
         have = set() if force else measured(model_id)
         todo = [c["context"] for c in row["contexts"] if c["context"] not in have]
         before = [m.get("id") for m in loading.router_models(loading.target(row["name"], None)["url"])
@@ -99,9 +121,13 @@ def run(model_id: str, force: bool = False) -> dict:
             t = loading.target(row["name"], context)
             try:
                 result = one(t)
+            except LoadFailed as exc:  # smallest contexts go first: the rest would not load either
+                logger.warning(f"Benchmark {t['preset']}: {exc}")
+                done[context] = {"error": str(exc)[:300]}
+                break
             except Exception as exc:
                 logger.warning(f"Benchmark {t['preset']}: {exc}")
-                done[context] = {"error": str(exc)[:200]}
+                done[context] = {"error": str(exc)[:300]}
                 continue
             with SessionLocal() as session:
                 m = db.get_model(session, model_id)
@@ -113,7 +139,9 @@ def run(model_id: str, force: bool = False) -> dict:
             logger.info(f"Benchmark {t['preset']}: {result}")
         if before and todo and (back := registry.preset_info(before[0])) and back["row"]["role"] == "chat":
             loading.ensure_loaded(loading.target(back["model"], back["context"], back["vision"]), for_chat=False)
-        _status(model=row["name"], model_id=model_id, state="done", results={str(k): v for k, v in done.items()})
+        errors = [v["error"] for v in done.values() if "error" in v]
+        _status(model=row["name"], model_id=model_id, state="failed" if errors and len(errors) == len(done) else "done",
+                results={str(k): v for k, v in done.items()}, error=errors[0] if errors else None)
         return {"results": done}
     except Exception as exc:
         _status(model_id=model_id, state="failed", error=str(exc)[:300])

@@ -200,7 +200,7 @@ def chat_models() -> list[dict]:
     lists except the embedder and the vision preset (images go there by themselves); elsewhere (a hosted API lists
     everything it has), the configured chat model and the reasoning ones.
     """
-    if rows := [r for r in _registry() if r["role"] == "chat" and r["enabled"]]:
+    if rows := [r for r in _registry() if r["role"] == "chat" and r["enabled"] and r.get("complete", True)]:
         return registry_chat_models(rows)
     thinking, vision = reasoning_models(), vision_model()
     hidden = {embed_model(), vision}
