@@ -1,4 +1,5 @@
 import type { Device, ModelContext } from '../../api/queries/chats'
+import type { Placement } from '../../api/queries/modelRegistry'
 
 /** 8192 -> "8k" */
 export const tokens = (n: number) => (n >= 1000 ? `${Math.round(n / 1024) || Math.round(n / 1000)}k` : String(n))
@@ -36,3 +37,10 @@ export function contextHint(n: number) {
 }
 
 export const seconds = (s: number) => (s < 10 ? `${s.toFixed(1)} s` : `${Math.round(s)} s`)
+
+/** Where a registered model loads, as the admin picks it */
+export const PLACEMENTS: { value: Placement; label: string; title: string }[] = [
+  { value: 'auto', label: 'Auto', title: 'llama.cpp puts as many layers on the GPU as fit, the rest on the CPU' },
+  { value: 'gpu', label: 'GPU', title: 'Every layer on the GPU, even if it is tight' },
+  { value: 'cpu', label: 'CPU', title: 'All on the CPU: slower, but it stays loaded beside the GPU model' },
+]

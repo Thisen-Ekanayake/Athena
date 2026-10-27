@@ -12,6 +12,7 @@ import { timeAgo } from '../components/items/format'
 import { SyncLog } from '../components/layout/SyncLog'
 import { useStartSync } from '../api/queries/sync'
 import { SharingSettings } from '../features/evolution/SharingSettings'
+import { ModelRegistryCard } from '../features/settings/ModelRegistryCard'
 import { ModelsCard } from '../features/settings/ModelsCard'
 import { FeedMixSettings } from '../features/settings/FeedMixSettings'
 import { ScoringSettings } from '../features/settings/ScoringSettings'
@@ -361,8 +362,15 @@ function KeysSection() {
     <section className="grid gap-8">
       <div>
         <SectionTitle
+          title="Model registry"
+          description="The GGUF files the local model server runs. Add one from a folder on this machine; Athena reads what it can do, works out whether each context size loads on the GPU, splits with the CPU or runs on the CPU, and measures its speed. Users pick the model and context in the chat box."
+        />
+        <ModelRegistryCard />
+      </div>
+      <div>
+        <SectionTitle
           title="Models"
-          description="Every AI feature talks to an OpenAI-compatible server. By default that is the local llama-server router (config/llama-router.ini); point it at OpenAI or another provider to switch. Values saved here override your environment file; leave a field empty to use the default shown."
+          description="Every AI feature talks to an OpenAI-compatible server. By default that is the local llama-server router, serving the registry above; point it at OpenAI or another provider to switch. The model names here are the registry's. Values saved here override your environment file; leave a field empty to use the default shown."
         />
         <ModelsCard />
       </div>
