@@ -23,7 +23,7 @@ const message = (m: Partial<ChatMessage>): ChatMessage => ({
 })
 
 const CHAT: Chat = {
-  id: 'c1', title: 'LoRA questions', project_id: 'p1', project_name: 'Thesis', model: 'qwen3.5-9b', effort: 'medium',
+  id: 'c1', title: 'LoRA questions', project_id: 'p1', project_name: 'Thesis', model: 'qwen3.5-9b', effort: 'medium', pinned: false, archived: false,
   created_at: '2026-10-24T10:00:00Z', updated_at: '2026-10-24T10:01:00Z', files: [],
   artifacts: [{ id: 'a1', title: 'Related work', version: 2, project_id: 'p1', conversation_id: 'c1', index_status: 'indexed', created_at: '', updated_at: '', chars: 40 }],
   messages: [

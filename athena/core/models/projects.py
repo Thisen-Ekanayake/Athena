@@ -53,7 +53,8 @@ class ProjectItem(Base):
 
 
 class Conversation(Base):
-    """A chat. ``model`` and ``effort`` are the last ones used, which the next message starts from."""
+    """A chat. ``model`` and ``effort`` are the last ones used, which the next message starts from. A pinned chat
+    lists first; an archived one leaves the lists until it is unarchived."""
     __tablename__ = "conversations"
     __table_args__ = (Index("ix_conversations_user_updated", "user_id", "updated_at"),)
 
@@ -64,6 +65,8 @@ class Conversation(Base):
     title = Column(String, nullable=False, default="New chat")
     model = Column(String, nullable=True)
     effort = Column(String, nullable=True)           # off | low | medium | high
+    pinned_at = Column(DateTime(timezone=True), nullable=True)
+    archived_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

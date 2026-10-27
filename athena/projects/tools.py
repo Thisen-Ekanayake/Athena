@@ -15,6 +15,7 @@ from loguru import logger
 
 SEARCH_RESULTS = 8
 LOCAL_RESULTS = 4         # the rest of the results come from Semantic Scholar and arXiv
+LOCAL_FLOOR = 0.6         # library hits below this similarity are off topic (relevant ones score 0.6-0.8)
 SEARCHES_PER_TURN = 2     # the 9B otherwise repeats a search with small changes to the query
 MAP_PASSAGES = 8
 EXCERPT = 500
@@ -103,14 +104,17 @@ def execute(ctx: Context, name: str, raw_args: str | dict) -> tuple[str, dict]:
     try:
         return handler(ctx, args)
     except ToolError as exc:
-        return f"Error: {exc}", {"ok": False, "summary": str(exc)}
+        return f"Error: {exc}{exc.more}", {"ok": False, "summary": str(exc)}
     except Exception as exc:
         logger.warning(f"Chat tool {name} failed: {exc}")
         return f"Error: the tool failed ({str(exc)[:200]}).", {"ok": False, "summary": "The tool failed"}
 
 
 class ToolError(Exception):
-    pass
+    """A tool call the model can correct; ``more`` goes to the model only, not into the step's summary."""
+    def __init__(self, message: str, more: str = ""):
+        super().__init__(message)
+        self.more = more
 
 
 def _session():
@@ -124,7 +128,7 @@ def _session():
 def search_papers(ctx: Context, args: dict) -> tuple[str, dict]:
     from athena.search.arxiv_live import search_arxiv
     from athena.search.local import search_local
-    from athena.search.merger import merge_results
+    from athena.search.merger import _normalise_title, interleave, merge_results
     from athena.search.semantic_scholar import search_semantic_scholar
 
     query = str(args.get("query") or "").strip()
@@ -133,9 +137,11 @@ def search_papers(ctx: Context, args: dict) -> tuple[str, dict]:
     if ctx.searches >= SEARCHES_PER_TURN:
         raise ToolError("you have searched enough for this answer; answer with the papers already found")
     ctx.searches += 1
-    local = search_local(query, limit=LOCAL_RESULTS)
-    live = search_semantic_scholar(query, limit=10) + search_arxiv(query, limit=10)
-    found = merge_results(local, live, max_total=SEARCH_RESULTS)
+    words = set(_normalise_title(query).split())
+    local = [p for p in search_local(query, limit=LOCAL_RESULTS)
+             if (p.get("score") or 0) >= LOCAL_FLOOR or words <= set(_normalise_title(p.get("title")).split())]
+    live = interleave(search_semantic_scholar(query, limit=10), search_arxiv(query, limit=10))
+    found = merge_results(local, live, max_total=SEARCH_RESULTS, keep_order=True)
     in_project = _project_refs(ctx)
     results, lines = [], []
     for p in found:
@@ -169,6 +175,23 @@ def _project_refs(ctx: Context) -> set[str]:
 # ── maps ─────────────────────────────────────────────────────────────
 
 
+MAPS_LISTED = 40
+
+
+def ready_maps(session) -> list[str]:
+    """One line per built map, for the system prompt and for a failed lookup: "Name (slug): description"."""
+    from sqlalchemy import select
+
+    from athena.core.models import EvoTopic
+    topics = session.execute(select(EvoTopic).where(EvoTopic.built_at.isnot(None))
+                             .order_by(EvoTopic.name)).scalars().all()
+    lines = [f"{t.name} ({t.slug})" + (f": {t.description[:160]}" if t.description else "")
+             for t in topics[:MAPS_LISTED]]
+    if len(topics) > MAPS_LISTED:
+        lines.append(f"…and {len(topics) - MAPS_LISTED} more; query_map also finds a map by a topic's name")
+    return lines
+
+
 def _find_map(session, name: str):
     from sqlalchemy import func, select
 
@@ -179,7 +202,9 @@ def _find_map(session, name: str):
         select(EvoTopic).where(func.lower(EvoTopic.name) == name.lower())).scalars().first() \
         or evo.find_topic(session, name)
     if topic is None:
-        raise ToolError(f"no map called {name!r}")
+        maps = ready_maps(session)
+        raise ToolError(f"no map called {name!r}", "; the maps are:\n" + "\n".join(f"- {m}" for m in maps)
+                        if maps else "; there are no maps yet")
     if topic.built_at is None:
         raise ToolError(f"the map {topic.name} is not built yet")
     return topic

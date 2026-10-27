@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Check, FolderInput, FolderKanban, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import { Archive, ArchiveRestore, Check, FolderInput, FolderKanban, MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from 'lucide-react'
 import { apiErrorMessage } from '../api/error'
 import { createChat, useChat, useDeleteChat, useUpdateChat, type Chat } from '../api/queries/chats'
 import { uploadChatFiles, useProject, useProjects } from '../api/queries/projects'
@@ -124,6 +124,16 @@ function ChatHeader({ chat }: { chat: Chat }) {
               setRenaming(true)
               close()
             }}><Pencil className="h-3.5 w-3.5 text-fg-3" aria-hidden="true" />Rename</button>
+            {!chat.archived && (
+              <button type="button" className="flex items-center gap-2 px-3 py-1.5 text-left hover:bg-surface-2" onClick={() => {
+                update.mutate({ id: chat.id, pinned: !chat.pinned })
+                close()
+              }}>{chat.pinned ? <PinOff className="h-3.5 w-3.5 text-fg-3" aria-hidden="true" /> : <Pin className="h-3.5 w-3.5 text-fg-3" aria-hidden="true" />}{chat.pinned ? 'Unpin' : 'Pin'}</button>
+            )}
+            <button type="button" className="flex items-center gap-2 px-3 py-1.5 text-left hover:bg-surface-2" onClick={() => {
+              update.mutate({ id: chat.id, archived: !chat.archived })
+              close()
+            }}>{chat.archived ? <ArchiveRestore className="h-3.5 w-3.5 text-fg-3" aria-hidden="true" /> : <Archive className="h-3.5 w-3.5 text-fg-3" aria-hidden="true" />}{chat.archived ? 'Unarchive' : 'Archive'}</button>
             <p className="mt-1 flex items-center gap-2 border-t border-line px-3 pt-2 pb-1 text-[12px] text-fg-3"><FolderInput className="h-3.5 w-3.5" aria-hidden="true" />Move to</p>
             <div className="max-h-48 overflow-y-auto">
               {[{ id: null as string | null, name: 'No project' }, ...(projects.data ?? [])].map((p) => (

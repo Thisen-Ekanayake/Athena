@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
-  BookOpen, FileText, GitBranch, Image as ImageIcon, Lightbulb, Library, MessageSquare, MoreHorizontal, NotebookPen,
+  BookOpen, FileText, GitBranch, Image as ImageIcon, Lightbulb, Library, MessageSquare, MoreHorizontal, NotebookPen, Pin,
   Plus, RefreshCw, ScrollText, Upload, X,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { apiErrorMessage } from '../api/error'
 import { useCreateArtifact } from '../api/queries/artifacts'
-import { createChat } from '../api/queries/chats'
+import { createChat, type ChatSummary } from '../api/queries/chats'
 import {
   fileUrl, uploadChatFiles, useDeleteFile, useDeleteProject, useProject, useReindexProject, useRemoveFromProject,
   useUpdateProject, useUploadProjectFiles, type IndexStatus, type ItemKind, type Project,
@@ -22,6 +22,7 @@ import { Spinner } from '../ui/Spinner'
 import { cn } from '../ui/cn'
 import { inputClass } from '../ui/inputClass'
 import { ArtifactPanel } from '../features/chat/ArtifactPanel'
+import { ChatActions, HIDE_ON_HOVER, RenameField, SHOW_ON_HOVER } from '../features/chat/ChatActions'
 import { Composer, type Outgoing } from '../features/chat/Composer'
 import { AddKnowledge } from '../features/projects/AddKnowledge'
 
@@ -224,6 +225,33 @@ function Artifacts({ project, onOpen }: { project: Project; onOpen: (id: string)
   )
 }
 
+/** One of the project's chats. Hovered, its menu (rename, archive, delete) and pin take the date's place. */
+function ChatRow({ chat }: { chat: ChatSummary }) {
+  const [renaming, setRenaming] = useState(false)
+  return (
+    <li className="group flex h-12 items-center gap-3 pr-3 hover:bg-surface-2">
+      {renaming ? (
+        <span className="flex flex-1 items-center gap-3 pl-4">
+          <MessageSquare className="h-4 w-4 shrink-0 text-fg-3" aria-hidden="true" />
+          <RenameField chat={chat} onDone={() => setRenaming(false)} className="h-8 text-[13.5px]" />
+        </span>
+      ) : (
+        <Link to={`/chats/${chat.id}`} className="flex h-full min-w-0 flex-1 items-center gap-3 pl-4">
+          <MessageSquare className="h-4 w-4 shrink-0 text-fg-3" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate text-[13.5px] text-fg">{chat.title}</span>
+          {chat.pinned && <Pin className="h-3 w-3 shrink-0 text-fg-3" aria-label="Pinned" />}
+          <span className={cn('shrink-0 text-[12px] text-fg-3', HIDE_ON_HOVER)}>{formatDistanceToNow(new Date(chat.updated_at), { addSuffix: true })}</span>
+        </Link>
+      )}
+      {!renaming && (
+        <span className={cn('shrink-0 items-center gap-0.5', SHOW_ON_HOVER)}>
+          <ChatActions chat={chat} size="md" align="end" onRename={() => setRenaming(true)} />
+        </span>
+      )}
+    </li>
+  )
+}
+
 /** A project: start a chat in it, its chats, and on the side its instructions, knowledge and artifacts. */
 export function ProjectPage() {
   const { id } = useParams()
@@ -264,16 +292,8 @@ export function ProjectPage() {
           {error && <Notice tone="error" title="Not started">{error}</Notice>}
           <Composer onSend={start} streaming={busy} placeholder={`Start a chat in ${p.name}…`} />
           {p.chats.length > 0 ? (
-            <ul className="grid divide-y divide-line rounded-xl border border-line bg-surface">
-              {p.chats.map((c) => (
-                <li key={c.id}>
-                  <Link to={`/chats/${c.id}`} className="flex items-center gap-3 px-4 py-3 hover:bg-surface-2">
-                    <MessageSquare className="h-4 w-4 shrink-0 text-fg-3" aria-hidden="true" />
-                    <span className="min-w-0 flex-1 truncate text-[13.5px] text-fg">{c.title}</span>
-                    <span className="shrink-0 text-[12px] text-fg-3">{formatDistanceToNow(new Date(c.updated_at), { addSuffix: true })}</span>
-                  </Link>
-                </li>
-              ))}
+            <ul className="grid divide-y divide-line overflow-hidden rounded-xl border border-line bg-surface">
+              {p.chats.map((c) => <ChatRow key={c.id} chat={c} />)}
             </ul>
           ) : (
             <p className="px-1 text-[13px] text-fg-3">No chats in this project yet. Ask something above; the answer will draw on what you add on the right.</p>

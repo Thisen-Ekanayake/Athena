@@ -20,6 +20,7 @@ passages and files, then as many earlier turns as fit.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -38,12 +39,22 @@ TITLE_SCHEMA = {"type": "object", "properties": {"title": {"type": "string"}}, "
 SYSTEM = (
     "You are Athena, a research assistant for AI and machine learning research. Today is {today}.\n\n"
     "Answer clearly and concisely, in Markdown. When numbered sources are given, cite them for every claim that "
-    "comes from them as [n]; never invent a citation, and say so plainly when the sources do not answer the "
-    "question.\n\n"
+    "comes from them as [n], at the end of the sentence or bullet it supports (not gathered at the end of the "
+    "answer); never invent a citation, and say so plainly when the sources do not answer the question.\n\n"
     "Tools: search_papers finds papers (Athena's library, Semantic Scholar, arXiv); query_map asks one of Athena's "
     "research maps; write_artifact creates a document the user keeps (use it for drafts, sections, tables or notes "
     "they ask for, then say in one or two sentences what you wrote instead of repeating it); read_artifact and "
-    "edit_artifact change an existing one. Only call a tool when it helps answer.")
+    "edit_artifact change an existing one.\n\n"
+    "For a question about a research topic, field, method or paper, call a tool before you answer, without asking "
+    "first: query_map when one of the maps below covers it (the list only names the maps; what is in them comes "
+    "from query_map), search_papers otherwise. Answer from what they return. Never answer a research question "
+    "from memory alone; if the tools find nothing, say so and say that what follows is not drawn from sources. "
+    "Greetings, questions about you and follow-ups the conversation already answers need no tool.")
+
+MAPS = """
+
+Athena's research maps (query_map takes the name or the slug in brackets):
+{maps}"""
 
 PROJECT = """
 You are working in the user's project "{name}".{description}
@@ -83,11 +94,13 @@ class Turn:
     model: str
     effort: str
     first_turn: bool
+    maps: list[str] = field(default_factory=list)  # the built research maps (athena.projects.tools.ready_maps)
     events: list[dict] = field(default_factory=list)
 
 
 def system_prompt(turn: Turn) -> str:
     text = SYSTEM.format(today=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    text += MAPS.format(maps="\n".join(f"- {m}" for m in turn.maps) or "(none yet)")
     if turn.project_id:
         catalog = "\n".join(turn.catalog[:60]) or "(nothing yet)"
         if len(turn.catalog) > 60:
@@ -124,6 +137,17 @@ def user_content(turn: Turn, passages: list[dict], budget: int, image_urls: dict
         return text, notices
     return [{"type": "image_url", "image_url": {"url": image_urls[a["id"]]}} for a in images] + \
         [{"type": "text", "text": text}], notices
+
+
+CITATION = re.compile(r" ?\[(\d+)\](?![(:])")
+
+
+def drop_unknown_citations(text: str, sources: int) -> str:
+    """The answer without [n] markers that point at no source (the model made them up), outside code."""
+    def clean(part: str) -> str:
+        return CITATION.sub(lambda m: m.group(0) if 1 <= int(m.group(1)) <= sources else "", part)
+    parts = re.split(r"(```.*?```|`[^`\n]*`)", text, flags=re.S)
+    return "".join(p if i % 2 else clean(p) for i, p in enumerate(parts))
 
 
 def fit_history(history: list[dict], budget: int) -> list[dict]:
@@ -260,7 +284,7 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
                 reasoning_ms += int((time.monotonic() - think_started) * 1000)
             text = "".join(text_parts)
             if text.strip():
-                content_parts.append(text)
+                content_parts.append(text.strip())
             if not calls:
                 break
             messages.append({"role": "assistant", "content": text or None, "tool_calls": [
@@ -295,7 +319,7 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
         status, error = "failed", f"The model did not answer: {str(exc)[:300]}"
         yield {"type": "error", "message": error}
     finally:
-        answer = "\n\n".join(content_parts)
+        answer = drop_unknown_citations("\n\n".join(content_parts), len(ctx.sources))
         prompt_tokens = counted_in or estimate
         output_tokens = counted_out or tokens(answer + "".join(reasoning_parts))
         fields = {"content": answer, "reasoning": "".join(reasoning_parts) or None,

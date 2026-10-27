@@ -1,15 +1,19 @@
-import { Link, NavLink, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, NavLink, useMatch, useNavigate } from 'react-router-dom'
 import {
-  FolderKanban, GitBranch, House, Layers, Library, LogOut, MessageSquare, Newspaper, Settings, SquarePen, TrendingUp,
-  type LucideIcon,
+  ChevronRight, FolderKanban, GitBranch, House, Layers, Library, LogOut, MessageSquare, Newspaper, Pin, Settings, SquarePen,
+  TrendingUp, type LucideIcon,
 } from 'lucide-react'
 import { useCurrentUser, useLogout } from '../../api/queries/auth'
-import { useChats } from '../../api/queries/chats'
+import { useChats, type ChatSummary } from '../../api/queries/chats'
+import { useProjects } from '../../api/queries/projects'
 import { useChatStreams } from '../../store/chatStore'
 import { useAppStore, type Accent } from '../../store/appStore'
 import { Button } from '../../ui/Button'
+import { MarqueeText } from '../../ui/MarqueeText'
 import { OwlCoin } from '../../ui/OwlCoin'
 import { cn } from '../../ui/cn'
+import { ChatActions, HIDE_ON_HOVER, RenameField, SHOW_ON_HOVER } from '../../features/chat/ChatActions'
 import { SyncPanel } from './SyncPanel'
 
 const NAV: { to: string; label: string; icon: LucideIcon; end?: boolean }[] = [
@@ -19,11 +23,6 @@ const NAV: { to: string; label: string; icon: LucideIcon; end?: boolean }[] = [
   { to: '/clusters', label: 'Clusters', icon: Layers },
   { to: '/evolution', label: 'Evolution', icon: GitBranch },
   { to: '/library', label: 'Library', icon: Library },
-]
-
-const WORK: { to: string; label: string; icon: LucideIcon; end?: boolean }[] = [
-  { to: '/projects', label: 'Projects', icon: FolderKanban },
-  { to: '/chats', label: 'Chats', icon: MessageSquare, end: true },
 ]
 
 const RECENT_CHATS = 6
@@ -54,27 +53,89 @@ function Item({ to, label, icon: Icon, end, compact, onNavigate }: { to: string;
   )
 }
 
-/** The latest chats under the Chats link; one being answered shows a pulse. Hidden when the sidebar is icons. */
+const subRow = (active: boolean) =>
+  cn('group flex h-7 items-center rounded-md text-[12.5px] transition-colors', active ? 'bg-surface-2 text-fg' : 'text-fg-3 hover:bg-surface-2/70 hover:text-fg-2')
+
+/** The Projects link, with a chevron that lists the projects under it. The choice is remembered. */
+function ProjectsNav({ compact, onNavigate }: { compact: boolean; onNavigate?: () => void }) {
+  const open = useAppStore((s) => s.projectsOpen)
+  const setOpen = useAppStore((s) => s.setProjectsOpen)
+  const projects = useProjects()
+  return (
+    <>
+      <div className="relative">
+        <Item to="/projects" label="Projects" icon={FolderKanban} end={open} compact={compact} onNavigate={onNavigate} />
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          aria-controls="sidebar-projects"
+          aria-label={open ? 'Hide projects' : 'Show projects'}
+          title={open ? 'Hide projects' : 'Show projects'}
+          className={cn('absolute top-1/2 right-1 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-3 hover:bg-surface-2 hover:text-fg', compact && 'max-lg:hidden')}
+        >
+          <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')} aria-hidden="true" />
+        </button>
+      </div>
+      {open && (
+        <ul id="sidebar-projects" className={cn('grid grid-cols-1 gap-px pl-[26px]', compact && 'max-lg:hidden')} aria-label="Projects">
+          {projects.data?.length ? projects.data.map((p) => <ProjectRow key={p.id} id={p.id} name={p.name} onNavigate={onNavigate} />) : (
+            <li className="flex h-7 items-center px-2 text-[12.5px] text-fg-3">{projects.isLoading ? 'Loading…' : 'No projects yet'}</li>
+          )}
+        </ul>
+      )}
+    </>
+  )
+}
+
+function ProjectRow({ id, name, onNavigate }: { id: string; name: string; onNavigate?: () => void }) {
+  const [hover, setHover] = useState(false)
+  const active = !!useMatch(`/projects/${id}`)
+  return (
+    <li onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      <NavLink to={`/projects/${id}`} onClick={onNavigate} className={cn(subRow(active), 'px-2')}>
+        <MarqueeText text={name} active={hover} className="min-w-0 flex-1" />
+      </NavLink>
+    </li>
+  )
+}
+
+/** The latest chats under the Chats link, pinned first; one being answered shows a pulse. Hidden when the sidebar is icons. */
 function RecentChats({ compact, onNavigate }: { compact: boolean; onNavigate?: () => void }) {
   const chats = useChats({ limit: RECENT_CHATS })
   const drafts = useChatStreams((s) => s.drafts)
   if (!chats.data?.length) return null
   return (
-    <ul className={cn('grid gap-px pl-[26px]', compact && 'max-lg:hidden')} aria-label="Recent chats">
-      {chats.data.map((c) => (
-        <li key={c.id}>
-          <NavLink
-            to={`/chats/${c.id}`}
-            onClick={onNavigate}
-            title={c.title}
-            className={({ isActive }) => cn('flex h-7 items-center gap-1.5 rounded-md px-2 text-[12.5px] transition-colors', isActive ? 'bg-surface-2 text-fg' : 'text-fg-3 hover:bg-surface-2/70 hover:text-fg-2')}
-          >
-            <span className="min-w-0 flex-1 truncate">{c.title}</span>
-            {drafts[c.id]?.streaming && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" aria-label="Answering" />}
-          </NavLink>
-        </li>
-      ))}
+    <ul className={cn('grid grid-cols-1 gap-px pl-[26px]', compact && 'max-lg:hidden')} aria-label="Recent chats">
+      {chats.data.map((c) => <ChatRow key={c.id} chat={c} streaming={!!drafts[c.id]?.streaming} onNavigate={onNavigate} />)}
     </ul>
+  )
+}
+
+/**
+ * One chat in the sidebar. Hovered, its title scrolls when too long and it shows a menu (rename, archive, delete) and
+ * a pin. A pinned chat keeps a small pin.
+ */
+function ChatRow({ chat, streaming, onNavigate }: { chat: ChatSummary; streaming: boolean; onNavigate?: () => void }) {
+  const [hover, setHover] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const active = !!useMatch(`/chats/${chat.id}`)
+  const navigate = useNavigate()
+
+  if (renaming) {
+    return <li><RenameField chat={chat} onDone={() => setRenaming(false)} className="h-7 text-[12.5px]" /></li>
+  }
+  return (
+    <li onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} className={subRow(active)}>
+      <NavLink to={`/chats/${chat.id}`} onClick={onNavigate} className="flex h-full min-w-0 flex-1 items-center gap-1.5 pr-1 pl-2">
+        <MarqueeText text={chat.title} active={hover} className="min-w-0 flex-1" />
+        {streaming && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" aria-label="Answering" />}
+        {chat.pinned && <Pin className={cn('h-3 w-3 shrink-0 text-fg-3', HIDE_ON_HOVER)} aria-label="Pinned" />}
+      </NavLink>
+      <div className={cn('shrink-0 items-center pr-0.5', SHOW_ON_HOVER)}>
+        <ChatActions chat={chat} onRename={() => setRenaming(true)} onDeleted={() => active && navigate('/chats')} />
+      </div>
+    </li>
   )
 }
 
@@ -136,8 +197,13 @@ export function Sidebar({ compact = true, onNavigate, className }: { compact?: b
       <nav className="grid gap-0.5" aria-label="Main">
         {NAV.map((n) => <Item key={n.to} {...n} compact={compact} onNavigate={onNavigate} />)}
       </nav>
-      <nav className="-mt-2 grid min-h-0 gap-0.5 overflow-y-auto border-t border-line pt-3" aria-label="Your work">
-        {WORK.map((n) => <Item key={n.to} {...n} compact={compact} onNavigate={onNavigate} />)}
+      {/* Scrolls when the lists are long, without a scrollbar */}
+      <nav
+        className="-mt-2 grid min-h-0 grid-cols-1 content-start gap-0.5 overflow-x-hidden overflow-y-auto border-t border-line pt-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        aria-label="Your work"
+      >
+        <ProjectsNav compact={compact} onNavigate={onNavigate} />
+        <Item to="/chats" label="Chats" icon={MessageSquare} end compact={compact} onNavigate={onNavigate} />
         <RecentChats compact={compact} onNavigate={onNavigate} />
       </nav>
       <div className="mt-auto grid min-w-0 grid-cols-1 gap-2">

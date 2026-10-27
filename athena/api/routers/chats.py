@@ -2,10 +2,12 @@
 Chats with the local models, alone or in a project, and the artifacts they write (athena.projects).
 
 GET    /api/v1/chat/models                       — the models a chat may pick, which ones think, the effort levels
-GET    /api/v1/chats?project_id=&standalone=&q=  — yours, most recent first
+GET    /api/v1/chats?project_id=&standalone=&q=&archived=
+                                                 — yours, pinned first then most recent; archived=true: only those
 POST   /api/v1/chats                             — {project_id?, model?, effort?}
 GET    /api/v1/chats/{id}                        — the chat with its messages, files and artifacts
-PATCH  /api/v1/chats/{id}                        — {title} and/or {project_id} (null: out of its project)
+PATCH  /api/v1/chats/{id}                        — {title}, {project_id} (null: out of its project), {pinned},
+                                                   {archived}; any of them
 DELETE /api/v1/chats/{id}
 POST   /api/v1/chats/{id}/files                  — attach files to the next message (multipart)
 POST   /api/v1/chats/{id}/messages               — send one, streamed as server-sent events (athena.projects.chat);
@@ -60,6 +62,8 @@ class ChatCreate(BaseModel):
 class ChatUpdate(BaseModel):
     title: str | None = Field(None, min_length=1, max_length=120)
     project_id: UUID | None = None
+    pinned: bool | None = None
+    archived: bool | None = None
 
 
 class MessageSend(BaseModel):
@@ -137,9 +141,10 @@ def chat_models(user: User = Depends(auth.active_user)):
 
 @router.get("/chats")
 def list_chats(project_id: UUID | None = None, standalone: bool = False, q: str | None = None, limit: int = 50,
-               session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
+               archived: bool = False, session: Session = Depends(get_db), user: User = Depends(auth.active_user)):
     return {"chats": db.list_conversations(session, user.id, project_id=project_id, standalone=standalone,
-                                           limit=max(1, min(limit, 500)), query=(q or "").strip() or None)}
+                                           limit=max(1, min(limit, 500)), query=(q or "").strip() or None,
+                                           archived=archived)}
 
 
 @router.post("/chats", status_code=201)
@@ -169,6 +174,8 @@ def update_chat(chat_id: UUID, body: ChatUpdate, session: Session = Depends(get_
     if body.title:
         c.title = body.title.strip()
         session.commit()
+    if body.pinned is not None or body.archived is not None:
+        db.mark_conversation(session, c, pinned=body.pinned, archived=body.archived)
     if "project_id" in body.model_fields_set and body.project_id != c.project_id:
         old = c.project_id
         project = _own_project(session, body.project_id, user)
@@ -280,7 +287,7 @@ async def send_message(chat_id: UUID, body: MessageSend, session: Session = Depe
                    db.artifacts_of(session, user.id, project_id=project.id if project else None,
                                    conversation_id=None if project else c.id)],
         history=_history(history), question=question, attachments=[_attachment(f) for f in files], model=model,
-        effort=effort, first_turn=first_turn)
+        effort=effort, first_turn=first_turn, maps=tools.ready_maps(session))
     reply_id, title_wanted = reply.id, first_turn and c.title == "New chat"
 
     def retrieve(q: str):
