@@ -36,6 +36,12 @@ function GpuBar({ gpu, margin }: { gpu: GpuInfo; margin: number }) {
         <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-surface-3 ring-1 ring-line" />Free {megabytes(free)}</span>
         <span>{megabytes(margin)} kept free for the desktop</span>
       </p>
+      {gpu.stray && gpu.stray.length > 0 && (
+        <Notice tone="warn" title="A llama-server outside Athena’s routers holds GPU memory">
+          {gpu.stray.map((p) => `pid ${p.pid} (${megabytes(p.mb)})`).join(', ')}. Until it stops, models load on the CPU. It is
+          usually an old server still shutting down; if it stays, stop it with <code>kill {gpu.stray.map((p) => p.pid).join(' ')}</code>.
+        </Notice>
+      )}
     </div>
   )
 }

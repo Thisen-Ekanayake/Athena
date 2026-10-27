@@ -75,6 +75,8 @@ export interface GpuInfo {
   used_mb: number
   llama_mb: number
   others_mb: number
+  /** llama-server processes no router runs, holding VRAM a router cannot free */
+  stray?: { pid: number; mb: number }[]
   available_mb: number
 }
 
