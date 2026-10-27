@@ -11,6 +11,9 @@ interface AppState {
   /** The sidebar lists the projects under the Projects link */
   projectsOpen: boolean
   setProjectsOpen: (open: boolean) => void
+  /** The sidebar lists the latest chats under the Chats link */
+  chatsOpen: boolean
+  setChatsOpen: (open: boolean) => void
 }
 
 /** The CSS reads the accent from <html data-accent>. Set it right away so canvases built next see the new colours. */
@@ -30,6 +33,8 @@ export const useAppStore = create<AppState>()(
       setCategory: (category) => set({ currentCategory: category }),
       projectsOpen: false,
       setProjectsOpen: (open) => set({ projectsOpen: open }),
+      chatsOpen: false,
+      setChatsOpen: (open) => set({ chatsOpen: open }),
     }),
     {
       name: 'athena-storage',
@@ -37,7 +42,7 @@ export const useAppStore = create<AppState>()(
       // Earlier versions stored a light/dark theme and a view mode; keep only what still exists.
       migrate: (persisted) => {
         const old = (persisted ?? {}) as Partial<AppState>
-        return { accent: old.accent ?? 'gold', currentCategory: old.currentCategory ?? null, projectsOpen: false } as AppState
+        return { accent: old.accent ?? 'gold', currentCategory: old.currentCategory ?? null, projectsOpen: false, chatsOpen: false } as AppState
       },
       onRehydrateStorage: () => (state) => {
         if (state) applyAccent(state.accent)

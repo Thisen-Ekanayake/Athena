@@ -100,13 +100,40 @@ function ProjectRow({ id, name, onNavigate }: { id: string; name: string; onNavi
   )
 }
 
+/** The Chats link, with a chevron that lists the latest chats under it (hidden until opened). The choice is remembered. */
+function ChatsNav({ compact, onNavigate }: { compact: boolean; onNavigate?: () => void }) {
+  const open = useAppStore((s) => s.chatsOpen)
+  const setOpen = useAppStore((s) => s.setChatsOpen)
+  return (
+    <>
+      <div className="relative">
+        <Item to="/chats" label="Chats" icon={MessageSquare} end compact={compact} onNavigate={onNavigate} />
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          aria-controls="sidebar-chats"
+          aria-label={open ? 'Hide chats' : 'Show chats'}
+          title={open ? 'Hide chats' : 'Show chats'}
+          className={cn('absolute top-1/2 right-1 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-3 hover:bg-surface-2 hover:text-fg', compact && 'max-lg:hidden')}
+        >
+          <ChevronRight className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-90')} aria-hidden="true" />
+        </button>
+      </div>
+      {open && <RecentChats compact={compact} onNavigate={onNavigate} />}
+    </>
+  )
+}
+
 /** The latest chats under the Chats link, pinned first; one being answered shows a pulse. Hidden when the sidebar is icons. */
 function RecentChats({ compact, onNavigate }: { compact: boolean; onNavigate?: () => void }) {
   const chats = useChats({ limit: RECENT_CHATS })
   const drafts = useChatStreams((s) => s.drafts)
-  if (!chats.data?.length) return null
+  if (!chats.data?.length) {
+    return <p id="sidebar-chats" className={cn('flex h-7 items-center pl-[34px] text-[12.5px] text-fg-3', compact && 'max-lg:hidden')}>{chats.isLoading ? 'Loading…' : 'No chats yet'}</p>
+  }
   return (
-    <ul className={cn('grid grid-cols-1 gap-px pl-[26px]', compact && 'max-lg:hidden')} aria-label="Recent chats">
+    <ul id="sidebar-chats" className={cn('grid grid-cols-1 gap-px pl-[26px]', compact && 'max-lg:hidden')} aria-label="Recent chats">
       {chats.data.map((c) => <ChatRow key={c.id} chat={c} streaming={!!drafts[c.id]?.streaming} onNavigate={onNavigate} />)}
     </ul>
   )
@@ -203,8 +230,7 @@ export function Sidebar({ compact = true, onNavigate, className }: { compact?: b
         aria-label="Your work"
       >
         <ProjectsNav compact={compact} onNavigate={onNavigate} />
-        <Item to="/chats" label="Chats" icon={MessageSquare} end compact={compact} onNavigate={onNavigate} />
-        <RecentChats compact={compact} onNavigate={onNavigate} />
+        <ChatsNav compact={compact} onNavigate={onNavigate} />
       </nav>
       <div className="mt-auto grid min-w-0 grid-cols-1 gap-2">
         <SyncPanel compact={compact} />

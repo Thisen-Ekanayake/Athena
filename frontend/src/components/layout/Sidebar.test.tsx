@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatSummary } from '../../api/queries/chats'
+import { useAppStore } from '../../store/appStore'
 import { mockApi, renderWithProviders } from '../../test/utils'
 import { Sidebar } from './Sidebar'
 
@@ -15,7 +16,8 @@ const PROJECT = {
   counts: { chats: 1, items: 0, files: 0, artifacts: 0 },
 }
 
-function setup(chats: ChatSummary[] = [chat({})]) {
+function setup(chats: ChatSummary[] = [chat({})], chatsOpen = true) {
+  useAppStore.setState({ chatsOpen, projectsOpen: false })
   return mockApi({
     'GET /chats': { data: { chats } },
     'GET /projects': { data: { projects: [PROJECT] } },
@@ -25,6 +27,16 @@ function setup(chats: ChatSummary[] = [chat({})]) {
 }
 
 describe('Sidebar', () => {
+  it('lists the chats under the Chats link only when opened', async () => {
+    setup([chat({})], false)
+    renderWithProviders(<Sidebar />)
+    expect(screen.queryByRole('link', { name: 'LoRA questions' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Show chats' }))
+    expect(await screen.findByRole('link', { name: 'LoRA questions' })).toHaveAttribute('href', '/chats/c1')
+    await userEvent.click(screen.getByRole('button', { name: 'Hide chats' }))
+    expect(screen.queryByRole('link', { name: 'LoRA questions' })).not.toBeInTheDocument()
+  })
+
   it('lists the projects under the Projects link when opened', async () => {
     setup()
     renderWithProviders(<Sidebar />)
