@@ -11,6 +11,7 @@ from athena.core import llm
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem
 from athena.core.redis_client import get_redis
+from athena.model_server import lane
 from athena.pipeline.preprocessing import preprocess
 from athena.pipeline.celery_app import celery_app
 
@@ -47,8 +48,11 @@ def init_qdrant():
 @celery_app.task
 def process_embedding_queue():
     """
-    Pull items from 'athena:embedding_queue' and process them in batches.
+    Pull items from 'athena:embedding_queue' and process them in batches. Skips a minute while someone chats, so
+    the router does not swap the chat model out for the embedder (athena.model_server.lane).
     """
+    if lane.chat_active():
+        return
     try:
         init_qdrant()
     except llm.EmbedSpaceMismatch as e:
@@ -117,6 +121,7 @@ def process_batch(item_ids: List[str]):
         try:
             # 1. Generate Embeddings (the client retries rate limits itself)
             model = llm.embed_model()
+            lane.yield_to_chat()
             embeddings = [vec.tolist() for vec in llm.embed(batch_texts, feature="feed_embed")]
 
             # 2. Upsert to Qdrant
