@@ -218,6 +218,7 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
     setup = plan(turn)
     estimate = tokens(turn.question)  # until the messages are built; the server's counts win
     timing = {"predicted_n": 0, "predicted_ms": 0.0, "prompt_n": 0, "prompt_ms": 0.0}
+    kept = [0, 0]  # the last call's prompt and answer tokens: what the context holds after this turn
     asked_at = first_token_at = load_ms = None
     lane.hold()
 
@@ -290,6 +291,7 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
                 if getattr(chunk, "usage", None):
                     i, o = usage.tokens_of(chunk.usage)
                     counted_in, counted_out = counted_in + i, counted_out + o
+                    kept[:] = [i, o]
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -360,7 +362,8 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
         output_tokens = counted_out or tokens(answer + "".join(reasoning_parts))
         lane.hold(30)  # a follow-up usually comes soon
         fields = {"content": answer, "reasoning": "".join(reasoning_parts) or None,
-                  "stats": turn_stats(setup["model"], timing, asked_at, first_token_at, load_ms),
+                  "stats": turn_stats(setup["model"], timing, asked_at, first_token_at, load_ms,
+                                      sum(kept) or None),
                   "reasoning_ms": reasoning_ms or None, "steps": steps, "sources": ctx.sources,
                   "artifacts": ctx.artifacts, "model": setup["model"], "effort": turn.effort, "status": status,
                   "error": error, "input_tokens": prompt_tokens, "output_tokens": output_tokens}
@@ -373,9 +376,11 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
 
 
 def turn_stats(preset: str, timing: dict, asked_at: float | None, first_token_at: float | None,
-               load_ms: int | None) -> dict | None:
+               load_ms: int | None, context_used: int | None = None) -> dict | None:
     """How the answer ran, for the message ({tps, prompt_tps, ttft_ms, load_ms, device, gpu_layers, layers,
-    context}); its speed also updates the model's measured speed (athena.model_server.stats)."""
+    context, context_used}); its speed also updates the model's measured speed (athena.model_server.stats).
+    ``context_used`` is what the context held at the end (the last call's prompt and answer), which the chat box
+    shows against the context size."""
     from athena.model_server import stats
     rates = {"predicted_n": timing["predicted_n"], "prompt_n": timing["prompt_n"]}
     if timing["predicted_ms"]:
@@ -393,7 +398,18 @@ def turn_stats(preset: str, timing: dict, asked_at: float | None, first_token_at
         out["ttft_ms"] = int((first_token_at - asked_at) * 1000)
     if load_ms:
         out["load_ms"] = load_ms
+    if context_used:
+        out["context_used"] = context_used
+        out.setdefault("context", llm_context(preset))
     return out or None
+
+
+def llm_context(preset: str) -> int | None:
+    from athena.core import llm
+    try:
+        return llm.model_context(preset)
+    except Exception:
+        return None
 
 
 def title_for(question: str, answer: str, model: str) -> str | None:

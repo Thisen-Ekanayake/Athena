@@ -403,6 +403,7 @@ def test_a_turn_thinks_writes_an_artifact_and_is_saved(env, monkeypatch, usage_r
     assert done["content"] == "I wrote a draft for you." and done["reasoning"] == "The user wants a draft. "
     assert done["status"] == "done" and done["effort"] == "medium"
     assert done["input_tokens"] == 250 and done["output_tokens"] == 30
+    assert done["stats"]["context_used"] == 160 and done["stats"]["context"] == 20480  # the last call's prompt + answer
     assert done["artifacts"][0]["title"] == "Draft"
 
     first = model.calls[0]
