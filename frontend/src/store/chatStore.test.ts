@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import type { LoadState } from '../api/queries/chats'
 import { apply, parseEvents, type Draft } from './chatStore'
 
 const draft = (): Draft => ({
-  question: 'Why?', attachments: [], retry: false, model: 'qwen3.5-9b', effort: 'low', content: '', reasoning: '',
+  question: 'Why?', attachments: [], retry: false, model: 'qwen3.5-9b', effort: 'low', loading: null, content: '', reasoning: '',
   thinkingSince: null, reasoningMs: 0, steps: [], sources: [], artifacts: [], notices: [], error: null, streaming: true,
   saved: false, messageId: null,
 })
@@ -21,6 +22,20 @@ describe('the chat stream', () => {
     expect(d.thinkingSince).toBe(1000)
     d = apply(d, { type: 'token', text: 'Because.' }, 4500)
     expect(d).toMatchObject({ reasoning: 'Hmm. Yes.', reasoningMs: 3500, thinkingSince: null, content: 'Because.', messageId: 'm1', effort: 'high' })
+  })
+
+  it('shows the model loading until the first words come', () => {
+    const state: LoadState = {
+      model: 'qwen3.5-9b', preset: 'qwen3.5-9b@32k', context: 32768, server: 'gpu', status: 'loading', progress: 0.4,
+      device: { kind: 'split', gpu: 'RTX 4060', gpu_layers: 28, layers: 33, vram_mb: 6200, ram_mb: 900 },
+      stages: [{ label: 'Ready', state: 'pending' }], eta_seconds: 3, expected_seconds: 6, elapsed_seconds: 3, other: null,
+    }
+    let d = apply(draft(), { type: 'loading', state })
+    expect(d.loading?.progress).toBe(0.4)
+    d = apply(d, { type: 'token', text: '' })
+    expect(d.loading).not.toBeNull()  // the closing empty token is not an answer
+    d = apply(d, { type: 'reasoning', text: 'Hmm.' })
+    expect(d.loading).toBeNull()
   })
 
   it('updates a tool step in place and keeps sources and artifacts', () => {

@@ -5,12 +5,14 @@ import {
   RotateCcw, Search, TriangleAlert,
 } from 'lucide-react'
 import type { ArtifactRef } from '../../api/queries/artifacts'
-import type { ChatMessage, ChatSource, SearchResult, ToolStep } from '../../api/queries/chats'
+import type { ChatMessage, ChatSource, LoadState, SearchResult, ToolStep, TurnStats } from '../../api/queries/chats'
 import { fileUrl, useAddToProject } from '../../api/queries/projects'
 import { Button } from '../../ui/Button'
 import { Spinner } from '../../ui/Spinner'
 import { cn } from '../../ui/cn'
 import { Markdown } from '../reviews/Markdown'
+import { LoadCard } from './LoadCard'
+import { DEVICE_LABEL, seconds as secs } from './modelFormat'
 
 /** An assistant turn as the page shows it: saved, or still streaming (``live``). */
 export interface AssistantTurn {
@@ -29,6 +31,22 @@ export interface AssistantTurn {
   effort: string | null
   tokens: number | null
   live: boolean
+  /** The model's load while the turn waits for it */
+  loading?: LoadState | null
+  /** How the answer ran: speed, device, time to the first token */
+  stats?: TurnStats | null
+}
+
+/** "38 tok/s · GPU · first token 0.4 s · loaded in 5.2 s" */
+function statsText(s: TurnStats | null | undefined) {
+  if (!s) return null
+  const device = s.device === 'split' && s.gpu_layers != null ? `GPU + CPU (${s.gpu_layers}/${s.layers} layers)` : s.device ? DEVICE_LABEL[s.device] : null
+  return [
+    s.tps ? `${s.tps >= 10 ? Math.round(s.tps) : s.tps} tok/s` : null,
+    device,
+    s.ttft_ms != null ? `first token ${secs(s.ttft_ms / 1000)}` : null,
+    s.load_ms ? `loaded in ${secs(s.load_ms / 1000)}` : null,
+  ].filter(Boolean).join(' · ')
 }
 
 export function UserMessage({ content, attachments }: { content: string; attachments: ChatMessage['attachments'] }) {
@@ -217,7 +235,8 @@ export function AssistantMessage({ turn, projectId, onOpenArtifact, onRetry }: {
           {turn.steps.map((s) => <Step key={s.id} step={s} projectId={projectId} />)}
         </ul>
       )}
-      {waiting && <Spinner label={turn.sources.length ? 'Reading the project…' : 'Waiting for the model…'} />}
+      {waiting && turn.loading && turn.loading.status !== 'loaded' && <LoadCard state={turn.loading} className="max-w-md" />}
+      {waiting && !(turn.loading && turn.loading.status !== 'loaded') && <Spinner label={turn.sources.length ? 'Reading the project…' : 'Waiting for the model…'} />}
       {turn.content && <Markdown text={turn.content} onCite={turn.sources.length ? cite : undefined} />}
       {turn.live && turn.content && <span className="h-3 w-1.5 animate-pulse bg-accent" aria-hidden="true" />}
       {turn.artifacts.length > 0 && (
@@ -239,6 +258,7 @@ export function AssistantMessage({ turn, projectId, onOpenArtifact, onRetry }: {
           )}
           {onRetry && <Button variant="ghost" size="icon-sm" aria-label="Answer again" title="Answer again" onClick={onRetry}><RotateCcw /></Button>}
           <span className="ml-1 font-mono">{[turn.model, turn.effort && turn.effort !== 'off' ? `${turn.effort} effort` : null, turn.tokens ? `${turn.tokens.toLocaleString()} tokens` : null].filter(Boolean).join(' · ')}</span>
+          {statsText(turn.stats) && <span className="font-mono text-fg-3/80" title="How this answer ran">· {statsText(turn.stats)}</span>}
         </div>
       )}
     </div>

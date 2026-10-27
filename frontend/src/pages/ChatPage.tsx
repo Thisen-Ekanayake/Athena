@@ -52,10 +52,10 @@ function NewChat() {
     setBusy(true)
     setError(null)
     try {
-      const chat = await createChat({ project_id: projectId, model: m.model, effort: m.effort })
+      const chat = await createChat({ project_id: projectId, model: m.model, effort: m.effort, context: m.context })
       const files = m.files.length ? await uploadChatFiles(chat.id, m.files) : []
       navigate(`/chats/${chat.id}`, { replace: true })
-      void send(chat.id, { content: m.text, model: m.model, effort: m.effort, attachment_ids: files.map((f) => f.id) },
+      void send(chat.id, { content: m.text, model: m.model, effort: m.effort, context: m.context, attachment_ids: files.map((f) => f.id) },
         { question: m.text, attachments: files.map((f) => ({ id: f.id, filename: f.filename, kind: f.kind })) })
     } catch (e) {
       setError(apiErrorMessage(e, 'The chat could not be started.'))
@@ -162,7 +162,7 @@ function ChatHeader({ chat }: { chat: Chat }) {
 const fromDraft = (d: Draft): AssistantTurn => ({
   id: 'draft', content: d.content, reasoning: d.reasoning || null, reasoningMs: d.reasoningMs, thinking: !!d.thinkingSince && d.streaming,
   steps: d.steps, sources: d.sources, artifacts: d.artifacts, notices: d.notices, status: d.streaming ? 'streaming' : d.error ? 'failed' : 'stopped',
-  error: d.error, model: d.model, effort: d.effort, tokens: null, live: d.streaming,
+  error: d.error, model: d.model, effort: d.effort, tokens: null, live: d.streaming, loading: d.loading,
 })
 
 function ChatView({ id }: { id: string }) {
@@ -210,7 +210,7 @@ function ChatView({ id }: { id: string }) {
     nearBottom.current = true  // follow the new turn, wherever the page was
     try {
       const files = m.files.length ? await uploadChatFiles(id, m.files) : []
-      void send(id, { content: m.text, model: m.model, effort: m.effort, attachment_ids: files.map((f) => f.id) },
+      void send(id, { content: m.text, model: m.model, effort: m.effort, context: m.context, attachment_ids: files.map((f) => f.id) },
         { question: m.text, attachments: files.map((f) => ({ id: f.id, filename: f.filename, kind: f.kind })) })
     } catch (e) {
       setError(apiErrorMessage(e, 'The files could not be attached.'))
@@ -219,8 +219,9 @@ function ChatView({ id }: { id: string }) {
 
   const retry = () => {
     nearBottom.current = true
-    const model = lastAssistant?.model && lastAssistant.model !== 'qwen3.5-9b-vision' ? lastAssistant.model : c.model
-    void send(id, { retry: true, model: model ?? '', effort: c.effort ?? 'low' }, { question: '' })
+    // The chat keeps the model picked; a message's own is the preset it ran on (a context or vision variant).
+    const model = c.model ?? lastAssistant?.model
+    void send(id, { retry: true, model: model ?? '', effort: c.effort ?? 'low', context: c.context }, { question: '' })
   }
 
   return (
@@ -238,7 +239,7 @@ function ChatView({ id }: { id: string }) {
             turn={{
               id: m.id, content: m.content, reasoning: m.reasoning, reasoningMs: m.reasoning_ms, thinking: false, steps: m.steps,
               sources: m.sources, artifacts: m.artifacts, notices: [], status: m.status, error: m.error, model: m.model,
-              effort: m.effort, tokens: m.input_tokens + m.output_tokens || null, live: false,
+              effort: m.effort, tokens: m.input_tokens + m.output_tokens || null, live: false, stats: m.stats,
             }}
           />
         )))}
@@ -258,7 +259,7 @@ function ChatView({ id }: { id: string }) {
           onSend={submit}
           onStop={() => stop(id)}
           streaming={streaming}
-          initial={{ model: c.model, effort: c.effort }}
+          initial={{ model: c.model, effort: c.effort, context: c.context }}
           placeholder={c.project_name ? `Ask about ${c.project_name}…` : 'Reply…'}
         />
         {c.artifacts.length > 0 && (

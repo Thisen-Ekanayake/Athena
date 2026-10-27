@@ -273,10 +273,10 @@ export function ProjectPage() {
     setBusy(true)
     setError(null)
     try {
-      const chat = await createChat({ project_id: p.id, model: m.model, effort: m.effort })
+      const chat = await createChat({ project_id: p.id, model: m.model, effort: m.effort, context: m.context })
       const files = m.files.length ? await uploadChatFiles(chat.id, m.files) : []
       navigate(`/chats/${chat.id}`)
-      void send(chat.id, { content: m.text, model: m.model, effort: m.effort, attachment_ids: files.map((f) => f.id) },
+      void send(chat.id, { content: m.text, model: m.model, effort: m.effort, context: m.context, attachment_ids: files.map((f) => f.id) },
         { question: m.text, attachments: files.map((f) => ({ id: f.id, filename: f.filename, kind: f.kind })) })
     } catch (e) {
       setError(apiErrorMessage(e, 'The chat could not be started.'))

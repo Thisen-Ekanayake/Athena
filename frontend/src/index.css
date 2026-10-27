@@ -238,6 +238,12 @@
   85%, 100% { transform: translateX(var(--marquee-shift)); }
 }
 
+/* A load bar whose length is unknown (waiting for another model): a stripe sweeps across (features/chat/LoadCard). */
+@keyframes loadslide {
+  0% { left: -33%; }
+  100% { left: 100%; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
