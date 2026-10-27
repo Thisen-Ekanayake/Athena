@@ -39,11 +39,51 @@ def _mb(value: str) -> int:
         return 0
 
 
-def gpu() -> dict | None:
-    """The first NVIDIA GPU: {name, total_mb, used_mb, llama_mb, available_mb}; None without one.
+def _router_ports() -> set[str] | None:
+    """The ports of the models Athena's routers run now (each model is a llama-server child on a port of its
+    own, which the router lists); None when no router answers, so nothing can be told apart."""
+    import httpx
 
-    ``llama_mb`` is what llama-server processes hold; ``available_mb`` is what a model may use once the router has
-    unloaded its own (total less everything else, less the margin)."""
+    from athena.core import llm
+    from athena.model_server import registry
+    ports, answered = set(), False
+    for url in (llm.chat_base_url(), registry.cpu_base_url()):
+        try:
+            resp = httpx.get(f"{llm.server_root(url)}/models", timeout=2.0)
+            resp.raise_for_status()
+        except (httpx.HTTPError, ValueError):
+            continue
+        answered = True
+        for m in resp.json().get("data") or []:
+            args = (m.get("status") or {}).get("args") or []
+            if "--port" in args and args.index("--port") + 1 < len(args):
+                ports.add(str(args[args.index("--port") + 1]))
+    return ports if answered else None
+
+
+def _managed(pid: str, ports: set[str] | None) -> bool:
+    """Whether a llama-server process is a model one of Athena's routers runs, by the port on its command line.
+    Without /proc (not Linux) or a router to ask, every one counts as managed."""
+    if ports is None:
+        return True
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            args = f.read().decode(errors="replace").split("\0")
+    except OSError:
+        return True
+    if "--models-preset" in args:
+        return True  # a router itself
+    port = args[args.index("--port") + 1] if "--port" in args and args.index("--port") + 1 < len(args) else None
+    return port is None or port in ports
+
+
+def gpu() -> dict | None:
+    """The first NVIDIA GPU: {name, total_mb, used_mb, llama_mb, others_mb, stray, available_mb}; None without one.
+
+    ``llama_mb`` is what the routers' models hold; ``available_mb`` is what a model may use once the router has
+    unloaded its own (total less everything else, less the margin). ``stray`` lists llama-server processes no
+    router started (an old server left running): their memory counts as taken, since a router cannot free it, and
+    while they hold it llama.cpp fits new models onto the CPU."""
     global _gpu_cache
     if _gpu_cache and time.monotonic() - _gpu_cache[0] < CACHE_SECONDS:
         return _gpu_cache[1]
@@ -53,16 +93,20 @@ def gpu() -> dict | None:
             rows = _smi("name,memory.total,memory.used")
             if rows:
                 name, total, used = rows[0][0], _mb(rows[0][1]), _mb(rows[0][2])
-                llama = 0
+                llama, stray = 0, []
                 try:
-                    for _pid, process, mem in _smi("pid,process_name,used_memory", "apps"):
-                        if "llama-server" in process:
+                    apps = [a for a in _smi("pid,process_name,used_memory", "apps") if "llama-server" in a[1]]
+                    ports = _router_ports() if apps else set()
+                    for pid, _process, mem in apps:
+                        if _managed(pid, ports):
                             llama += _mb(mem)
+                        else:
+                            stray.append({"pid": int(pid), "mb": _mb(mem)})
                 except Exception:  # per-process figures are missing on some drivers
                     pass
                 others = max(used - llama, 0)
                 info = {"name": name, "total_mb": total, "used_mb": used, "llama_mb": llama, "others_mb": others,
-                        "available_mb": max(total - others - MARGIN_MB, 0)}
+                        "stray": stray, "available_mb": max(total - others - MARGIN_MB, 0)}
         except Exception as exc:
             logger.info(f"No GPU figures: {exc}")
     _gpu_cache = (time.monotonic(), info)

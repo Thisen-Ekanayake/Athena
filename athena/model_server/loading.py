@@ -97,8 +97,9 @@ def expected_seconds(t: dict) -> float:
     return float(est.get("load_seconds") or fallback)
 
 
-def ensure_loaded(t: dict, timeout: float = LOAD_TIMEOUT) -> bool:
-    """Load ``t``'s preset and wait until it is ready; True when it is. Records the load time."""
+def ensure_loaded(t: dict, timeout: float = LOAD_TIMEOUT, for_chat: bool = True) -> bool:
+    """Load ``t``'s preset and wait until it is ready; True when it is. Records the load time. A load for a chat
+    keeps background work waiting (``lane``); a benchmark's does not, or it would wait for itself."""
     preset, url = t["preset"], t["url"]
     from athena.core import llm
     key = LOAD_KEY.format(preset=preset)
@@ -132,7 +133,8 @@ def ensure_loaded(t: dict, timeout: float = LOAD_TIMEOUT) -> bool:
                 logger.info(f"Loading {preset}: {exc}")
         elif preset not in listed and not listed:
             return False  # the router is not there
-        lane.hold(what=preset)
+        if for_chat:
+            lane.hold(what=preset)
         time.sleep(POLL)
     _clear(key)
     return False
@@ -179,6 +181,15 @@ def _safe_load(t: dict) -> None:
         logger.warning(f"Warming {t['preset']} failed: {exc}")
 
 
+def _label(preset: str | None) -> str | None:
+    """A preset as people read it: "qwen3.5-9b at 20k", "qwen3.5-9b at 8k with images"; the name otherwise."""
+    from athena.model_server import presets, registry
+    found = registry.preset_info(preset) if preset else None
+    if not found or found["row"]["role"] == "embed":
+        return found["model"] if found else preset
+    return f"{found['model']} at {presets.ctx_label(found['context'])}{' with images' if found['vision'] else ''}"
+
+
 def progress(elapsed: float, expected: float) -> float:
     """0..0.99: in step with the estimate up to 90%, then easing towards 99% however long it takes."""
     expected = max(expected, 0.5)
@@ -213,7 +224,7 @@ def state_of(t: dict) -> dict:
     device = {"kind": plan["device"], "gpu": (info or {}).get("name") if plan["device"] != "cpu" else None,
               "gpu_layers": plan["gpu_layers"], "layers": plan["layers"], "vram_mb": plan["vram_mb"],
               "ram_mb": plan["ram_mb"]}
-    other = next((o for o in others if o), None)
+    other = _label(next((o for o in others if o), None))
     if status in ("unloaded", "unknown") and (marked.get("waiting") or (other and t["server"] == "gpu")):
         status = "waiting" if marked.get("waiting") else ("swapping" if marked else "unloaded")
     elapsed = time.time() - marked["started"] if marked.get("started") else 0.0

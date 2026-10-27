@@ -20,6 +20,8 @@ from athena.model_server import lane, loading, registry, stats
 STATUS_KEY = "athena:model_bench"
 LOCK_KEY = "athena:model_bench_lock"
 LOCK_SECONDS = 1800
+BENCH = "benchmark"
+LANE_SECONDS = 180        # one context: a load and an answer, on the CPU too
 ANSWER_TOKENS = 128
 PARAGRAPH = ("Research on language models moves quickly: new architectures, training recipes and evaluation suites "
              "appear every week, and a careful reader keeps track of which results replicate, which baselines were "
@@ -62,7 +64,7 @@ def _plan(model_id: str, context: int) -> dict:
 
 def one(t: dict) -> dict:
     """Load ``t``'s preset and time an answer; {gen_tps, prompt_tps}."""
-    if not loading.ensure_loaded(t):
+    if not loading.ensure_loaded(t, for_chat=False):
         raise RuntimeError(f"{t['preset']} did not load")
     body = {"model": t["preset"], "messages": [{"role": "user", "content": PROMPT}], "max_tokens": ANSWER_TOKENS,
             "temperature": 0, "ignore_eos": True, "cache_prompt": False,
@@ -92,7 +94,8 @@ def run(model_id: str, force: bool = False) -> dict:
                   if (m.get("status") or {}).get("value") == "loaded"]
         for i, context in enumerate(todo):
             _status(model=row["name"], model_id=model_id, context=context, step=i + 1, of=len(todo), state="running")
-            lane.yield_to_chat()
+            lane.yield_to_chat(me=BENCH)
+            lane.hold(LANE_SECONDS, what=BENCH)  # background work waits, so it does not swap the model out
             t = loading.target(row["name"], context)
             try:
                 result = one(t)
@@ -109,13 +112,15 @@ def run(model_id: str, force: bool = False) -> dict:
             done[context] = result
             logger.info(f"Benchmark {t['preset']}: {result}")
         if before and todo and (back := registry.preset_info(before[0])) and back["row"]["role"] == "chat":
-            loading.ensure_loaded(loading.target(back["model"], back["context"], back["vision"]))
+            loading.ensure_loaded(loading.target(back["model"], back["context"], back["vision"]), for_chat=False)
         _status(model=row["name"], model_id=model_id, state="done", results={str(k): v for k, v in done.items()})
         return {"results": done}
     except Exception as exc:
         _status(model_id=model_id, state="failed", error=str(exc)[:300])
         raise
     finally:
+        if lane.holder() == BENCH:
+            lane.release()
         r.delete(LOCK_KEY)
 
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 from statistics import median
 
 DEFAULT_GPU_BYTES_PER_S = 180e9   # a mid-range card's effective bandwidth for quantised weights
-DEFAULT_CPU_BYTES_PER_S = 30e9    # dual-channel DDR5, effective
+DEFAULT_CPU_BYTES_PER_S = 55e9    # dual-channel DDR5, effective (a 9B Q4_K_M wrote 11 tok/s on a laptop's)
 DEFAULT_LOAD_BYTES_PER_S = 2.5e9  # weights from the page cache onto the GPU
 LOAD_OVERHEAD_S = 1.5             # starting the process and the context
 

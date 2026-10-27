@@ -6,6 +6,9 @@ indexing, summaries) that asks for the embedder while someone chats makes the ro
 back for every batch. While a chat is loading or answering it holds a short-lived Redis flag; background work calls
 ``yield_to_chat()`` between batches, which waits while the flag is up (up to ``MAX_WAIT``, so a chat left open never
 stalls the pipeline for good), and the minute runs skip a turn.
+
+A benchmark holds the same flag as ``benchmark``, so summaries do not swap its model out mid-measurement, and gives
+way itself to a chat (``yield_to_chat(me="benchmark")`` waits only while someone else holds it).
 """
 from __future__ import annotations
 
@@ -46,10 +49,18 @@ def chat_active() -> bool:
         return False
 
 
-def yield_to_chat(max_wait: float = MAX_WAIT) -> float:
-    """Wait while a chat holds the model server; returns the seconds waited."""
+def holder() -> str | None:
+    try:
+        return _redis().get(KEY)
+    except Exception:
+        return None
+
+
+def yield_to_chat(max_wait: float = MAX_WAIT, me: str | None = None) -> float:
+    """Wait while a chat (or a benchmark) holds the model server, unless ``me`` holds it; returns the seconds
+    waited."""
     waited = 0.0
-    while waited < max_wait and chat_active():
+    while waited < max_wait and chat_active() and (me is None or holder() != me):
         if waited == 0:
             logger.info("Background model work waits for a chat")
         time.sleep(POLL)

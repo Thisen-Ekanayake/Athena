@@ -273,7 +273,7 @@ def test_load_state_shows_the_model_being_swapped_out(store, monkeypatch):
         {"id": "qwen3.5-9b@8k", "status": {"value": "unloaded"}},
         {"id": "qwen3-embedding-8b", "status": {"value": "loaded"}}])
     state = loading.state("qwen3.5-9b", 8192)
-    assert state["other"] == "qwen3-embedding-8b" and state["stages"][0]["label"].endswith("qwen3-embedding-8b")
+    assert state["other"] == "qwen3-embedding-8b" and state["stages"][0]["label"] == "Unloading qwen3-embedding-8b"
     assert loading.state("not-registered", None) is None
 
 
@@ -288,6 +288,8 @@ def test_background_work_waits_while_a_chat_holds_the_model(monkeypatch):
     assert lane.yield_to_chat(max_wait=0.05) >= 0.05  # gives up in the end
     lane.release()
     assert not lane.chat_active()
+    lane.hold(what="benchmark")  # a benchmark keeps background work out, but not itself
+    assert lane.yield_to_chat(me="benchmark") == 0 and lane.yield_to_chat(max_wait=0.03) >= 0.03
 
 
 def test_minute_embedding_runs_skip_while_someone_chats(monkeypatch):

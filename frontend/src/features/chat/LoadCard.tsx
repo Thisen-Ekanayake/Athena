@@ -7,7 +7,7 @@ function headline(s: LoadState) {
   const name = `${s.model} · ${tokens(s.context)} context`
   switch (s.status) {
     case 'loaded': return `${name} is ready`
-    case 'waiting': return `Waiting for ${s.other ?? 'the other model'} to finish its batch`
+    case 'waiting': return `Waiting for ${s.other ?? 'the other model'} to finish its current request`
     case 'swapping': return `Swapping ${s.other ?? 'the other model'} out for ${s.model}`
     case 'failed': return `${s.model} failed to load`
     case 'offline': return 'The model server is not answering'

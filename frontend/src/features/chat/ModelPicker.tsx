@@ -51,6 +51,9 @@ function ContextRow({ c, selected, onPick }: { c: ModelContext; selected: boolea
         <span className="flex items-center gap-1.5 text-[11px] text-fg-3">
           <span className={cn(c.device === 'split' && 'text-warn', c.device === 'cpu' && 'text-fg-3')}>{deviceText(c)}</span>
           {!c.fits && <span className="inline-flex items-center gap-0.5 text-warn" title="May not fit in the GPU's memory"><TriangleAlert className="h-3 w-3" aria-hidden="true" />tight</span>}
+          {c.device !== 'gpu' && c.prompt_tps != null && (
+            <span title="How fast it reads the prompt (files, sources and the conversation) before answering">reads {c.prompt_tps} tok/s</span>
+          )}
           {c.loaded && <span className="text-good">loaded</span>}
         </span>
       </span>
