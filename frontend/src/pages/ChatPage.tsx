@@ -17,6 +17,7 @@ import { inputClass } from '../ui/inputClass'
 import { ArtifactPanel } from '../features/chat/ArtifactPanel'
 import { ChatAttachments, StagedMaps } from '../features/chat/ChatAttachments'
 import { Composer, type Outgoing } from '../features/chat/Composer'
+import { SideRail } from '../features/chat/SideRail'
 import { useEvolutionTopics } from '../features/evolution/api/topics'
 import { AssistantMessage, UserMessage, type AssistantTurn } from '../features/chat/MessageView'
 
@@ -216,6 +217,7 @@ function ChatView({ id }: { id: string }) {
   const dismiss = useChatStreams((s) => s.dismiss)
   const openArtifact = useChatStreams((s) => s.openArtifact)
   const openMap = useChatStreams((s) => s.openMap)
+  const panelOpen = useChatStreams((s) => !!s.artifactId || !!s.mapPanel)
   const attachMaps = useAttachChatMaps(id)
   const [error, setError] = useState<string | null>(null)
   const nearBottom = useRef(true)
@@ -272,6 +274,7 @@ function ChatView({ id }: { id: string }) {
   return (
     <div className="relative mx-auto grid max-w-3xl">
       <ChatHeader chat={c} />
+      {!panelOpen && <SideRail chat={c} onOpenMap={(slug) => openMap({ slug, chatId: id })} onOpenArtifact={openArtifact} />}
       <div className="grid gap-6 py-6">
         {messages.map((m) => (m.role === 'user' ? (
           <UserMessage key={m.id} content={m.content} attachments={m.attachments} />

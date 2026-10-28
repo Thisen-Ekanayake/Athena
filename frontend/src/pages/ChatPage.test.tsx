@@ -196,8 +196,8 @@ describe('ChatPage', () => {
     const chat: Chat = {
       ...CHAT, maps: [{ ...PEFT_MAP, share: true }],
       messages: [message({
-        id: 'a2', content: 'LoRA (A4) removed the latency of Adapters (A1). A100 GPUs help.',
-        map_refs: { A4: { slug: 'peft', map: 'PEFT', paper_id: 'p4', label: 'LoRA', year: 2021 },
+        id: 'a2', content: '[A4] removed the latency of Adapters (A1). A100 GPUs help.',
+        map_refs: { A4: { slug: 'peft', map: 'PEFT', paper_id: 'p4', label: 'LoRA', title: 'LoRA: Low-Rank Adaptation', authors: 'Hu et al.', year: 2021 },
           A1: { slug: 'peft', map: 'PEFT', paper_id: 'p1', label: 'Adapters', year: 2019 } },
       })],
     }
@@ -210,15 +210,34 @@ describe('ChatPage', () => {
       'GET /evolution/topics': { data: [TOPIC] }, 'GET /chats/c1/maps/peft/digest': { data: digest }, ...MAP_ROUTES,
     })
     renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
-    expect(await screen.findByRole('button', { name: 'A1' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'A100' })).not.toBeInTheDocument()  // not a paper the map named
-    await userEvent.click(screen.getByRole('button', { name: 'A4' }))
+    // cited by title, authors and year; an answer from before titles were kept shows the name
+    const lora = (await screen.findByText('LoRA: Low-Rank Adaptation')).closest('a')!
+    expect(lora).toHaveTextContent('LoRA: Low-Rank Adaptation (Hu et al., 2021)')
+    expect(lora).toHaveAttribute('href', '/evolution/peft?paper=p4')
+    expect(screen.getByText('Adapters').closest('a')).toHaveTextContent('Adapters (2019)')
+    expect(screen.getByText(/A100/).closest('a')).toBeNull()  // not a paper the map named
+    expect(screen.getByText(/removed the latency/).textContent).not.toContain('[A4]')
+    await userEvent.click(lora)
     const panel = await screen.findByRole('complementary', { name: 'Research map' })
     expect(within(panel).getByRole('link', { name: /Full map/ })).toHaveAttribute('href', '/evolution/peft?paper=p4')
     expect(within(panel).getByRole('checkbox', { name: 'Summary for the model' })).toBeChecked()
     await userEvent.click(within(panel).getByRole('button', { name: /What the model sees/ }))
     expect(await within(panel).findByText(/A4 fixes A1/)).toBeInTheDocument()
     expect(within(panel).getByText(/The next turn uses/)).toHaveTextContent('compact')
+  })
+
+  it('keeps the chat’s maps and artifacts on the right edge, one click from opening', async () => {
+    mockApi({
+      'GET /chats/c1': { data: { ...CHAT, maps: [PEFT_MAP] } }, 'GET /chat/models': { data: MODELS }, 'GET /projects': { data: { projects: [] } },
+      'GET /evolution/topics': { data: [TOPIC] }, ...MAP_ROUTES,
+    })
+    renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
+    const rail = await screen.findByRole('navigation', { name: 'Maps and artifacts' })
+    expect(within(rail).getByRole('button', { name: 'Related work' })).toBeInTheDocument()
+    expect(within(rail).getByRole('button', { name: 'Attach a research map' })).toBeInTheDocument()
+    await userEvent.click(within(rail).getByRole('button', { name: 'PEFT' }))
+    expect(await screen.findByRole('complementary', { name: 'Research map' })).toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Maps and artifacts' })).not.toBeInTheDocument()  // the panel holds the edge now
   })
 })
 
