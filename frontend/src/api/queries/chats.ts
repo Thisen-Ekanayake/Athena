@@ -156,7 +156,12 @@ export interface MapRef {
   slug: string
   map: string
   paper_id: string
+  /** The name citing papers use (LoRA), else the title */
   label: string
+  /** Missing on answers from before citations showed them */
+  title?: string
+  /** "Hu", "Hu and Shen" or "Hu et al." */
+  authors?: string | null
   year: number | null
 }
 

@@ -70,17 +70,22 @@ function renderList(items: ListItem[], inl: (s: string) => ReactNode): ReactNode
   )
 }
 
-/** A map paper a chat answer names by id (A3): the label and year shown on hover, and what a click opens. */
+/** A map paper a chat answer names by id (A3): what its citation shows, and where it opens. */
 export interface MapMention {
-  label: string
-  year: number | null
+  slug: string
+  paper_id: string
   map: string
+  label: string
+  title?: string
+  authors?: string | null
+  year: number | null
 }
 
 /**
  * The Markdown reviews and chats use: headings, paragraphs, bullet and numbered lists, code blocks, quotes, tables,
  * **bold**, *italics*, `code`, [text](links), bare links, and [n] citations. Citations jump to reference n (``ref-n``
- * on the page), or call ``onCite`` when given. Map paper ids in ``mapRefs`` (A3) become links that call ``onMapRef``.
+ * on the page), or call ``onCite`` when given. Map paper ids in ``mapRefs`` ([A3] or A3) become citations (title,
+authors, year) that call ``onMapRef``.
  * Anything else shows as plain text.
  */
 export function Markdown({ text, idPrefix = 'ref', onCite, mapRefs, onMapRef, className }: {
@@ -169,18 +174,31 @@ export function Markdown({ text, idPrefix = 'ref', onCite, mapRefs, onMapRef, cl
 
 const TOKEN = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*\s][^*]*\*|\[[^\]]+\]\(https?:\/\/[^\s)]+\)|\[\d+(?:\s*,\s*\d+)*\]|https?:\/\/[^\s)]+)/g
 
-const MAP_REF = /\b([A-Z]\d{1,3})\b/
+const MAP_REF = /(\[[A-Z]\d{1,3}\]|\b[A-Z]\d{1,3}\b)/
 
-/** Plain text with the known map paper ids (A3) as small links to the paper in its map. */
+const clipped = (text: string, n: number) => (text.length > n ? `${text.slice(0, n - 1).trimEnd()}…` : text)
+
+/** Plain text with the known map paper ids ([A3] or A3) as citations: title, authors and year, opening the paper in
+ * its map. A link underneath, so a middle click opens the whole map there. */
 function withMapRefs(text: string, refs: { known: Record<string, MapMention>; open: (id: string) => void }): ReactNode {
   return text.split(new RegExp(MAP_REF.source, 'g')).map((part, k) => {
-    const ref = k % 2 ? refs.known[part] : undefined
+    const id = part.replace(/^\[|\]$/g, '')
+    const ref = k % 2 ? refs.known[id] : undefined
     if (!ref) return <Fragment key={k}>{part}</Fragment>
+    const title = ref.title ?? ref.label
+    const by = [ref.authors, ref.year].filter(Boolean).join(', ')
     return (
-      <button key={k} type="button" onClick={() => refs.open(part)} title={`${ref.label}${ref.year ? ` (${ref.year})` : ''} in ${ref.map}: open it in the map`}
-        className="mx-px inline-flex items-center rounded border border-accent-line bg-accent-soft px-1 font-mono text-[11.5px] leading-[1.35] text-accent-ink hover:bg-accent/20">
-        {part}
-      </button>
+      <a key={k} href={`/evolution/${ref.slug}?paper=${ref.paper_id}`} data-map-ref={id}
+        onClick={(e) => {
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+          e.preventDefault()
+          refs.open(id)
+        }}
+        title={`${title}${by ? ` (${by})` : ''}, in the map ${ref.map}. Click to open it in the map.`}
+        className="rounded-sm text-accent-ink underline decoration-accent-line decoration-dotted underline-offset-[3px] hover:bg-accent-soft hover:decoration-solid">
+        {clipped(title, 90)}
+        {by && <span className="text-fg-3">{` (${by})`}</span>}
+      </a>
     )
   })
 }

@@ -62,6 +62,13 @@ def test_smaller_levels_keep_the_ids_and_skip_over_hidden_papers():
     assert len(minimal) < len(compact) < len(d.render(data(), "B", d.FULL))
 
 
+def test_citations_name_the_first_authors():
+    assert d.short_authors([{"name": "Edward J. Hu"}]) == "Hu"
+    assert d.short_authors(["Edward Hu", "Yelong Shen"]) == "Hu and Shen"
+    assert d.short_authors([{"name": "Edward Hu"}, {"name": "Y. Shen"}, {"name": "P. Wallis"}]) == "Hu et al."
+    assert d.short_authors([]) is None and d.short_authors(None) is None
+
+
 def test_branching_main_paths_cover_each_edge_once():
     assert d.chains([(2, 1), (3, 2), (4, 2)], {1, 2, 3, 4}) == [[1, 2, 3], [2, 4]]
     assert d.chains([(2, 1), (3, 2)], {1, 3}) == [[1, 3]]
@@ -70,8 +77,9 @@ def test_branching_main_paths_cover_each_edge_once():
 
 def test_mentions_are_the_known_ids():
     known = d.refs(data(), "A")
-    assert known["A4"] == {"slug": "peft", "map": "PEFT", "paper_id": "p4", "label": "LoRA", "year": 2021}
-    found = d.mentioned("LoRA (A4) beat Adapters (A1) on an A100 (A9 is unknown).", known)
+    assert known["A4"] == {"slug": "peft", "map": "PEFT", "paper_id": "p4", "label": "LoRA", "authors": None,
+                           "title": "LoRA: Low-Rank Adaptation of Large Language Models", "year": 2021}
+    found = d.mentioned("[A4] beat Adapters (A1) on an A100 (A9 is unknown).", known)
     assert set(found) == {"A4", "A1"}
 
 
@@ -100,8 +108,8 @@ def test_a_built_map_becomes_a_graph(session, monkeypatch):
         p = EvoPaper(id=uuid4(), openalex_id=f"W{key}", title=title, year=year)
         papers[key] = p  # Core insert: SQLite has no ARRAY for merged_ids
         session.execute(EvoPaper.__table__.insert().values(
-            id=p.id, openalex_id=p.openalex_id, title=title, year=year, authors=[], authorships=[], merged_ids=None,
-            extra={}))
+            id=p.id, openalex_id=p.openalex_id, title=title, year=year, authors=[{"name": "Edward Hu"}],
+            authorships=[], merged_ids=None, extra={}))
         session.add(EvoTopicPaper(id=uuid4(), topic_id=topic.id, paper_id=p.id, kind="method", on_main_path=main,
                                   is_milestone_auto=milestone, milestone_score=1.0 if milestone else 0.1,
                                   score_detail={"relevance": 1}))
@@ -120,6 +128,7 @@ def test_a_built_map_becomes_a_graph(session, monkeypatch):
     data = d.digest(session, topic)
     assert [n["title"] for n in data["nodes"]] == ["Adapters for NLP", "A step between", "LoRA: Low-Rank Adaptation"]
     assert all(n["milestone"] for n in data["nodes"])  # the pin counts
+    assert data["nodes"][0]["authors"] == "Hu"
     assert data["main"] == [[2, 1], [3, 2]] and data["papers"] == 4
     assert {"from": 3, "to": 1, "rel": "fixes", "quote": "Adapters 12 add inference latency."} in data["links"]
     text = d.render(data, "A")

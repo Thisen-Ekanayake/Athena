@@ -49,9 +49,9 @@ REF = re.compile(r"\b([A-Z])(\d{1,3})\b")
 LEGEND = (
     "Research maps the user gave you, as graphs. Each paper has an id: the map's letter and a number, oldest "
     "first (A3). In a main path, → means the later paper builds on the earlier one along the field's main line. "
-    "When you mention one of these papers, put its id in parentheses after its name, like LoRA (A3), so the user "
-    "can open it in the map. The graph shows how the field developed; for what a paper says, call query_map and "
-    "cite the passages as [n].")
+    "To mention one of these papers, write its id in square brackets, like [A3], in place of its title: the page "
+    "shows the title, authors and year there and opens the paper in the map, so do not repeat them. The graph "
+    "shows how the field developed; for what a paper says, call query_map and cite the passages as [n].")
 
 
 def _redis():
@@ -63,7 +63,7 @@ def digest(session: Session, topic) -> dict | None:
     """The map's graph data (cached per build), or None for a map that is not built."""
     if topic.built_at is None:
         return None
-    key = f"athena:digest:{topic.id}:{int(topic.built_at.timestamp())}"
+    key = f"athena:digest:v2:{topic.id}:{int(topic.built_at.timestamp())}"
     try:
         cached = _redis().get(key)
         if cached:
@@ -99,7 +99,8 @@ def build(session: Session, topic) -> dict:
     names = method_names(session, {p.id: p.title for _, p in picked})
     number = {p.id: n for n, (_, p) in enumerate(picked, 1)}
     nodes = [{"n": number[p.id], "paper_id": str(p.id), "year": p.year, "title": p.title,
-              "label": names.get(p.id) or tp.named_method, "milestone": is_milestone(tp), "main": tp.on_main_path}
+              "label": names.get(p.id) or tp.named_method, "authors": short_authors(p.authors),
+              "milestone": is_milestone(tp), "main": tp.on_main_path}
              for tp, p in picked]
 
     ids = list(number)
@@ -150,6 +151,17 @@ def build(session: Session, topic) -> dict:
     return {"slug": topic.slug, "name": topic.name, "description": (topic.description or "")[:200],
             "papers": len(rows), "years": [min(years), max(years)] if years else None, "nodes": nodes,
             "main": sorted([a, b] for a, b in main), "links": links, "eras": eras, "gaps": gaps}
+
+
+def short_authors(authors) -> str | None:
+    """"Hu", "Hu and Shen", or "Hu et al.": surnames, for a citation."""
+    names = [a.get("name") if isinstance(a, dict) else str(a) for a in authors or []]
+    surnames = [n.split()[-1] for n in names if n and n.split()]
+    if not surnames:
+        return None
+    if len(surnames) == 1:
+        return surnames[0]
+    return f"{surnames[0]} and {surnames[1]}" if len(surnames) == 2 else f"{surnames[0]} et al."
 
 
 def _uuid(value):
@@ -268,9 +280,10 @@ def _name(n: dict, level: str) -> str:
 
 
 def refs(data: dict, key: str) -> dict[str, dict]:
-    """Every paper id in the graph, for linking an answer's mentions back to the map."""
+    """Every paper id in the graph, for showing an answer's mentions as citations that open the map."""
     return {f"{key}{n['n']}": {"slug": data["slug"], "map": data["name"], "paper_id": n["paper_id"],
-                               "label": n.get("label") or n["title"], "year": n["year"]} for n in data["nodes"]}
+                               "label": n.get("label") or n["title"], "title": n["title"],
+                               "authors": n.get("authors"), "year": n["year"]} for n in data["nodes"]}
 
 
 def mentioned(text: str, known: dict[str, dict]) -> dict[str, dict]:

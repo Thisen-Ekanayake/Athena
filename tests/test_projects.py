@@ -152,13 +152,12 @@ def test_shared_maps_shrink_to_fit_and_open_maps_are_one_line():
     from tests.test_evolution_digest import data
     t = turn(shared_maps=[{"key": "A", "data": data()}], open_maps=["Diffusion (diffusion)"])
     roomy = chat.system_prompt(t, 100_000)
-    assert "Map A: PEFT [slug peft]" in roomy and "A4 fixes A1: “adapters" in roomy and "LoRA (A3)" in roomy
+    assert "Map A: PEFT [slug peft]" in roomy and "A4 fixes A1: “adapters" in roomy and "like [A3]" in roomy
     assert "open beside the chat" in roomy and "Diffusion (diffusion)" in roomy
     tight = chat.system_prompt(t, 600)
     assert "Map A: PEFT" in tight and "“adapters" not in tight
-    assert chat.digest_mentions("LoRA (A4) improves on Adapters (A1).", t) == {
-        "A4": {"slug": "peft", "map": "PEFT", "paper_id": "p4", "label": "LoRA", "year": 2021},
-        "A1": {"slug": "peft", "map": "PEFT", "paper_id": "p1", "label": "Adapters", "year": 2019}}
+    found = chat.digest_mentions("[A4] improves on [A1].", t)
+    assert set(found) == {"A4", "A1"} and found["A1"]["label"] == "Adapters" and found["A1"]["year"] == 2019
     assert chat.digest_mentions("A4", turn()) == {}
 
 
