@@ -1,8 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Archive, ArchiveRestore, Check, FolderInput, FolderKanban, MoreHorizontal, Pencil, Pin, PinOff, Trash2 } from 'lucide-react'
 import { apiErrorMessage } from '../api/error'
-import { createChat, useChat, useDeleteChat, useUpdateChat, type Chat, type ChatMessage } from '../api/queries/chats'
+import {
+  attachChatMaps, createChat, useAttachChatMaps, useChat, useDeleteChat, useShareChatMap, useUpdateChat, type Chat, type ChatMessage,
+  type MapPick,
+} from '../api/queries/chats'
 import { uploadChatFiles, useProject, useProjects } from '../api/queries/projects'
 import { useChatStreams, type Draft } from '../store/chatStore'
 import { Button } from '../ui/Button'
@@ -12,30 +15,56 @@ import { Spinner } from '../ui/Spinner'
 import { cn } from '../ui/cn'
 import { inputClass } from '../ui/inputClass'
 import { ArtifactPanel } from '../features/chat/ArtifactPanel'
+import { ChatAttachments, StagedMaps } from '../features/chat/ChatAttachments'
 import { Composer, type Outgoing } from '../features/chat/Composer'
+import { useEvolutionTopics } from '../features/evolution/api/topics'
 import { AssistantMessage, UserMessage, type AssistantTurn } from '../features/chat/MessageView'
 
-/** A chat: its messages, the one being answered, and the composer; artifacts open beside it. ``/chats/new``
- * starts one (``?project=`` puts it in a project). */
+// The lineage map's drawing code is large: it loads when a map is first opened.
+const MapPanel = lazy(() => import('../features/chat/MapPanel').then((m) => ({ default: m.MapPanel })))
+
+const SIDE_PANEL = 'fixed inset-y-0 right-0 z-40 w-full shadow-pop sm:w-[min(100vw,560px)] xl:w-[min(46vw,640px)] xl:shadow-none'
+
+/** A chat: its messages, the one being answered, and the composer; artifacts and maps open beside it.
+ * ``/chats/new`` starts one (``?project=`` puts it in a project). */
 export function ChatPage() {
   const { id } = useParams()
   const artifactId = useChatStreams((s) => s.artifactId)
   const openArtifact = useChatStreams((s) => s.openArtifact)
+  const mapPanel = useChatStreams((s) => s.mapPanel)
+  const openMap = useChatStreams((s) => s.openMap)
 
-  useEffect(() => () => openArtifact(null), [id, openArtifact])
+  useEffect(() => () => {
+    openArtifact(null)
+    openMap(null)
+  }, [id, openArtifact, openMap])
 
   return (
-    <div className={cn('mx-auto w-full transition-[padding]', artifactId && 'xl:pr-[min(46vw,640px)]')}>
+    <div className={cn('mx-auto w-full transition-[padding]', (artifactId || mapPanel) && 'xl:pr-[min(46vw,640px)]')}>
       {id && id !== 'new' ? <ChatView key={id} id={id} /> : <NewChat />}
-      {artifactId && (
-        <ArtifactPanel
-          key={artifactId}
-          id={artifactId}
-          onClose={() => openArtifact(null)}
-          className="fixed inset-y-0 right-0 z-40 w-full shadow-pop sm:w-[min(100vw,560px)] xl:w-[min(46vw,640px)] xl:shadow-none"
-        />
-      )}
+      {artifactId && <ArtifactPanel key={artifactId} id={artifactId} onClose={() => openArtifact(null)} className={SIDE_PANEL} />}
+      {mapPanel && <Suspense fallback={null}><ChatMapPanel key={mapPanel.slug} /></Suspense>}
     </div>
+  )
+}
+
+/** The map open beside the chat, with its summary switch when the chat holds it. */
+function ChatMapPanel() {
+  const panel = useChatStreams((s) => s.mapPanel)!
+  const openMap = useChatStreams((s) => s.openMap)
+  const chat = useChat(panel.chatId)
+  const share = useShareChatMap(panel.chatId ?? '')
+  const held = chat.data?.maps?.find((m) => m.slug === panel.slug)
+  return (
+    <MapPanel
+      slug={panel.slug}
+      paperId={panel.paperId ?? null}
+      onSelect={(paperId) => openMap({ ...panel, paperId })}
+      onClose={() => openMap(null)}
+      chatId={held ? panel.chatId : undefined}
+      share={held ? { on: held.share, pending: share.isPending, onChange: (on) => share.mutate({ topic: held.slug, share: on }) } : undefined}
+      className={SIDE_PANEL}
+    />
   )
 }
 
@@ -47,12 +76,16 @@ function NewChat() {
   const send = useChatStreams((s) => s.send)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [maps, setMaps] = useState<MapPick[]>([])
+  const topics = useEvolutionTopics()
+  const names = Object.fromEntries((topics.data ?? []).map((t) => [t.slug, t.name]))
 
   const start = async (m: Outgoing) => {
     setBusy(true)
     setError(null)
     try {
       const chat = await createChat({ project_id: projectId, model: m.model, effort: m.effort, context: m.context })
+      if (maps.length) await attachChatMaps(chat.id, maps)
       const files = m.files.length ? await uploadChatFiles(chat.id, m.files) : []
       navigate(`/chats/${chat.id}`, { replace: true })
       void send(chat.id, { content: m.text, model: m.model, effort: m.effort, context: m.context, attachment_ids: files.map((f) => f.id) },
@@ -76,7 +109,10 @@ function NewChat() {
         </p>
       </div>
       {error && <Notice tone="error" title="Not started">{error}</Notice>}
-      <Composer onSend={start} streaming={busy} autoFocus placeholder={project.data ? `Ask about ${project.data.name}…` : 'Ask anything…'} />
+      <Composer onSend={start} streaming={busy} autoFocus placeholder={project.data ? `Ask about ${project.data.name}…` : 'Ask anything…'}
+        onAttachMaps={(picks) => setMaps((held) => [...held.filter((h) => !picks.some((p) => p.id === h.id)), ...picks])}
+        attachedMaps={maps.map((p) => p.id)}
+        attached={<StagedMaps maps={maps} names={names} onChange={setMaps} />} />
     </div>
   )
 }
@@ -179,6 +215,8 @@ function ChatView({ id }: { id: string }) {
   const stop = useChatStreams((s) => s.stop)
   const dismiss = useChatStreams((s) => s.dismiss)
   const openArtifact = useChatStreams((s) => s.openArtifact)
+  const openMap = useChatStreams((s) => s.openMap)
+  const attachMaps = useAttachChatMaps(id)
   const [error, setError] = useState<string | null>(null)
   const nearBottom = useRef(true)
 
@@ -242,12 +280,13 @@ function ChatView({ id }: { id: string }) {
             key={m.id}
             projectId={c.project_id}
             onOpenArtifact={openArtifact}
+            onOpenMapRef={(ref) => openMap({ slug: ref.slug, paperId: ref.paper_id, chatId: id })}
             onRetry={m.id === lastAssistant?.id && !streaming ? retry : undefined}
             turn={{
               id: m.id, content: m.content, reasoning: m.reasoning, reasoningMs: m.reasoning_ms, thinking: false, steps: m.steps,
               sources: m.sources, artifacts: m.artifacts, notices: [], status: m.status, error: m.error, model: m.model,
               effort: m.effort, tokens: m.input_tokens + m.output_tokens || null, live: false, stats: m.stats,
-              tokensIn: m.input_tokens, tokensOut: m.output_tokens,
+              tokensIn: m.input_tokens, tokensOut: m.output_tokens, mapRefs: m.map_refs,
             }}
           />
         )))}
@@ -270,6 +309,12 @@ function ChatView({ id }: { id: string }) {
           initial={{ model: c.model, effort: c.effort, context: c.context }}
           contextUsed={contextUsed(c.messages)}
           placeholder={c.project_name ? `Ask about ${c.project_name}…` : 'Reply…'}
+          onAttachMaps={async (picks) => {
+            await attachMaps.mutateAsync(picks)
+            if (picks.length === 1) openMap({ slug: picks[0].id, chatId: id })
+          }}
+          attachedMaps={(c.maps ?? []).map((m) => m.slug)}
+          attached={<ChatAttachments chat={c} onOpenMap={(slug) => openMap({ slug, chatId: id })} />}
         />
         {c.artifacts.length > 0 && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[12px] text-fg-3">

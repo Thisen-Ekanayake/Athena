@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { ArrowUp, FileText, Image as ImageIcon, Paperclip, Square, TriangleAlert, X } from 'lucide-react'
-import { useChatModels, useModelState, warmModel, type Effort } from '../../api/queries/chats'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { ArrowUp, FileText, GitBranch, Image as ImageIcon, Paperclip, Square, TriangleAlert, X } from 'lucide-react'
+import { apiErrorMessage } from '../../api/error'
+import { useChatModels, useModelState, warmModel, type Effort, type MapPick } from '../../api/queries/chats'
 import { Button } from '../../ui/Button'
+import { Popover } from '../../ui/Popover'
 import { cn } from '../../ui/cn'
 import { ContextMeter } from './ContextMeter'
 import { LoadCard } from './LoadCard'
+import { MapPicker } from './MapPicker'
 import { ModelPicker, type ModelChoice } from './ModelPicker'
 
 const FILE_ACCEPT = '.pdf,.txt,.md,.markdown,.csv,.tsv,.json,.tex,.bib,.py,.rst,.yaml,.yml,application/pdf,text/*'
@@ -38,8 +41,8 @@ export interface Outgoing {
   context: number | null
 }
 
-/** Where messages are written: the text, attached files, the model, context and effort, and send or stop. */
-export function Composer({ onSend, onStop, streaming, initial, placeholder = 'Ask anything…', autoFocus, className, contextUsed }: {
+/** Where messages are written: the text, attached files and maps, the model, context and effort, and send or stop. */
+export function Composer({ onSend, onStop, streaming, initial, placeholder = 'Ask anything…', autoFocus, className, contextUsed, onAttachMaps, attachedMaps, attached }: {
   onSend: (m: Outgoing) => void | Promise<void>
   onStop?: () => void
   streaming?: boolean
@@ -50,6 +53,12 @@ export function Composer({ onSend, onStop, streaming, initial, placeholder = 'As
   className?: string
   /** How much of the context the conversation fills, for the ring before the send button */
   contextUsed?: { tokens: number; estimated: boolean } | null
+  /** Attach research maps (the paperclip's menu offers them when given) */
+  onAttachMaps?: (picks: MapPick[]) => void | Promise<void>
+  /** Slugs of the maps already attached */
+  attachedMaps?: string[]
+  /** What the conversation already holds (its files and maps), above the text */
+  attached?: ReactNode
 }) {
   const models = useChatModels()
   const [text, setText] = useState('')
@@ -57,6 +66,9 @@ export function Composer({ onSend, onStop, streaming, initial, placeholder = 'As
   const [picked, setPicked] = useState<Partial<ModelChoice>>({})
   const [refused, setRefused] = useState<string | null>(null)
   const [watching, setWatching] = useState(false)
+  const [picking, setPicking] = useState(false)
+  const [mapError, setMapError] = useState<string | null>(null)
+  const [attaching, setAttaching] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const imageRef = useRef<HTMLInputElement>(null)
   const areaRef = useRef<HTMLTextAreaElement>(null)
@@ -134,6 +146,20 @@ export function Composer({ onSend, onStop, streaming, initial, placeholder = 'As
     if (kept.length) setFiles((f) => [...f, ...kept])
   }
 
+  const attachMaps = async (picks: MapPick[]) => {
+    if (!onAttachMaps) return
+    setAttaching(true)
+    setMapError(null)
+    try {
+      await onAttachMaps(picks)
+      setPicking(false)
+    } catch (e) {
+      setMapError(apiErrorMessage(e, 'The maps could not be attached.'))
+    } finally {
+      setAttaching(false)
+    }
+  }
+
   const choose = (next: ModelChoice) => {
     setPicked(next)
     remember(next)
@@ -153,6 +179,7 @@ export function Composer({ onSend, onStop, streaming, initial, placeholder = 'As
     >
       <span className="ai-ring" data-active={!!streaming} aria-hidden="true" />
       {showLoad && state.data && <LoadCard state={state.data} />}
+      {attached}
       {files.length > 0 && (
         <ul className="flex flex-wrap gap-1.5" aria-label="Attached files">
           {files.map((f, i) => {
@@ -213,10 +240,39 @@ export function Composer({ onSend, onStop, streaming, initial, placeholder = 'As
           addFiles(e.target.files)
           e.target.value = ''
         }} />
-        <Button variant="ghost" size="icon-sm" onClick={() => fileRef.current?.click()} aria-label="Attach files"
-          title={takesImages ? 'Attach PDFs, text files or images' : 'Attach PDFs or text files (read as text)'}>
-          <Paperclip />
-        </Button>
+        {onAttachMaps ? (
+          <Popover label="Attach" width={250} align="start" estHeight={110}
+            trigger={({ ref, open, toggle }) => (
+              <Button ref={ref} variant="ghost" size="icon-sm" onClick={toggle} aria-expanded={open} aria-label="Attach" title="Attach files or research maps">
+                <Paperclip />
+              </Button>
+            )}>
+            {(close) => (
+              <div className="grid py-1 text-[13px]">
+                <button type="button" className="flex items-start gap-2.5 px-3 py-2 text-left hover:bg-surface-2" onClick={() => {
+                  close()
+                  fileRef.current?.click()
+                }}>
+                  <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-fg-3" aria-hidden="true" />
+                  <span><span className="block text-fg">Files</span><span className="block text-[11.5px] text-fg-3">{takesImages ? 'PDFs, text files or images' : 'PDFs or text files'}</span></span>
+                </button>
+                <button type="button" className="flex items-start gap-2.5 px-3 py-2 text-left hover:bg-surface-2" onClick={() => {
+                  close()
+                  setMapError(null)
+                  setPicking(true)
+                }}>
+                  <GitBranch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" aria-hidden="true" />
+                  <span><span className="block text-fg">Research map</span><span className="block text-[11.5px] text-fg-3">View it here; optionally give the model a summary</span></span>
+                </button>
+              </div>
+            )}
+          </Popover>
+        ) : (
+          <Button variant="ghost" size="icon-sm" onClick={() => fileRef.current?.click()} aria-label="Attach files"
+            title={takesImages ? 'Attach PDFs, text files or images' : 'Attach PDFs or text files (read as text)'}>
+            <Paperclip />
+          </Button>
+        )}
         <span title={takesImages ? 'Attach images' : `${model || 'This model'} reads text only. Switch to a model that takes images to attach them.`}>
           <Button variant="ghost" size="icon-sm" onClick={() => imageRef.current?.click()} aria-label="Attach images" disabled={!takesImages}
             className={cn(!takesImages && 'opacity-35')}>
@@ -239,6 +295,10 @@ export function Composer({ onSend, onStop, streaming, initial, placeholder = 'As
           </Button>
         )}
       </div>
+      {picking && (
+        <MapPicker onClose={() => setPicking(false)} onAttach={(picks) => void attachMaps(picks)} attached={attachedMaps}
+          busy={attaching} error={mapError} />
+      )}
     </form>
   )
 }
