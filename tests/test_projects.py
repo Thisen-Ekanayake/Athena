@@ -68,8 +68,8 @@ def test_the_router_lists_chat_models_without_embedder_or_vision(settings, monke
     ])
     models = {m["id"]: m for m in llm.chat_models()}
     assert set(models) == {"qwen3.5-9b", "gemma-4b"}
-    assert models["qwen3.5-9b"] == {"id": "qwen3.5-9b", "reasoning": True, "vision": False, "context": 20480,
-                                    "loaded": True}
+    assert models["qwen3.5-9b"] == {"id": "qwen3.5-9b", "reasoning": True, "vision": False, "tools": True,
+                                    "context": 20480, "loaded": True}
     assert models["gemma-4b"]["reasoning"] is False and models["gemma-4b"]["vision"] is True
     assert models["gemma-4b"]["context"] == llm.DEFAULT_CONTEXT
     assert llm.model_context("qwen3.5-9b") == 20480
@@ -388,7 +388,7 @@ def events(response) -> list[dict]:
 def test_a_turn_thinks_writes_an_artifact_and_is_saved(env, monkeypatch, usage_rows):
     admin, bo, ids, Session, queued = env
     model = FakeModel()
-    monkeypatch.setattr(llm, "async_chat_client", lambda: model)
+    monkeypatch.setattr(llm, "async_chat_client", lambda **kw: model)
     monkeypatch.setattr(llm, "model_context", lambda m: 20480)
     monkeypatch.setattr(chat, "title_for", lambda q, a, m: "Drafting help")
     c = admin.post("/api/v1/chats", json={}).json()
@@ -403,6 +403,7 @@ def test_a_turn_thinks_writes_an_artifact_and_is_saved(env, monkeypatch, usage_r
     assert done["content"] == "I wrote a draft for you." and done["reasoning"] == "The user wants a draft. "
     assert done["status"] == "done" and done["effort"] == "medium"
     assert done["input_tokens"] == 250 and done["output_tokens"] == 30
+    assert done["stats"]["context_used"] == 160 and done["stats"]["context"] == 20480  # the last call's prompt + answer
     assert done["artifacts"][0]["title"] == "Draft"
 
     first = model.calls[0]
@@ -434,7 +435,7 @@ def test_a_failed_model_is_saved_as_failed(env, monkeypatch):
     async def refuse(**kwargs):
         raise ConnectionError("connection refused")
     Down.chat.completions.create = refuse
-    monkeypatch.setattr(llm, "async_chat_client", lambda: Down())
+    monkeypatch.setattr(llm, "async_chat_client", lambda **kw: Down())
     monkeypatch.setattr(chat, "title_for", lambda q, a, m: None)
     c = admin.post("/api/v1/chats", json={}).json()
     got = events(admin.post(f"/api/v1/chats/{c['id']}/messages", json={"content": "Hello there"}))
@@ -562,3 +563,41 @@ def test_off_topic_library_hits_are_left_out(monkeypatch):
     ctx = tools.Context(user_id=uuid4(), project_id=None, conversation_id=uuid4(), message_id=None)
     text, info = tools.execute(ctx, "search_papers", {"query": "HelaBERT"})
     assert [r["title"] for r in info["results"]] == ["Sinhala NER", "HelaBERT for Sinhala"]
+
+
+def _registry_row(name: str, vision: bool) -> dict:
+    plan = {"device": "gpu", "gpu_layers": 33, "layers": 33, "vram_mb": 5000, "ram_mb": 0, "fits": True}
+    contexts = [{"context": c, "plan": plan, "server": "gpu",
+                 "preset": name if c == 8192 else f"{name}@{c // 1024}k",
+                 "vision_preset": (f"{name}-vision" if c == 8192 else f"{name}@{c // 1024}k-vision") if vision
+                 else None} for c in (8192, 32768)]
+    return {"id": name, "name": name, "role": "chat", "enabled": True, "reasoning": False, "vision": vision,
+            "tools": True, "default_context": 8192, "contexts": contexts, "info": {}, "size_bytes": 1,
+            "placement": "auto", "path": "x", "mmproj_path": None, "fingerprint": "", "options": {}, "layers": 33}
+
+
+@pytestmark_api
+def test_a_text_only_model_refuses_images_and_the_context_is_kept(env, monkeypatch, model_registry):
+    admin, bo, ids, Session, queued = env
+    model_registry += [_registry_row("tiny", vision=False), _registry_row("seer", vision=True)]
+    monkeypatch.setattr(llm, "_cpu_models", lambda: [])
+    picked = {m["id"]: m for m in admin.get("/api/v1/chat/models").json()["models"]}
+    assert picked["tiny"]["vision"] is False and [c["tokens"] for c in picked["tiny"]["contexts"]] == [8192, 32768]
+    c = admin.post("/api/v1/chats", json={"model": "tiny"}).json()
+    fig = admin.post(f"/api/v1/chats/{c['id']}/files", files=[("files", ("fig.png", b"\x89PNG fake", "image/png"))])
+    fid = fig.json()["files"][0]["id"]
+    refused = admin.post(f"/api/v1/chats/{c['id']}/messages", json={
+        "content": "What is this?", "model": "tiny", "attachment_ids": [fid]})
+    assert refused.status_code == 422 and "reads text only" in refused.json()["detail"]
+
+    sent = {}
+
+    async def run(turn, *args, **kwargs):
+        sent.update(model=chat.plan(turn)["model"], context=turn.context)
+        yield {"type": "done", "message": {"content": "A figure."}}
+    monkeypatch.setattr(chat, "run", run)
+    monkeypatch.setattr(chat, "title_for", lambda q, a, m: None)
+    ok = admin.post(f"/api/v1/chats/{c['id']}/messages", json={
+        "content": "What is this?", "model": "seer", "context": 32768, "attachment_ids": [fid]})
+    assert ok.status_code == 200 and sent == {"model": "seer@32k-vision", "context": 32768}
+    assert admin.get(f"/api/v1/chats/{c['id']}").json()["context"] == 32768

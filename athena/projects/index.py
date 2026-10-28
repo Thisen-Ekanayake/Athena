@@ -212,8 +212,10 @@ def caption(file) -> str | None:
     """A description of an uploaded image by the vision model, for project search."""
     from athena.core import llm, usage
     from athena.projects import files
+    from athena.model_server import lane
     model = llm.vision_model()
-    resp = llm.chat_client(timeout=300).chat.completions.create(
+    lane.yield_to_chat()
+    resp = llm.chat_client(timeout=300, model=model).chat.completions.create(
         model=model, max_tokens=400, temperature=0.2, extra_body=llm.effort_extra(model, "off")[0],
         messages=[{"role": "user", "content": [
             {"type": "image_url", "image_url": {"url": files.image_data_url(file.path, file.mime)}},
@@ -230,10 +232,12 @@ def _upsert(source: str, project_id: UUID, user_id: UUID, kind: str, title: str,
     from qdrant_client.http import models as qm
 
     from athena.core import llm
+    from athena.model_server import lane
     delete_source(source, qdrant)
     passages = [p for p in passages if p.strip()][:MAX_CHUNKS]
     for start in range(0, len(passages), EMBED_BATCH):
         batch = passages[start:start + EMBED_BATCH]
+        lane.yield_to_chat()
         vectors = llm.embed(batch, feature="project_index", user_id=user_id)
         qdrant.upsert(COLLECTION, points=[qm.PointStruct(
             id=str(uuid.uuid5(_NAMESPACE, f"{source}:{start + i}")), vector=vec.tolist(),

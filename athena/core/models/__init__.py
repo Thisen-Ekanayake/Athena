@@ -19,6 +19,7 @@ from athena.core.models.personal import (
     SavedList, SavedListItem, InboxEvent, InboxState, InboxSettings, Watch, WatchHit, ItemRead, UserNote,
     UserHighlight, ItemFeedback, InterestProfile, LitReview,
 )
+from athena.core.models.model_server import LlmModel, LlmBenchmark
 from athena.core.models.projects import (
     Project, ProjectItem, Conversation, ChatMessage, UserFile, Artifact, ArtifactVersion,
 )
@@ -78,6 +79,8 @@ __all__ = [
     "ItemFeedback",
     "InterestProfile",
     "LitReview",
+    "LlmModel",
+    "LlmBenchmark",
     "Project",
     "ProjectItem",
     "Conversation",

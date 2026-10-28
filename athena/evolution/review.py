@@ -423,8 +423,8 @@ def model_chat(user_id, model_used: dict) -> Chat:
     model_used["model"] = model
 
     def chat(messages: list[dict], max_tokens: int) -> tuple[str, int, int]:
-        resp = llm.chat_client().chat.completions.create(model=model, messages=messages, max_tokens=max_tokens,
-                                                         temperature=0.2, extra_body=llm.chat_extra())
+        resp = llm.chat_client(model=model).chat.completions.create(
+            model=model, messages=messages, max_tokens=max_tokens, temperature=0.2, extra_body=llm.chat_extra())
         tokens_in, tokens_out = usage.tokens_of(resp.usage)
         usage.add("lit_review", model, tokens_in, tokens_out, user_id=user_id)
         model_used["in"] = model_used.get("in", 0) + tokens_in

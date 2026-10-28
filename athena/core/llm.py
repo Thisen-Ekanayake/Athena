@@ -96,12 +96,24 @@ def embed_model() -> str:
 # ── chat ───────────────────────────────────────────────────────────────
 
 
-def chat_client(timeout: float = 600.0) -> OpenAI:
-    return OpenAI(base_url=chat_base_url(), api_key=chat_api_key(), timeout=timeout, max_retries=2)
+def base_url_for(model: str | None = None) -> str:
+    """The server for ``model``: the CPU router for a preset the registry put there, else the chat server."""
+    url = chat_base_url()
+    if model and (found := _registry_preset(model)) and found["server"] == "cpu":
+        from athena.model_server import registry
+        return registry.cpu_base_url()
+    return url
 
 
-def async_chat_client(timeout: float = 600.0) -> AsyncOpenAI:
-    return AsyncOpenAI(base_url=chat_base_url(), api_key=chat_api_key(), timeout=timeout, max_retries=2)
+def chat_client(timeout: float = 600.0, model: str | None = None) -> OpenAI:
+    """A client for the chat server; with ``model``, the server that serves it (athena.model_server)."""
+    return OpenAI(base_url=base_url_for(model or chat_model()), api_key=chat_api_key(), timeout=timeout,
+                  max_retries=2)
+
+
+def async_chat_client(timeout: float = 600.0, model: str | None = None) -> AsyncOpenAI:
+    return AsyncOpenAI(base_url=base_url_for(model or chat_model()), api_key=chat_api_key(), timeout=timeout,
+                       max_retries=2)
 
 
 def chat_extra(think: bool = False) -> dict:
@@ -121,6 +133,7 @@ DEFAULT_VISION_MODEL = "qwen3.5-9b-vision"
 DEFAULT_CONTEXT = 8192    # a model's context when its preset does not say
 MODELS_TTL = 30.0
 _models_cache: tuple[float, list[dict]] | None = None
+_cpu_cache: tuple[float, list[dict]] | None = None
 
 
 def _names(setting: str, default: str = "") -> list[str]:
@@ -128,8 +141,24 @@ def _names(setting: str, default: str = "") -> list[str]:
 
 
 def reasoning_models() -> set[str]:
-    """Models that think (CHAT_REASONING_MODELS, comma-separated): the chat offers them an effort."""
-    return set(_names("CHAT_REASONING_MODELS", DEFAULT_CHAT_MODEL))
+    """Models that think (CHAT_REASONING_MODELS, comma-separated, and the registry's): the chat offers them an
+    effort."""
+    return set(_names("CHAT_REASONING_MODELS", DEFAULT_CHAT_MODEL)) | {r["name"] for r in _registry() if r["reasoning"]}
+
+
+def _registry() -> list[dict]:
+    """The model registry's models (athena.model_server.registry) when chats run on llama.cpp; [] otherwise."""
+    if not is_llama_cpp(chat_base_url()):
+        return []
+    from athena.model_server import registry
+    return registry.snapshot()
+
+
+def _registry_preset(preset: str) -> dict | None:
+    if not is_llama_cpp(chat_base_url()):
+        return None
+    from athena.model_server import registry
+    return registry.preset_info(preset)
 
 
 def vision_model() -> str:
@@ -164,12 +193,15 @@ def _server_models() -> list[dict]:
 
 
 def chat_models() -> list[dict]:
-    """The models a chat may pick: [{id, reasoning, vision, context, loaded}].
+    """The models a chat may pick: [{id, reasoning, vision, tools, context, loaded, contexts?, ...}].
 
-    On llama.cpp, every model the router lists except the embedder and the vision preset (images go there by
-    themselves); elsewhere (a hosted API lists everything it has), the configured chat model and the reasoning
-    ones.
+    With the model registry, its enabled chat models, each with the contexts users may pick and, per context, where
+    it loads and how fast it answers (``registry_chat_models``). Without one, on llama.cpp, every model the router
+    lists except the embedder and the vision preset (images go there by themselves); elsewhere (a hosted API lists
+    everything it has), the configured chat model and the reasoning ones.
     """
+    if rows := [r for r in _registry() if r["role"] == "chat" and r["enabled"] and r.get("complete", True)]:
+        return registry_chat_models(rows)
     thinking, vision = reasoning_models(), vision_model()
     hidden = {embed_model(), vision}
     listed = _server_models() if is_llama_cpp(chat_base_url()) else []
@@ -180,18 +212,88 @@ def chat_models() -> list[dict]:
             continue
         status = m.get("status") or {}
         modalities = (m.get("architecture") or {}).get("input_modalities") or []
-        out.append({"id": mid, "reasoning": mid in thinking, "vision": "image" in modalities,
+        out.append({"id": mid, "reasoning": mid in thinking, "vision": "image" in modalities, "tools": True,
                     "context": _preset_context(status.get("preset")) or DEFAULT_CONTEXT,
                     "loaded": status.get("value") == "loaded" if isinstance(status, dict) else False})
     if not out:
         for mid in dict.fromkeys([chat_model()] + sorted(thinking)):
-            out.append({"id": mid, "reasoning": mid in thinking, "vision": False, "context": model_context(mid),
-                        "loaded": False})
+            out.append({"id": mid, "reasoning": mid in thinking, "vision": False, "tools": True,
+                        "context": model_context(mid), "loaded": False})
     return out
 
 
+def registry_chat_models(rows: list[dict]) -> list[dict]:
+    """The registry's chat models as the picker shows them, with what each router has loaded now."""
+    from athena.model_server import stats
+    loaded = {m.get("id") for m in _server_models() + _cpu_models()
+              if (m.get("status") or {}).get("value") == "loaded"}
+    speeds = stats.estimates()
+    out = []
+    for r in rows:
+        contexts, loaded_context = [], None
+        for c in r["contexts"]:
+            est = speeds.get(r["name"], {}).get(c["context"]) or {}
+            is_loaded = c["preset"] in loaded or (c["vision_preset"] or "") in loaded
+            loaded_context = c["context"] if is_loaded else loaded_context
+            plan = c["plan"]
+            contexts.append({"tokens": c["context"], "device": plan["device"], "gpu_layers": plan["gpu_layers"],
+                             "layers": plan["layers"], "vram_mb": plan["vram_mb"], "ram_mb": plan["ram_mb"],
+                             "fits": plan["fits"], "tps": round(est["tps"], 1) if est.get("tps") else None,
+                             "prompt_tps": round(est["prompt_tps"]) if est.get("prompt_tps") else None,
+                             "speed_source": est.get("source"), "load_seconds": round(est.get("load_seconds") or 0, 1),
+                             "server": c["server"], "loaded": is_loaded})
+        info = r["info"] or {}
+        out.append({"id": r["name"], "reasoning": r["reasoning"], "vision": r["vision"], "tools": r["tools"],
+                    "context": r["default_context"], "default_context": r["default_context"],
+                    "loaded": loaded_context is not None, "loaded_context": loaded_context, "contexts": contexts,
+                    "size_bytes": r["size_bytes"], "params": info.get("params"), "quant": info.get("quant"),
+                    "architecture": info.get("architecture"), "placement": r["placement"]})
+    return out
+
+
+def _cpu_models() -> list[dict]:
+    """What the CPU router lists (athena.model_server), cached like ``_server_models``; [] when it is not running."""
+    import time
+    global _cpu_cache
+    if _cpu_cache and time.monotonic() - _cpu_cache[0] < MODELS_TTL:
+        return _cpu_cache[1]
+    from athena.model_server import registry
+    try:
+        resp = httpx.get(f"{server_root(registry.cpu_base_url())}/models", timeout=2.0)
+        resp.raise_for_status()
+        data = resp.json().get("data") or []
+    except Exception:
+        data = []
+    _cpu_cache = (time.monotonic(), data)
+    return data
+
+
+class TextOnlyModel(ValueError):
+    """Images were sent to a model without a vision projector."""
+
+
+def chat_preset(model: str, context: int | None = None, images: bool = False) -> str:
+    """The name a chat turn sends for ``model`` at ``context``: with the registry, the preset for that context (its
+    vision preset when the message has images; TextOnlyModel when there is none). Without one, the model itself, or
+    CHAT_VISION_MODEL for images."""
+    for r in _registry():
+        if r["name"] != model:
+            continue
+        contexts = {c["context"]: c for c in r["contexts"]}
+        c = contexts.get(context or r["default_context"]) or contexts.get(r["default_context"]) or r["contexts"][0]
+        if images:
+            if not c["vision_preset"]:
+                raise TextOnlyModel(f"{model} reads text only. Switch to a model that takes images to send them.")
+            return c["vision_preset"]
+        return c["preset"]
+    return vision_model() if images else model
+
+
 def model_context(model: str) -> int:
-    """The context ``model`` was started with (its router preset's ctx-size), else CHAT_CONTEXT_TOKENS."""
+    """The context ``model`` (a preset name) was started with: the registry's, else its router preset's ctx-size,
+    else CHAT_CONTEXT_TOKENS."""
+    if found := _registry_preset(model):
+        return found["context"]
     for m in _server_models() if is_llama_cpp(chat_base_url()) else []:
         if m.get("id") == model and (ctx := _preset_context((m.get("status") or {}).get("preset"))):
             return ctx
@@ -231,7 +333,7 @@ def chat_json(prompt: str, schema: dict, name: str, system: str | None = None, t
 
     model = chat_model(task)
     messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
-    resp = chat_client(timeout=timeout).chat.completions.create(
+    resp = chat_client(timeout=timeout, model=model).chat.completions.create(
         model=model, messages=messages, temperature=0, max_tokens=max_tokens,
         response_format={"type": "json_schema", "json_schema": {"name": name, "schema": schema}},
         extra_body=chat_extra(),

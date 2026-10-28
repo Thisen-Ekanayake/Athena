@@ -1,17 +1,51 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../client'
+import { queryClient } from '../queryClient'
 import type { ArtifactRef, ArtifactSummary } from './artifacts'
 import type { UserFile } from './projects'
 
 export type Effort = 'off' | 'low' | 'medium' | 'high'
 
+/** Where a model loads at one context: all on the GPU, split between GPU and CPU, or all on the CPU. */
+export type Device = 'gpu' | 'split' | 'cpu'
+
+/** One context size a registered model offers, with where it loads and how fast it answers there. */
+export interface ModelContext {
+  tokens: number
+  device: Device
+  gpu_layers: number
+  layers: number
+  vram_mb: number
+  ram_mb: number
+  fits: boolean
+  /** Answer tokens a second */
+  tps: number | null
+  prompt_tps: number | null
+  /** measured: benchmarked or from chats; scaled: from another context; estimate: from the bandwidth formula */
+  speed_source: 'measured' | 'scaled' | 'estimate' | null
+  load_seconds: number
+  server: 'gpu' | 'cpu'
+  loaded: boolean
+}
+
 export interface ChatModel {
   id: string
   /** Thinks: the chat offers it an effort */
   reasoning: boolean
+  /** Takes images (it has a vision projector) */
   vision: boolean
+  /** Its template takes tool calls: search, maps, artifacts */
+  tools: boolean
   context: number
   loaded: boolean
+  /** From the model registry: the contexts users may pick */
+  contexts?: ModelContext[]
+  default_context?: number
+  loaded_context?: number | null
+  size_bytes?: number
+  params?: string | null
+  quant?: string | null
+  architecture?: string | null
 }
 
 export interface ChatModels {
@@ -20,6 +54,45 @@ export interface ChatModels {
   efforts: { id: Effort; budget: number }[]
   default_effort: Effort
   vision_model: string
+  /** The models come from the registry, with contexts */
+  registry?: boolean
+}
+
+export interface LoadStage {
+  label: string
+  state: 'done' | 'active' | 'pending'
+}
+
+/** How far a model's load has got (GET /chat/models/state, and the stream's loading events). */
+export interface LoadState {
+  model: string
+  preset: string
+  context: number
+  server: 'gpu' | 'cpu'
+  status: 'loaded' | 'loading' | 'waiting' | 'swapping' | 'unloaded' | 'failed' | 'offline' | 'unknown'
+  device: { kind: Device; gpu: string | null; gpu_layers: number; layers: number; vram_mb: number; ram_mb: number }
+  stages: LoadStage[]
+  /** 0..0.99 while loading, timed from the last load */
+  progress: number
+  eta_seconds: number
+  expected_seconds: number
+  elapsed_seconds: number
+  /** The model the router holds now, which has to go first */
+  other: string | null
+}
+
+/** How an answer ran */
+export interface TurnStats {
+  tps?: number | null
+  prompt_tps?: number | null
+  ttft_ms?: number
+  load_ms?: number
+  device?: Device
+  gpu_layers?: number
+  layers?: number
+  context?: number
+  /** What the context held at the end of the answer: the last call's prompt and answer tokens */
+  context_used?: number
 }
 
 export interface ChatSummary {
@@ -29,6 +102,8 @@ export interface ChatSummary {
   project_name: string | null
   model: string | null
   effort: Effort | null
+  /** The context size picked; the model's default when null */
+  context?: number | null
   /** Listed first */
   pinned: boolean
   /** Out of the lists; `useChats({ archived: true })` shows only these */
@@ -92,6 +167,7 @@ export interface ChatMessage {
   error: string | null
   input_tokens: number
   output_tokens: number
+  stats?: TurnStats | null
   created_at: string
 }
 
@@ -106,6 +182,25 @@ export const useChatModels = () =>
     queryKey: ['chat-models'],
     queryFn: async () => (await apiClient.get<ChatModels>('/chat/models')).data,
     staleTime: 30_000,
+  })
+
+const SETTLED = new Set<LoadState['status']>(['loaded', 'failed', 'offline', 'unknown'])
+
+/** Start loading a model now (picked, or the user started typing); the state comes back. */
+export const warmModel = async (body: { model: string; context?: number | null; vision?: boolean }) =>
+  (await apiClient.post<LoadState>('/chat/models/warm', body)).data
+
+/** How far a model's load has got, polled while it is under way; once in, the picker hears it is loaded. */
+export const useModelState = (model: string, context: number | null | undefined, enabled: boolean) =>
+  useQuery({
+    queryKey: ['model-state', model, context ?? null],
+    queryFn: async () => {
+      const state = (await apiClient.get<LoadState>('/chat/models/state', { params: { model, context: context ?? undefined } })).data
+      if (state.status === 'loaded') void queryClient.invalidateQueries({ queryKey: ['chat-models'] })
+      return state
+    },
+    enabled: enabled && !!model,
+    refetchInterval: (q) => (q.state.data && SETTLED.has(q.state.data.status) ? false : 600),
   })
 
 export const useChats = (params: { projectId?: string; standalone?: boolean; q?: string; limit?: number; archived?: boolean } = {}) =>
@@ -127,7 +222,7 @@ export const useChat = (id: string | undefined) =>
     enabled: !!id,
   })
 
-export const createChat = async (body: { project_id?: string | null; model?: string; effort?: Effort }) =>
+export const createChat = async (body: { project_id?: string | null; model?: string; effort?: Effort; context?: number | null }) =>
   (await apiClient.post<ChatSummary>('/chats', body)).data
 
 export const useUpdateChat = () => {

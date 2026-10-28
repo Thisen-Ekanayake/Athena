@@ -26,8 +26,10 @@ export function Popover({ trigger, children, width = 260, estHeight = 300, align
     const r = el.getBoundingClientRect()
     const wanted = align === 'end' ? r.right - width : r.left
     const left = Math.max(8, Math.min(wanted, window.innerWidth - width - 8))
-    const flipUp = r.bottom + 8 + estHeight > window.innerHeight && r.top > estHeight
-    setCoords({ top: flipUp ? Math.max(8, r.top - 6 - estHeight) : r.bottom + 6, left })
+    // The panel's real height once it has rendered; the estimate only for the first frame
+    const height = panelRef.current?.offsetHeight || estHeight
+    const flipUp = r.bottom + 8 + height > window.innerHeight && r.top > height
+    setCoords({ top: flipUp ? Math.max(8, r.top - 6 - height) : r.bottom + 6, left })
   }, [align, width, estHeight])
 
   useLayoutEffect(() => {
@@ -41,11 +43,23 @@ export function Popover({ trigger, children, width = 260, estHeight = 300, align
     }
   }, [open, reposition])
 
+  // Once the panel has rendered, and whenever its content changes size, place it again from its real height
+  const mounted = open && !!coords
+  useEffect(() => {
+    const panel = panelRef.current
+    if (!mounted || !panel || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => reposition())
+    observer.observe(panel)
+    return () => observer.disconnect()
+  }, [mounted, reposition])
+
   useEffect(() => {
     if (!open) return
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node
       if (triggerRef.current?.contains(t) || panelRef.current?.contains(t)) return
+      // A submenu a panel opens beside itself, in a portal of its own (features/chat/ModelPicker)
+      if (t instanceof Element && t.closest('[data-popover-keep]')) return
       close()
     }
     const onKey = (e: KeyboardEvent) => {

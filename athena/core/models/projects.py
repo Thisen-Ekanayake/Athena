@@ -53,8 +53,8 @@ class ProjectItem(Base):
 
 
 class Conversation(Base):
-    """A chat. ``model`` and ``effort`` are the last ones used, which the next message starts from. A pinned chat
-    lists first; an archived one leaves the lists until it is unarchived."""
+    """A chat. ``model``, ``effort`` and ``context`` are the last ones used, which the next message starts from. A
+    pinned chat lists first; an archived one leaves the lists until it is unarchived."""
     __tablename__ = "conversations"
     __table_args__ = (Index("ix_conversations_user_updated", "user_id", "updated_at"),)
 
@@ -65,6 +65,7 @@ class Conversation(Base):
     title = Column(String, nullable=False, default="New chat")
     model = Column(String, nullable=True)
     effort = Column(String, nullable=True)           # off | low | medium | high
+    context = Column(Integer, nullable=True)         # the context size picked (tokens); the model's default when unset
     pinned_at = Column(DateTime(timezone=True), nullable=True)
     archived_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -94,6 +95,8 @@ class ChatMessage(Base):
     error = Column(String, nullable=True)
     input_tokens = Column(Integer, nullable=False, default=0)
     output_tokens = Column(Integer, nullable=False, default=0)
+    # How the answer ran: {tps, prompt_tps, ttft_ms, load_ms, device, gpu_layers, layers, context}
+    stats = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 

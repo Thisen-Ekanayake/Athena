@@ -7,8 +7,8 @@ import { ChatPage } from './ChatPage'
 
 const MODELS: ChatModels = {
   models: [
-    { id: 'qwen3.5-9b', reasoning: true, vision: false, context: 20480, loaded: true },
-    { id: 'gemma-4b', reasoning: false, vision: true, context: 8192, loaded: false },
+    { id: 'qwen3.5-9b', reasoning: true, vision: false, tools: true, context: 20480, loaded: true },
+    { id: 'gemma-4b', reasoning: false, vision: true, tools: true, context: 8192, loaded: false },
   ],
   default: 'qwen3.5-9b',
   efforts: [{ id: 'off', budget: 0 }, { id: 'low', budget: 1024 }, { id: 'medium', budget: 4096 }, { id: 'high', budget: 8192 }],
@@ -66,19 +66,87 @@ describe('ChatPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /Add/ }))
     expect(await screen.findByText('In project')).toBeInTheDocument()
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ kind: 'paper', meta: { title: 'DoRA' } })
-    expect(screen.getByText(/qwen3.5-9b · medium effort · 1,000 tokens/)).toBeInTheDocument()
+    expect(screen.queryByRole('term')).not.toBeInTheDocument()  // the details stay folded until asked for
+    await userEvent.click(screen.getByRole('button', { name: 'Show details' }))
+    const details = screen.getByLabelText('How this answer ran')
+    expect(details).toHaveTextContent(/Model\s*qwen3.5-9b/)
+    expect(details).toHaveTextContent(/Effort\s*medium/)
+  })
+
+  it('shows how full the context is beside the send button', async () => {
+    const answered = { ...CHAT, messages: [CHAT.messages[0], { ...CHAT.messages[1], stats: { context_used: 5120, context: 20480 } }] }
+    mockApi({ 'GET /chats/c1': { data: answered }, 'GET /chat/models': { data: MODELS }, 'GET /projects': { data: { projects: [] } } })
+    renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
+    expect(await screen.findByRole('button', { name: '5,120 / 20,480 tokens of context used (25%)' })).toBeInTheDocument()
+    expect(screen.getByRole('tooltip')).toHaveTextContent('5,120 / 20,480 tokens')
+    // No title bar: the chat starts with its first message; its menu stays
+    expect(screen.queryByRole('heading', { name: 'LoRA questions' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Chat actions' })).toBeInTheDocument()
   })
 
   it('offers an effort only for a model that thinks', async () => {
     mockApi({ 'GET /chats/c1': { data: CHAT }, 'GET /chat/models': { data: MODELS }, 'GET /projects': { data: { projects: [] } } })
     renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
-    const picker = await screen.findByTitle('Model and effort')
+    const picker = await screen.findByTitle('Model, context and effort')
     await waitFor(() => expect(picker).toHaveTextContent('qwen3.5-9b· Medium'))  // once the models are in
     await userEvent.click(picker)
-    const dialog = screen.getByRole('dialog', { name: 'Model and effort' })
-    expect(within(dialog).getByRole('radiogroup', { name: 'Effort' })).toBeInTheDocument()
-    await userEvent.click(within(dialog).getByRole('radio', { name: /gemma-4b/ }))
-    expect(within(dialog).queryByRole('radiogroup', { name: 'Effort' })).not.toBeInTheDocument()
-    expect(screen.getByTitle('Model and effort')).toHaveTextContent('gemma-4b')
+    const dialog = screen.getByRole('dialog', { name: 'Model, context and effort' })
+    await userEvent.click(within(dialog).getByRole('button', { name: /Effort/ }))
+    await userEvent.click(within(screen.getByRole('radiogroup', { name: 'Effort' })).getByRole('radio', { name: /High/ }))
+    expect(screen.getByTitle('Model, context and effort')).toHaveTextContent('· High')  // picked, and the menu closed
+    expect(screen.queryByRole('radiogroup', { name: 'Effort' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTitle('Model, context and effort'))
+    await userEvent.click(screen.getByRole('radio', { name: /gemma-4b/ }))
+    expect(screen.getByTitle('Model, context and effort')).toHaveTextContent('gemma-4b')
+    await userEvent.click(screen.getByTitle('Model, context and effort'))
+    expect(within(screen.getByRole('dialog')).queryByRole('button', { name: /Effort/ })).not.toBeInTheDocument()
+  })
+
+  const context = (tokens: number, device: 'gpu' | 'split' | 'cpu', tps: number, loaded = false) => ({
+    tokens, device, gpu_layers: device === 'gpu' ? 33 : 20, layers: 33, vram_mb: 6000, ram_mb: 0, fits: true, tps,
+    prompt_tps: null, speed_source: 'measured' as const, load_seconds: 5, server: 'gpu' as const, loaded,
+  })
+  const REGISTRY: ChatModels = {
+    ...MODELS,
+    registry: true,
+    models: [
+      { id: 'qwen3.5-9b', reasoning: true, vision: true, tools: true, context: 16384, loaded: true, default_context: 16384,
+        loaded_context: 16384, contexts: [context(16384, 'gpu', 38, true), context(65536, 'split', 14)], params: '9B', quant: 'Q4_K_M' },
+      { id: 'tiny', reasoning: false, vision: false, tools: false, context: 8192, loaded: false, default_context: 8192,
+        contexts: [context(8192, 'cpu', 9)] },
+    ],
+  }
+
+  it('shows each context with its device and speed, and loads a new one as soon as it is picked', async () => {
+    const calls = mockApi({
+      'GET /chats/c1': { data: CHAT }, 'GET /chat/models': { data: REGISTRY }, 'GET /projects': { data: { projects: [] } },
+      'POST /chat/models/warm': { data: { status: 'loading' } }, 'GET /chat/models/state': { data: { status: 'loaded' } },
+    })
+    renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
+    const picker = await screen.findByTitle('Model, context and effort')
+    await waitFor(() => expect(picker).toHaveTextContent('· 16k'))
+    await userEvent.click(picker)
+    expect(screen.getByRole('button', { name: /Context.*16k · 38 tok\/s/ })).toBeInTheDocument()
+    await userEvent.hover(screen.getByRole('button', { name: /Context/ }))
+    const contexts = screen.getByRole('radiogroup', { name: 'Context size' })
+    expect(within(contexts).getByRole('radio', { name: /16k.*GPU.*loaded.*38 tok\/s/ })).toHaveAttribute('aria-checked', 'true')
+    await userEvent.click(within(contexts).getByRole('radio', { name: /64k.*GPU \+ CPU 20\/33.*reloads in ~5\.0 s.*14 tok\/s/ }))
+    expect(picker).toHaveTextContent('· 64k')
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST' && c.url === '/chat/models/warm')?.body)
+      .toEqual({ model: 'qwen3.5-9b', context: 65536 }))
+  })
+
+  it('fades out image attaching for a model that reads text only', async () => {
+    mockApi({
+      'GET /chats/c1': { data: { ...CHAT, model: 'tiny' } }, 'GET /chat/models': { data: REGISTRY },
+      'GET /projects': { data: { projects: [] } },
+    })
+    renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
+    await waitFor(() => expect(screen.getByTitle('Model, context and effort')).toHaveTextContent('tiny'))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Attach images' })).toBeDisabled())  // once the models are in
+    expect(screen.getByRole('button', { name: 'Attach files' })).toBeEnabled()
+    await userEvent.click(screen.getByTitle('Model, context and effort'))
+    expect(screen.getByRole('radio', { name: /^tiny.*text only/ })).toBeInTheDocument()
+    expect(screen.getByText(/tiny reads text and files only/)).toBeInTheDocument()
   })
 })

@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { API_BASE } from '../api/client'
 import { queryClient } from '../api/queryClient'
 import type { ArtifactRef } from '../api/queries/artifacts'
-import type { ChatMessage, ChatSource, Effort, ToolStep } from '../api/queries/chats'
+import type { ChatMessage, ChatSource, Effort, LoadState, ToolStep } from '../api/queries/chats'
 
 /** What a turn being answered looks like so far. Kept outside the page, so leaving the chat does not stop it. */
 export interface Draft {
@@ -11,6 +11,8 @@ export interface Draft {
   retry: boolean
   model: string
   effort: Effort
+  /** The model's load, while the turn waits for it */
+  loading: LoadState | null
   content: string
   reasoning: string
   /** When the current thinking started (ms), while it streams */
@@ -32,12 +34,14 @@ export interface SendBody {
   content?: string
   model: string
   effort: Effort
+  context?: number | null
   attachment_ids?: string[]
   retry?: boolean
 }
 
 type Event =
-  | { type: 'start'; message_id: string; model: string; effort: Effort }
+  | { type: 'start'; message_id: string; model: string; effort: Effort; context?: number | null }
+  | { type: 'loading'; state: LoadState }
   | { type: 'sources'; sources: ChatSource[] }
   | { type: 'reasoning'; text: string }
   | { type: 'token'; text: string }
@@ -70,24 +74,26 @@ export function apply(d: Draft, e: Event, now = Date.now()): Draft {
   switch (e.type) {
     case 'start':
       return { ...d, model: e.model, effort: e.effort, messageId: e.message_id }
+    case 'loading':
+      return { ...d, loading: e.state }
     case 'sources':
       return { ...d, sources: e.sources }
     case 'reasoning':
-      return { ...d, reasoning: d.reasoning + e.text, thinkingSince: d.thinkingSince ?? now }
+      return { ...d, loading: null, reasoning: d.reasoning + e.text, thinkingSince: d.thinkingSince ?? now }
     case 'token':
-      return { ...stopThinking(d), content: d.content + e.text }
+      return { ...stopThinking(d), loading: e.text ? null : d.loading, content: d.content + e.text }
     case 'tool': {
       const others = d.steps.filter((s) => s.id !== e.step.id)
       const at = d.steps.findIndex((s) => s.id === e.step.id)
       const steps = at === -1 ? [...others, e.step] : d.steps.map((s) => (s.id === e.step.id ? e.step : s))
-      return { ...stopThinking(d), steps }
+      return { ...stopThinking(d), loading: null, steps }
     }
     case 'artifact':
       return { ...d, artifacts: [...d.artifacts.filter((a) => a.id !== e.artifact.id), e.artifact] }
     case 'notice':
       return { ...d, notices: [...d.notices, e.text] }
     case 'error':
-      return { ...stopThinking(d), error: e.message }
+      return { ...stopThinking(d), loading: null, error: e.message }
     case 'done':
       return { ...stopThinking(d), saved: true }
     default:
@@ -138,7 +144,7 @@ export const useChatStreams = create<ChatStreams>((set, get) => ({
         ...s.drafts,
         [chatId]: {
           question: shown.question, attachments: shown.attachments ?? [], retry: !!body.retry, model: body.model, effort: body.effort,
-          content: '', reasoning: '', thinkingSince: null, reasoningMs: 0, steps: [], sources: [], artifacts: [], notices: [],
+          loading: null, content: '', reasoning: '', thinkingSince: null, reasoningMs: 0, steps: [], sources: [], artifacts: [], notices: [],
           error: null, streaming: true, saved: false, messageId: null,
         },
       },

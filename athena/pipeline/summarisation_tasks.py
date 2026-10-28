@@ -56,8 +56,10 @@ def _text_to_summarise(item: ContentItem, staged: str) -> Optional[str]:
 
 def _complete(system_prompt: str, user_msg: str, name: str, schema: dict):
     """One summary-model call with a JSON-schema answer; returns the response and the model used."""
+    from athena.model_server import lane
     model = llm.chat_model("summary")
-    res = llm.chat_client().chat.completions.create(
+    lane.yield_to_chat()
+    res = llm.chat_client(model=model).chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": system_prompt},

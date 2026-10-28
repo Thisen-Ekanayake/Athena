@@ -14,11 +14,13 @@ passages and files, then as many earlier turns as fit.
     {"type": "tool", "step": {...}}              a tool call starting (status running) and finishing
     {"type": "artifact", "artifact": {...}}      an artifact written or changed
     {"type": "notice", "text": "..."}            something the user should know (no project search, a cut file)
+    {"type": "loading", "state": {...}}          the model is loading (athena.model_server.loading), every half second
     {"type": "done", "message": {...}}           the saved assistant message
     {"type": "error", "message": "..."}
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -31,6 +33,7 @@ from loguru import logger
 ANSWER_TOKENS = 4096        # the answer and any document written through a tool call
 MIN_PROMPT_TOKENS = 3000    # thinking is cut back before the prompt gets smaller than this
 MAX_STEPS = 4               # model calls that may use tools; one more answers without them
+LOAD_WAIT = 600             # seconds a turn waits for its model to load
 CHARS_PER_TOKEN = 3.0       # a cautious estimate (prose runs near 4)
 HISTORY_TURNS = 20
 TITLE_SCHEMA = {"type": "object", "properties": {"title": {"type": "string"}}, "required": ["title"],
@@ -94,6 +97,7 @@ class Turn:
     model: str
     effort: str
     first_turn: bool
+    context: int | None = None       # the context size picked; the model's default when None
     maps: list[str] = field(default_factory=list)  # the built research maps (athena.projects.tools.ready_maps)
     events: list[dict] = field(default_factory=list)
 
@@ -127,7 +131,8 @@ def user_content(turn: Turn, passages: list[dict], budget: int, image_urls: dict
         share = max((budget - used) // max(len(texts) - i, 1), 200)
         body, cut = clip(a.get("text") or "(no text could be read from this file)", share)
         if cut:
-            notices.append(f"{a['filename']} was too long for the model's context; it read the first part.")
+            notices.append(f"{a['filename']} was too long for the model's context; it read the first part. "
+                           "A larger context (in the model menu) reads more of it.")
         parts.append(f"Attached file {a['filename']}:\n\n{body}")
         used += tokens(body)
     parts.append(turn.question)
@@ -169,7 +174,7 @@ def plan(turn: Turn) -> dict:
     """The model to call, its extra body, the thinking budget and max_tokens, and the prompt's token budget."""
     from athena.core import llm
     has_images = any(a["kind"] == "image" for a in turn.attachments)
-    model = llm.vision_model() if has_images else turn.model
+    model = llm.chat_preset(turn.model, turn.context, has_images)
     extra, budget = llm.effort_extra(turn.model, turn.effort)
     context = llm.model_context(model)
     room = context - ANSWER_TOKENS - 256
@@ -198,6 +203,7 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
     from fastapi.concurrency import run_in_threadpool
 
     from athena.core import llm, usage
+    from athena.model_server import lane, loading
     from athena.projects import files as uploads
     from athena.projects.tools import LABELS, TOOLS, Context
 
@@ -211,6 +217,10 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
     status, error = "stopped", None
     setup = plan(turn)
     estimate = tokens(turn.question)  # until the messages are built; the server's counts win
+    timing = {"predicted_n": 0, "predicted_ms": 0.0, "prompt_n": 0, "prompt_ms": 0.0}
+    kept = [0, 0]  # the last call's prompt and answer tokens: what the context holds after this turn
+    asked_at = first_token_at = load_ms = None
+    lane.hold()
 
     try:
         passages: list[dict] = []
@@ -243,7 +253,24 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
         estimate = sum(tokens(m["content"] if isinstance(m["content"], str) else json.dumps(m["content"]))
                        for m in messages)
 
-        client = client or llm.async_chat_client()
+        target = await run_in_threadpool(loading.target_of, setup["model"])
+        if target:  # load the model first, showing how far it has got
+            state = await run_in_threadpool(loading.state_of, target)
+            if state["status"] != "loaded":
+                began = time.monotonic()
+                loading.warm_target(target)
+                while state["status"] not in ("loaded", "failed") and time.monotonic() - began < LOAD_WAIT:
+                    yield {"type": "loading", "state": state}
+                    await asyncio.sleep(0.5)
+                    state = await run_in_threadpool(loading.state_of, target)
+                yield {"type": "loading", "state": state}
+                load_ms = int((time.monotonic() - began) * 1000)
+                if state["status"] == "failed":
+                    raise RuntimeError(f"{turn.model} failed to load. An admin can check it in Settings → Models "
+                                       "and keys.")
+
+        client = client or llm.async_chat_client(model=setup["model"])
+        held = time.monotonic()
         for step in range(MAX_STEPS + 1):
             offer_tools = step < MAX_STEPS
             kwargs = {"tools": TOOLS} if offer_tools else {}
@@ -251,17 +278,26 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
                 model=setup["model"], messages=list(messages), max_tokens=setup["max_tokens"], stream=True,
                 temperature=0.6 if setup["budget"] else 0.7, stream_options={"include_usage": True},
                 extra_body=setup["extra"], **kwargs)
+            asked_at = asked_at or time.monotonic()
             calls: dict[int, dict] = {}
             text_parts: list[str] = []
             think_started = None
+            step_timings = None
             async for chunk in stream:
+                if time.monotonic() - held > 20:  # still answering: background work keeps waiting
+                    lane.hold()
+                    held = time.monotonic()
+                step_timings = (getattr(chunk, "model_extra", None) or {}).get("timings") or step_timings
                 if getattr(chunk, "usage", None):
                     i, o = usage.tokens_of(chunk.usage)
                     counted_in, counted_out = counted_in + i, counted_out + o
+                    kept[:] = [i, o]
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
                 thought = _delta_field(delta, "reasoning_content")
+                if first_token_at is None and (thought or delta.content or delta.tool_calls):
+                    first_token_at = time.monotonic()
                 if thought:
                     think_started = think_started or time.monotonic()
                     reasoning_parts.append(thought)
@@ -282,6 +318,8 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
                         call["arguments"] += tc.function.arguments
             if think_started:
                 reasoning_ms += int((time.monotonic() - think_started) * 1000)
+            for key in timing:
+                timing[key] += (step_timings or {}).get(key) or 0
             text = "".join(text_parts)
             if text.strip():
                 content_parts.append(text.strip())
@@ -322,7 +360,10 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
         answer = drop_unknown_citations("\n\n".join(content_parts), len(ctx.sources))
         prompt_tokens = counted_in or estimate
         output_tokens = counted_out or tokens(answer + "".join(reasoning_parts))
+        lane.hold(30)  # a follow-up usually comes soon
         fields = {"content": answer, "reasoning": "".join(reasoning_parts) or None,
+                  "stats": turn_stats(setup["model"], timing, asked_at, first_token_at, load_ms,
+                                      sum(kept) or None),
                   "reasoning_ms": reasoning_ms or None, "steps": steps, "sources": ctx.sources,
                   "artifacts": ctx.artifacts, "model": setup["model"], "effort": turn.effort, "status": status,
                   "error": error, "input_tokens": prompt_tokens, "output_tokens": output_tokens}
@@ -332,6 +373,43 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
     saved = await run_in_threadpool(save, fields)
     await run_in_threadpool(usage.add, "chat", setup["model"], prompt_tokens, output_tokens, "chat", turn.user_id)
     yield {"type": "done", "message": saved}
+
+
+def turn_stats(preset: str, timing: dict, asked_at: float | None, first_token_at: float | None,
+               load_ms: int | None, context_used: int | None = None) -> dict | None:
+    """How the answer ran, for the message ({tps, prompt_tps, ttft_ms, load_ms, device, gpu_layers, layers,
+    context, context_used}); its speed also updates the model's measured speed (athena.model_server.stats).
+    ``context_used`` is what the context held at the end (the last call's prompt and answer), which the chat box
+    shows against the context size."""
+    from athena.model_server import stats
+    rates = {"predicted_n": timing["predicted_n"], "prompt_n": timing["prompt_n"]}
+    if timing["predicted_ms"]:
+        rates["predicted_per_second"] = timing["predicted_n"] / timing["predicted_ms"] * 1000
+    if timing["prompt_ms"]:
+        rates["prompt_per_second"] = timing["prompt_n"] / timing["prompt_ms"] * 1000
+    try:
+        out = stats.record_turn(preset, rates) or {}
+    except Exception as exc:
+        logger.debug(f"Turn stats not kept: {exc}")
+        out = {}
+    if not out and rates.get("predicted_per_second"):
+        out = {"tps": round(rates["predicted_per_second"], 1)}
+    if asked_at and first_token_at:
+        out["ttft_ms"] = int((first_token_at - asked_at) * 1000)
+    if load_ms:
+        out["load_ms"] = load_ms
+    if context_used:
+        out["context_used"] = context_used
+        out.setdefault("context", llm_context(preset))
+    return out or None
+
+
+def llm_context(preset: str) -> int | None:
+    from athena.core import llm
+    try:
+        return llm.model_context(preset)
+    except Exception:
+        return None
 
 
 def title_for(question: str, answer: str, model: str) -> str | None:

@@ -246,7 +246,7 @@ def describe_items(session: Session, items: list[ProjectItem]) -> list[dict]:
 def conversation_dict(c: Conversation, project: Project | None = None) -> dict:
     return {"id": str(c.id), "title": c.title, "project_id": str(c.project_id) if c.project_id else None,
             "project_name": project.name if project else None, "model": c.model, "effort": c.effort,
-            "pinned": c.pinned_at is not None, "archived": c.archived_at is not None,
+            "context": c.context, "pinned": c.pinned_at is not None, "archived": c.archived_at is not None,
             "created_at": _iso(c.created_at), "updated_at": _iso(c.updated_at)}
 
 
@@ -275,9 +275,9 @@ def get_conversation(session: Session, user_id: UUID, conversation_id: UUID) -> 
 
 def create_conversation(session: Session, user_id: UUID, project_id: UUID | None = None,
                         title: str | None = None, model: str | None = None,
-                        effort: str | None = None) -> Conversation:
+                        effort: str | None = None, context: int | None = None) -> Conversation:
     c = Conversation(user_id=user_id, project_id=project_id, title=(title or "New chat").strip()[:TITLE_MAX],
-                     model=model, effort=effort, created_at=_now(), updated_at=_now())
+                     model=model, effort=effort, context=context, created_at=_now(), updated_at=_now())
     session.add(c)
     touch_project(session, project_id, commit=False)
     session.commit()
@@ -322,7 +322,7 @@ def message_dict(m: ChatMessage) -> dict:
             "reasoning_ms": m.reasoning_ms, "steps": m.steps or [], "sources": m.sources or [],
             "attachments": m.attachments or [], "artifacts": m.artifacts or [], "model": m.model, "effort": m.effort,
             "status": m.status, "error": m.error, "input_tokens": m.input_tokens, "output_tokens": m.output_tokens,
-            "created_at": _iso(m.created_at)}
+            "stats": m.stats, "created_at": _iso(m.created_at)}
 
 
 def messages_of(session: Session, conversation_id: UUID) -> list[ChatMessage]:
