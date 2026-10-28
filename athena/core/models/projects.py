@@ -4,7 +4,7 @@ chats and artifacts (documents the model writes), with instructions sent to ever
 alone and move into a project later (athena.projects).
 """
 from uuid import uuid4
-from sqlalchemy import Column, String, DateTime, Integer, ForeignKey, Index, UniqueConstraint, func
+from sqlalchemy import Boolean, Column, String, DateTime, Integer, ForeignKey, Index, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 
 from athena.core.models.base import Base
@@ -29,7 +29,8 @@ class ProjectItem(Base):
     ``ref`` names it once per project (``item:<id>``, ``paper:<id>``, ``map:<id>``, ``review:<id>``, ``idea:<id>``,
     ``list:<id>``, or ``ext:<doi|arxiv|url>`` for a paper found by search that is not in Athena); the foreign key
     that matches it removes the row with the thing. External papers keep their title, abstract and link in
-    ``meta``. ``index_status`` follows its passages into Qdrant's ``project_chunks``.
+    ``meta``. ``index_status`` follows its passages into Qdrant's ``project_chunks``. A map with ``share`` set
+    goes to every chat in the project as a graph of its lineage (athena.evolution.digest).
     """
     __tablename__ = "project_items"
     __table_args__ = (UniqueConstraint("project_id", "ref", name="uq_project_item_ref"),)
@@ -47,6 +48,7 @@ class ProjectItem(Base):
                            nullable=True)
     list_id = Column(PG_UUID(as_uuid=True), ForeignKey("saved_lists.id", ondelete="CASCADE"), nullable=True)
     meta = Column(JSONB, nullable=False, default={})
+    share = Column(Boolean, nullable=False, default=False, server_default="false")  # maps: the graph goes to chats
     index_status = Column(String, nullable=False, default="pending")  # pending | indexed | failed
     index_error = Column(String, nullable=True)
     added_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -72,9 +74,25 @@ class Conversation(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class ConversationMap(Base):
+    """A research map attached to a chat for its whole length. The user sees it beside the chat; with ``share``
+    the model also gets it as a graph (athena.evolution.digest), its papers named ``<key><n>`` (A3, B7)."""
+    __tablename__ = "conversation_maps"
+    __table_args__ = (UniqueConstraint("conversation_id", "topic_id", name="uq_conversation_map"),)
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id = Column(PG_UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"),
+                             nullable=False, index=True)
+    topic_id = Column(PG_UUID(as_uuid=True), ForeignKey("evo_topics.id", ondelete="CASCADE"), nullable=False)
+    share = Column(Boolean, nullable=False, default=False)
+    key = Column(String(1), nullable=False)          # A, B, C… in the order attached; kept when others go
+    added_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class ChatMessage(Base):
     """One turn. An assistant turn keeps its thinking, the tool calls it made (``steps``), the passages it was
-    given (``sources``, cited as [n]) and the artifacts it wrote; a user turn keeps its attached files."""
+    given (``sources``, cited as [n]), the artifacts it wrote and the map papers it named (``map_refs``); a user
+    turn keeps the files attached with it."""
     __tablename__ = "chat_messages"
     __table_args__ = (Index("ix_chat_messages_conversation_created", "conversation_id", "created_at"),)
 
@@ -89,6 +107,7 @@ class ChatMessage(Base):
     sources = Column(JSONB, nullable=False, default=[])      # [{n, kind, ref, title, excerpt, ...}]
     attachments = Column(JSONB, nullable=False, default=[])  # [{id, filename, kind}]
     artifacts = Column(JSONB, nullable=False, default=[])    # [{id, title, version}]
+    map_refs = Column(JSONB, nullable=True)                  # {"A3": {slug, map, paper_id, label, year}}
     model = Column(String, nullable=True)
     effort = Column(String, nullable=True)
     status = Column(String, nullable=False, default="done")  # done | stopped | failed
@@ -102,8 +121,9 @@ class ChatMessage(Base):
 
 class UserFile(Base):
     """A file a user uploaded: into a project's knowledge (``project_id``) or onto a chat message
-    (``conversation_id``). PDFs and text files keep their text; images keep a caption for project search and go to
-    the vision model as they are. The bytes are under ATHENA_UPLOADS_DIR at ``path``."""
+    (``conversation_id``). PDFs and text files keep their text; images keep a caption for project search and later
+    chat turns, and go to the vision model as they are on their own turn. A chat's files stay with every turn
+    until ``detached_at``. The bytes are under ATHENA_UPLOADS_DIR at ``path``."""
     __tablename__ = "user_files"
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -123,6 +143,7 @@ class UserFile(Base):
     status = Column(String, nullable=False, default="pending")       # pending | ready | failed
     error = Column(String, nullable=True)
     index_status = Column(String, nullable=False, default="pending")  # pending | indexed | failed | none
+    detached_at = Column(DateTime(timezone=True), nullable=True)      # out of the chat's turns, kept on its message
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
