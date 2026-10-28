@@ -1,10 +1,12 @@
 """
-Finding model files on this machine for the admin's picker: a browser over the folders models may come from.
+Finding model files on this machine for the admin's picker, the way a file dialog does.
 
-The browser stays inside the allowed folders: ``models/`` in the repository, the folders registered models live in
-(their symlinks' targets too), the llama.cpp download cache, and any folder the admin added (MODEL_DIRS, separated
-by commas). Only folders and .gguf files are listed; a model split into parts (``-00001-of-00003.gguf``) shows once,
-as its first part with the size of all of them, which is what llama.cpp loads.
+Any folder can be opened except the system ones (SYSTEM); only folders and .gguf files are listed, hidden ones
+left out, and a model split into parts (``-00001-of-00003.gguf``) shows once, as its first part with the size of
+all of them, which is what llama.cpp loads. The places to start from are ``models/`` in the repository, the
+folders registered models live in (their symlinks' targets too), the llama.cpp download cache, any folder in
+MODEL_DIRS (separated by commas), the home folder and the whole disk. Only a .gguf file outside the system
+folders is ever read, and only its GGUF header.
 """
 from __future__ import annotations
 
@@ -25,7 +27,7 @@ def _setting(key: str) -> str:
 
 
 def roots() -> list[str]:
-    """The folders the browser may show, real paths, without duplicates or ones inside another."""
+    """The folders models are kept in, real paths, without duplicates or ones inside another."""
     found = [registry.REPO / "models", Path.home() / ".cache" / "llama.cpp", Path.home() / "models"]
     found += [Path(p.strip()).expanduser() for p in _setting("MODEL_DIRS").split(",") if p.strip()]
     for r in registry.snapshot():
@@ -42,61 +44,30 @@ def roots() -> list[str]:
     return [r for i, r in enumerate(real) if not any(r.startswith(o.rstrip("/") + "/") for o in real[:i])]
 
 
-def checked(path: str) -> str:
-    """``path`` resolved (symlinks too), if it lies inside an allowed folder; use what this returns, not ``path``,
-    so the file read is the one that was checked."""
-    rp = os.path.realpath(os.path.expanduser(path))
-    for root in roots():
-        if rp == root or rp.startswith(root.rstrip("/") + "/"):
-            return rp
-    raise PermissionError("That is outside the folders models may come from")
-
-
-def allowed(path: str) -> bool:
-    try:
-        checked(path)
-    except PermissionError:
-        return False
-    return True
+def places() -> list[dict]:
+    """[{name, path}]: where the browser can start, the model folders first."""
+    home, repo = os.path.realpath(Path.home()), os.path.realpath(registry.REPO / "models")
+    cache = os.path.realpath(Path.home() / ".cache" / "llama.cpp")
+    named = {repo: "Athena models", cache: "llama.cpp downloads"}
+    found = sorted(roots(), key=lambda r: (r not in named, list(named).index(r) if r in named else 0, r.lower()))
+    out = [{"name": named.get(r) or os.path.basename(r) or r, "path": r} for r in found]
+    for name, path in (("Home", home), ("Computer", "/")):
+        if all(p["path"] != path for p in out):
+            out.append({"name": name, "path": path})
+    return out
 
 
 def _system(rp: str) -> bool:
-    return rp in ("/", os.path.realpath(Path.home())) or any(rp == s or rp.startswith(s + "/") for s in SYSTEM)
+    return any(rp == s or rp.startswith(s + "/") for s in SYSTEM)
 
 
-def _holds_models(folder: str) -> bool:
-    """A .gguf file in the folder or one level down."""
-    try:
-        with os.scandir(folder) as it:
-            subs = []
-            for e in it:
-                if e.name.lower().endswith(".gguf") and e.is_file():
-                    return True
-                if e.is_dir() and not e.name.startswith("."):
-                    subs.append(e.path)
-        for sub in subs[:MAX_ENTRIES]:
-            with os.scandir(sub) as it:
-                if any(e.name.lower().endswith(".gguf") and e.is_file() for e in it):
-                    return True
-    except OSError:
-        return False
-    return False
-
-
-def add_root(path: str) -> list[str]:
-    """Allow a folder from now on: one that holds models, not the whole disk, a home folder or a system folder."""
-    from athena.core.config_store import set_setting
+def checked(path: str) -> str:
+    """``path`` resolved (symlinks too), if it is a .gguf file outside the system folders; use what this returns,
+    not ``path``, so the file read is the one that was checked."""
     rp = os.path.realpath(os.path.expanduser(path))
-    if not os.path.isdir(rp):
-        raise ValueError(f"{path} is not a folder on this machine")
-    if _system(rp):
-        raise ValueError(f"{rp} is too wide or a system folder; allow the folder the models are in")
-    if not _holds_models(rp):
-        raise ValueError(f"{rp} holds no .gguf files (nor do its folders)")
-    current = [p.strip() for p in _setting("MODEL_DIRS").split(",") if p.strip()]
-    if rp not in current:
-        set_setting("MODEL_DIRS", ",".join(current + [rp]))
-    return roots()
+    if _system(rp) or not rp.lower().endswith(".gguf"):
+        raise PermissionError("Pick a .gguf file outside the system folders")
+    return rp
 
 
 def _kind(name: str) -> str:
@@ -104,26 +75,31 @@ def _kind(name: str) -> str:
 
 
 def browse(path: str | None) -> dict:
-    """{path, parent, roots, entries: [{name, path, kind: dir | model | mmproj, size_bytes, parts}]}."""
-    tops = roots()
-    if not path:
-        return {"path": None, "parent": None, "roots": tops,
-                "entries": [{"name": r, "path": r, "kind": "dir", "size_bytes": None} for r in tops]}
-    rp = checked(path)
+    """{path, parent, places, entries: [{name, path, kind: dir | model | mmproj, size_bytes, parts}]}; with no
+    path, the first place."""
+    tops = places()
+    rp = os.path.realpath(os.path.expanduser(path or tops[0]["path"]))
+    if _system(rp):
+        raise PermissionError("System folders hold no models")
     if not os.path.isdir(rp):
         raise FileNotFoundError(rp)
     dirs, files = [], []
-    with os.scandir(rp) as it:
-        for e in it:
-            if e.name.startswith("."):
-                continue
-            try:
-                if e.is_dir():
-                    dirs.append({"name": e.name, "path": os.path.join(rp, e.name), "kind": "dir", "size_bytes": None})
-                elif e.name.lower().endswith(".gguf") and e.is_file():
-                    files.append(e)
-            except OSError:
-                continue
+    try:
+        with os.scandir(rp) as it:
+            for e in it:
+                if e.name.startswith("."):
+                    continue
+                try:
+                    if e.is_dir():
+                        if not _system(os.path.join(rp, e.name)):
+                            dirs.append({"name": e.name, "path": os.path.join(rp, e.name), "kind": "dir",
+                                         "size_bytes": None})
+                    elif e.name.lower().endswith(".gguf") and e.is_file():
+                        files.append(e)
+                except OSError:
+                    continue
+    except PermissionError:
+        raise PermissionError("Athena is not allowed to read that folder")
     out_files = []
     parts: dict[str, list] = {}
     for e in files:
@@ -137,9 +113,8 @@ def browse(path: str | None) -> dict:
         first = group[0][1]
         out_files.append({"name": first.name, "path": os.path.join(rp, first.name), "kind": _kind(first.name),
                           "size_bytes": sum(e.stat().st_size for _, e in group), "parts": len(group)})
-    parent = os.path.dirname(rp)
     entries = sorted(dirs, key=lambda d: d["name"].lower()) + sorted(out_files, key=lambda f: f["name"].lower())
-    return {"path": rp, "parent": parent if allowed(parent) and parent != rp else None, "roots": tops,
+    return {"path": rp, "parent": os.path.dirname(rp) if rp != "/" else None, "places": tops,
             "entries": entries[:MAX_ENTRIES]}
 
 

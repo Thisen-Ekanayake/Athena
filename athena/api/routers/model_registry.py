@@ -3,9 +3,8 @@ The model registry (admin): the GGUF files the local model server serves, where 
 (athena.model_server). Settings → Models and keys.
 
 GET    /api/v1/models                    — every model with its contexts (device, memory, speed, router status),
-                                           the GPU, both routers, the running benchmark and the allowed folders
-GET    /api/v1/models/browse?path=       — folders and .gguf files inside the allowed folders
-POST   /api/v1/models/folders            — {path}: allow another folder
+                                           the GPU, both routers, the running benchmark and the model folders
+GET    /api/v1/models/browse?path=       — a folder's folders and .gguf files, and the places to start from
 POST   /api/v1/models/inspect            — {path}: what the file says, with a name, projector and contexts to suggest
 POST   /api/v1/models                    — {path, name, mmproj_path?, role, reasoning, tools, placement, contexts,
                                            default_context}: register it; it is measured and benchmarked next
@@ -14,7 +13,6 @@ DELETE /api/v1/models/{id}
 POST   /api/v1/models/{id}/benchmark     — {force}: measure its speed again (only missing contexts without force)
 POST   /api/v1/models/{id}/default       — make a chat model the default (LLM_CHAT_MODEL)
 POST   /api/v1/models/{id}/unload        — take it out of GPU or CPU memory now
-POST   /api/v1/models/locate             — {path}: a folder or .gguf file typed in; its folder is allowed from then on
 
 Turning the default chat model off makes another chat model the default; turning any model off unloads it.
 """
@@ -80,7 +78,7 @@ def _describe(path: str, kind: str = "model") -> dict:
     except PermissionError:
         path = None
     if path is None or not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="That file is not in a folder models may come from")
+        raise HTTPException(status_code=404, detail="No .gguf file there (system folders are never read)")
     try:
         info = gguf.describe(path, check=kind == "model")
     except (OSError, gguf.NotGGUF) as exc:
@@ -203,33 +201,6 @@ def browse(path: str | None = None, user: User = Depends(auth.require_admin)):
         raise HTTPException(status_code=403, detail=str(exc))
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="No such folder")
-
-
-@router.post("/folders")
-def add_folder(body: PathBody, user: User = Depends(auth.require_admin)):
-    try:
-        return {"roots": files.add_root(body.path)}
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-
-
-@router.post("/locate")
-def locate(body: PathBody, user: User = Depends(auth.require_admin)):
-    """A path typed in: a folder to browse or a .gguf file to pick. Its folder joins the allowed folders."""
-    path = os.path.realpath(os.path.expanduser(body.path.strip()))
-    if os.path.isdir(path):
-        folder, picked = path, None
-    elif os.path.isfile(path) and path.lower().endswith(".gguf"):
-        folder, picked = os.path.dirname(path), path
-    else:
-        raise HTTPException(status_code=404, detail="No folder or .gguf file at that path on this machine")
-    if not files.allowed(folder):
-        try:
-            files.add_root(folder)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc))
-        registry.invalidate()
-    return {"folder": folder, "file": picked}
 
 
 @router.post("/inspect")

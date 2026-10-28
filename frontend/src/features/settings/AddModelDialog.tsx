@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ArrowUp, Brain, ChevronRight, Eye, File, Folder, HardDrive, Wrench, X } from 'lucide-react'
+import { ArrowUp, Brain, ChevronRight, Eye, File, Folder, HardDrive, House, Wrench, X } from 'lucide-react'
 import { apiErrorMessage } from '../../api/error'
-import { useQueryClient } from '@tanstack/react-query'
-import { inspectModel, locatePath, useAddModel, useBrowse, type Inspection, type Placement } from '../../api/queries/modelRegistry'
+import { inspectModel, useAddModel, useBrowse, type Inspection, type Placement } from '../../api/queries/modelRegistry'
 import { Button } from '../../ui/Button'
 import { Chip } from '../../ui/Chip'
 import { Notice } from '../../ui/Notice'
@@ -14,50 +13,69 @@ import { PLACEMENTS, bytes, deviceText, megabytes, tokens } from '../chat/modelF
 
 const STEPS = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576]
 
-/** Folders and .gguf files on the server, inside the folders models may come from. */
+/** The folder above ``path`` on the server, or null at the top. */
+function parentOf(path: string): string | null {
+  const trimmed = path.replace(/\/+$/, '')
+  if (!trimmed) return null
+  const cut = trimmed.lastIndexOf('/')
+  return cut <= 0 ? '/' : trimmed.slice(0, cut)
+}
+
+/** ``/a/b`` → [/, /a, /a/b], each with its folder's name. */
+function crumbs(path: string): { name: string; path: string }[] {
+  const parts = path.split('/').filter(Boolean)
+  return [{ name: '/', path: '/' }, ...parts.map((name, i) => ({ name, path: '/' + parts.slice(0, i + 1).join('/') }))]
+}
+
+function placeIcon(name: string) {
+  if (name === 'Home') return <House className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+  if (name === 'Computer') return <HardDrive className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+  return <Folder className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden="true" />
+}
+
+/** A file dialog over the server's folders: places to start from, the path as links, folders and .gguf files. */
 function Browser({ onPick, picked }: { onPick: (path: string) => void; picked: string | null }) {
   const [path, setPath] = useState<string | null>(null)
-  const [typed, setTyped] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const qc = useQueryClient()
   const browse = useBrowse(path)
   const data = browse.data
-  const shown = typed ?? data?.path ?? ''
-
-  /** A folder or file path typed or pasted in: open the folder (allowing it from now on) and pick the file. */
-  const open = async () => {
-    if (!shown.trim()) return
-    setBusy(true)
-    setError(null)
-    try {
-      const found = await locatePath(shown.trim())
-      await qc.invalidateQueries({ queryKey: ['model-browse'] })
-      setPath(found.folder)
-      setTyped(null)
-      if (found.file) onPick(found.file)
-    } catch (e) {
-      setError(apiErrorMessage(e, 'Nothing at that path.'))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const loading = browse.isPlaceholderData
+  // While a folder loads (or fails), the path bar already shows it; the listing stays on the last one.
+  const current = (!loading && data?.path) || path
+  const up = current ? parentOf(current) : null
+  // The places come with the first folder, which stays cached, so they stay put when a folder cannot be read.
+  const places = useBrowse(null).data?.places ?? []
 
   return (
-    <div className="grid min-h-0 grid-rows-[auto_1fr_auto] gap-2">
-      <form className="flex min-w-0 items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); void open() }}>
-        <Button variant="ghost" size="icon-sm" disabled={!data?.path} onClick={() => { setTyped(null); setPath(data?.parent ?? null) }} aria-label="Up a folder" title="Up a folder"><ArrowUp /></Button>
-        <HardDrive className="h-3.5 w-3.5 shrink-0 text-fg-3" aria-hidden="true" />
-        <input value={shown} onChange={(e) => setTyped(e.target.value)} aria-label="Model path"
-          placeholder="Paste a path: /data/models/model.gguf or a folder"
-          className={cn(inputClass, 'h-7 flex-1 font-mono text-[12px]')} />
-        <Button type="submit" size="sm" disabled={busy || !shown.trim() || shown === data?.path}>{busy ? 'Opening…' : 'Open'}</Button>
-      </form>
-      <ul className="min-h-[220px] overflow-y-auto rounded-lg border border-line bg-surface-2/40 py-1" aria-label="Files">
+    <div className="grid min-h-0 grid-rows-[auto_auto_1fr_auto] gap-2">
+      <nav className="flex flex-wrap gap-1.5" aria-label="Places">
+        {places.map((p) => (
+          <button key={p.path} type="button" onClick={() => setPath(p.path)} title={p.path}
+            className={cn('inline-flex max-w-[14rem] items-center gap-1.5 rounded-md border border-line px-2 py-1 text-[12px] text-fg-2 hover:bg-surface-2',
+              current === p.path && 'border-accent bg-accent-soft text-fg')}>
+            {placeIcon(p.name)}<span className="truncate">{p.name}</span>
+          </button>
+        ))}
+      </nav>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <Button variant="ghost" size="icon-sm" disabled={!up} onClick={() => up && setPath(up)} aria-label="Up a folder" title="Up a folder"><ArrowUp /></Button>
+        <ol className="flex min-w-0 flex-1 flex-wrap items-center gap-x-0.5 font-mono text-[12px]" aria-label="Folder path">
+          {current && crumbs(current).map((c, i, all) => (
+            <li key={c.path} className="inline-flex min-w-0 items-center">
+              {i > 1 && <ChevronRight className="h-3 w-3 shrink-0 text-fg-3" aria-hidden="true" />}
+              {i === all.length - 1 ? (
+                <span className="truncate px-1 text-fg" aria-current="location">{c.name}</span>
+              ) : (
+                <button type="button" onClick={() => setPath(c.path)} className="truncate rounded px-1 text-fg-2 hover:bg-surface-2 hover:text-fg">{c.name}</button>
+              )}
+            </li>
+          ))}
+        </ol>
+      </div>
+      <ul className={cn('min-h-[220px] overflow-y-auto rounded-lg border border-line bg-surface-2/40 py-1', loading && 'opacity-60')} aria-label="Files" aria-busy={loading}>
         {browse.isLoading && <li className="px-3 py-2"><Spinner label="Reading the folder…" /></li>}
         {browse.isError && <li className="px-3 py-2 text-[12.5px] text-bad">{apiErrorMessage(browse.error, 'The folder could not be read.')}</li>}
-        {data?.entries.length === 0 && <li className="px-3 py-2 text-[12.5px] text-fg-3">No folders or .gguf files here.</li>}
-        {data?.entries.map((e) => (
+        {!browse.isError && data?.entries.length === 0 && <li className="px-3 py-2 text-[12.5px] text-fg-3">No folders or .gguf files here.</li>}
+        {!browse.isError && data?.entries.map((e) => (
           <li key={e.path}>
             <button
               type="button"
@@ -78,9 +96,7 @@ function Browser({ onPick, picked }: { onPick: (path: string) => void; picked: s
           </li>
         ))}
       </ul>
-      {error ? <p className="text-[12px] text-bad">{error}</p> : (
-        <p className="text-[11.5px] text-fg-3">Browse, or paste the path of a model or folder anywhere on this machine; its folder is remembered.</p>
-      )}
+      <p className="text-[11.5px] text-fg-3">Open folders anywhere on this machine; only folders and .gguf files show, and system folders are left out.</p>
     </div>
   )
 }

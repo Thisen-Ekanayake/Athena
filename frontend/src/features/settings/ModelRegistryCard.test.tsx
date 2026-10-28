@@ -70,21 +70,29 @@ describe('the model registry', () => {
   })
 
   it('adds a model picked from a folder, with its projector and context sizes', async () => {
+    const places = [{ name: 'Athena models', path: '/repo/models' }, { name: 'Home', path: '/home/me' }, { name: 'Computer', path: '/' }]
     const calls = mockApi({
       'GET /models': { data: REGISTRY },
-      'GET /models/browse': { data: { path: '/models', parent: null, roots: ['/models'], entries: [
-        { name: 'gemma-3-4b-Q4_K_M.gguf', path: '/models/gemma-3-4b-Q4_K_M.gguf', kind: 'model', size_bytes: 2_500_000_000 },
-        { name: 'mmproj-gemma.gguf', path: '/models/mmproj-gemma.gguf', kind: 'mmproj', size_bytes: 800_000_000 },
-      ] } },
+      'GET /models/browse': (config) => (config.params?.path === '/models'
+        ? { data: { path: '/models', parent: '/', places, entries: [
+          { name: 'gemma-3-4b-Q4_K_M.gguf', path: '/models/gemma-3-4b-Q4_K_M.gguf', kind: 'model', size_bytes: 2_500_000_000 },
+          { name: 'mmproj-gemma.gguf', path: '/models/mmproj-gemma.gguf', kind: 'mmproj', size_bytes: 800_000_000 },
+        ] } }
+        : config.params?.path === '/'
+          ? { data: { path: '/', parent: null, places, entries: [{ name: 'models', path: '/models', kind: 'dir', size_bytes: null }] } }
+          : { data: { path: '/repo/models', parent: '/repo', places, entries: [] } }),
       'POST /models/inspect': { data: SEEN },
-      'POST /models/locate': { data: { folder: '/models', file: '/models/gemma-3-4b-Q4_K_M.gguf' } },
       'POST /models': { status: 201, data: { id: 'm3' } },
     })
     renderWithProviders(<ModelRegistryCard />)
     await userEvent.click(await screen.findByRole('button', { name: /Add model/ }))
     const dialog = screen.getByRole('dialog', { name: 'Add a model' })
-    await userEvent.type(within(dialog).getByRole('textbox', { name: 'Model path' }), '/models/gemma-3-4b-Q4_K_M.gguf{Enter}')
+    expect(await within(dialog).findByText('No folders or .gguf files here.')).toBeInTheDocument()
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Computer' }))
+    await userEvent.click(await within(dialog).findByRole('button', { name: /^models/ }))
     expect(await within(dialog).findByRole('button', { name: /mmproj-gemma/ })).toBeDisabled()  // a projector is not a model
+    expect(within(dialog).getByRole('list', { name: 'Folder path' })).toHaveTextContent('/models')
+    await userEvent.click(within(dialog).getByRole('button', { name: /gemma-3-4b-Q4_K_M/ }))
     expect(await within(dialog).findByDisplayValue('gemma-3-4b')).toBeInTheDocument()
     expect(within(dialog).getByRole('combobox', { name: /Vision projector/ })).toHaveValue('/models/mmproj-gemma.gguf')
     await userEvent.click(within(dialog).getByRole('checkbox', { name: 'Offer 64k' }))

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '../client'
 import type { Device } from './chats'
 
@@ -122,9 +122,10 @@ export interface BrowseEntry {
 }
 
 export interface Browse {
-  path: string | null
+  path: string
   parent: string | null
-  roots: string[]
+  /** Where the browser can start: the model folders, then Home and the whole disk. */
+  places: { name: string; path: string }[]
   entries: BrowseEntry[]
 }
 
@@ -162,11 +163,13 @@ export const useRegistry = (poll = false) =>
     refetchInterval: (q) => (poll || q.state.data?.benchmark?.state === 'running' ? 2000 : false),
   })
 
+/** A folder on the server (null: the first place). The last folder stays shown while the next one loads. */
 export const useBrowse = (path: string | null, enabled = true) =>
   useQuery({
     queryKey: ['model-browse', path],
     queryFn: async () => (await apiClient.get<Browse>('/models/browse', { params: { path: path ?? undefined } })).data,
     enabled,
+    placeholderData: keepPreviousData,
   })
 
 export const inspectModel = async (path: string) => (await apiClient.post<Inspection>('/models/inspect', { path })).data
@@ -196,18 +199,3 @@ export const useBenchmark = () =>
 export const useMakeDefault = () => useRegistryMutation((id: string) => apiClient.post(`/models/${id}/default`))
 
 export const useUnloadModel = () => useRegistryMutation((id: string) => apiClient.post(`/models/${id}/unload`))
-
-/** A folder or .gguf file typed in; its folder joins the allowed ones. */
-export const locatePath = async (path: string) =>
-  (await apiClient.post<{ folder: string; file: string | null }>('/models/locate', { path })).data
-
-export const useAddFolder = () => {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: async (path: string) => (await apiClient.post<{ roots: string[] }>('/models/folders', { path })).data,
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['model-browse'] })
-      void qc.invalidateQueries({ queryKey: KEY })
-    },
-  })
-}

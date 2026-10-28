@@ -3,7 +3,6 @@ estimates, the chat's choice of preset, load progress, chats going first, and th
 from __future__ import annotations
 
 import struct
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -342,11 +341,22 @@ def test_the_admin_sees_models_with_their_contexts(api):
     assert body["servers"]["gpu"]["online"] is False
 
 
-def test_the_browser_stays_inside_the_allowed_folders(api, tmp_path):
-    listed = api.get("/api/v1/models/browse", params={"path": str(tmp_path / "models")}).json()
-    kinds = {e["name"]: e["kind"] for e in listed["entries"]}
+def test_the_browser_opens_any_folder_but_system_ones(api, tmp_path):
+    first = api.get("/api/v1/models/browse").json()  # no path: the first place, the repository's models
+    assert first["path"] == str(tmp_path / "models")
+    kinds = {e["name"]: e["kind"] for e in first["entries"]}
     assert kinds == {"Qwen3.5-9B-Q4_K_M.gguf": "model", "mmproj-F16.gguf": "mmproj", "emb.gguf": "model"}
+    assert [p["name"] for p in first["places"]][-2:] == ["Home", "Computer"]
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "sub").mkdir(parents=True)
+    write_gguf(elsewhere / "m.gguf", qwen_header())
+    (elsewhere / "notes.txt").write_text("x")
+    listed = api.get("/api/v1/models/browse", params={"path": str(elsewhere)}).json()
+    assert [e["name"] for e in listed["entries"]] == ["sub", "m.gguf"] and listed["parent"] == str(tmp_path)
+    disk = api.get("/api/v1/models/browse", params={"path": "/"}).json()
+    assert disk["parent"] is None and not {"proc", "etc", "sys"} & {e["name"] for e in disk["entries"]}
     assert api.get("/api/v1/models/browse", params={"path": "/etc"}).status_code == 403
+    assert api.get("/api/v1/models/browse", params={"path": str(tmp_path / "nope")}).status_code == 404
 
 
 def test_a_model_is_inspected_added_changed_and_removed(api, tmp_path):
@@ -408,50 +418,27 @@ def test_the_default_moves_when_it_is_turned_off_and_turned_off_models_unload(ap
     assert api.post(f"/api/v1/models/{small['id']}/unload").json() == {"unloaded": []}
 
 
-def test_incomplete_files_are_refused_and_typed_paths_are_opened(api, tmp_path, monkeypatch):
+def test_incomplete_files_are_refused(api, tmp_path):
     cut = write_gguf(tmp_path / "models" / "cut-Q4_K_M.gguf", qwen_header(), tensors=[("w", [256, 64], 12, 0)],
                      padding=100)
     seen = api.post("/api/v1/models/inspect", json={"path": str(cut)}).json()
     assert seen["info"]["complete"] is False
     refused = api.post("/api/v1/models", json={"path": str(cut), "name": "cut"})
     assert refused.status_code == 422 and "incomplete" in refused.json()["detail"]
-    added = []
-    monkeypatch.setattr(files, "add_root", lambda p: added.append(p) or [])
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
-    model = write_gguf(elsewhere / "m.gguf", qwen_header())
-    got = api.post("/api/v1/models/locate", json={"path": str(model)}).json()
-    assert got == {"folder": str(elsewhere), "file": str(model)} and added == [str(elsewhere)]
-    assert api.post("/api/v1/models/locate", json={"path": str(tmp_path / "nope")}).status_code == 404
 
 
-def test_only_folders_holding_models_are_allowed(api, tmp_path, monkeypatch):
-    saved = {}
-    import athena.core.config_store as store
-    monkeypatch.setattr(store, "set_setting", lambda k, v: saved.__setitem__(k, v))
-    for wide in ("/", "/etc", str(Path.home())):
-        refused = api.post("/api/v1/models/locate", json={"path": wide})
-        assert refused.status_code == 422, wide
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    assert "no .gguf" in api.post("/api/v1/models/locate", json={"path": str(empty)}).json()["detail"]
-    nested = tmp_path / "hub" / "qwen"
-    nested.mkdir(parents=True)
-    write_gguf(nested / "q.gguf", qwen_header())
-    assert api.post("/api/v1/models/folders", json={"path": str(tmp_path / "hub")}).status_code == 200
-    assert saved["MODEL_DIRS"] == str(tmp_path / "hub")
-
-
-def test_a_symlinked_file_is_read_where_it_resolves(api, tmp_path, monkeypatch):
+def test_a_file_is_read_where_its_link_points_and_never_outside_gguf(api, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     real = write_gguf(outside / "real.gguf", qwen_header())
     link = tmp_path / "models" / "link.gguf"
     link.symlink_to(real)
-    # the link sits in an allowed folder, but the file it points at does not
-    assert api.post("/api/v1/models/inspect", json={"path": str(link)}).status_code == 404
-    monkeypatch.setattr(files, "roots", lambda: [str(registry.REPO / "models"), str(outside)])
     assert api.post("/api/v1/models/inspect", json={"path": str(link)}).json()["info"]["path"] == str(real)
+    sneaky = tmp_path / "models" / "passwd.gguf"
+    sneaky.symlink_to("/etc/passwd")
+    assert api.post("/api/v1/models/inspect", json={"path": str(sneaky)}).status_code == 404
+    (outside / "notes.txt").write_text("x")
+    assert api.post("/api/v1/models/inspect", json={"path": str(outside / "notes.txt")}).status_code == 404
 
 
 def test_docker_setups_see_the_registry_read_only(api, monkeypatch, tmp_path):
