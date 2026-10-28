@@ -136,6 +136,19 @@ describe('ChatPage', () => {
       .toEqual({ model: 'qwen3.5-9b', context: 65536 }))
   })
 
+  it('loads the picked context when another context of the model is loaded', async () => {
+    const qwen = { ...REGISTRY.models[0], loaded_context: 65536, contexts: [context(16384, 'gpu', 38), context(65536, 'split', 14, true)] }
+    const calls = mockApi({
+      'GET /chats/c1': { data: CHAT }, 'GET /chat/models': { data: { ...REGISTRY, models: [qwen, REGISTRY.models[1]] } },
+      'GET /projects': { data: { projects: [] } },
+      'POST /chat/models/warm': { data: { status: 'loading' } }, 'GET /chat/models/state': { data: { status: 'loading' } },
+    })
+    renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
+    await waitFor(() => expect(screen.getByTitle('Model, context and effort')).toHaveTextContent('· 16k'))
+    await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.url === '/chat/models/warm').map((c) => c.body))
+      .toEqual([{ model: 'qwen3.5-9b', context: 16384 }]))
+  })
+
   it('fades out image attaching for a model that reads text only', async () => {
     mockApi({
       'GET /chats/c1': { data: { ...CHAT, model: 'tiny' } }, 'GET /chat/models': { data: REGISTRY },

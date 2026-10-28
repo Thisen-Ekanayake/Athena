@@ -181,7 +181,7 @@ export const useChatModels = () =>
   useQuery({
     queryKey: ['chat-models'],
     queryFn: async () => (await apiClient.get<ChatModels>('/chat/models')).data,
-    staleTime: 30_000,
+    staleTime: 5_000,  // which context is loaded changes under the page (a benchmark, background work)
   })
 
 const SETTLED = new Set<LoadState['status']>(['loaded', 'failed', 'offline', 'unknown'])
