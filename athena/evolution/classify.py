@@ -30,6 +30,7 @@ from dataclasses import dataclass
 import httpx
 
 from athena.core import llm, usage
+from athena.model_server import activity
 from athena.core.config_store import get_setting
 
 LABELS = ["addresses_limitation", "criticises", "extends_or_uses", "compares", "background"]
@@ -179,9 +180,11 @@ class Classifier:
         if self.local:
             # Qwen's chat template switches thinking per request; other servers may reject the field.
             payload["chat_template_kwargs"] = {"enable_thinking": think}
-        resp = self.http.post(f"{self.base_url}/v1/chat/completions", json=payload)
-        resp.raise_for_status()
-        body = resp.json()
+        with activity.track(self.feature, self.model) as call:
+            resp = self.http.post(f"{self.base_url}/v1/chat/completions", json=payload)
+            resp.raise_for_status()
+            body = resp.json()
+            call.tokens(*usage.tokens_of(body.get("usage")))
         usage.add(self.feature, self.model, *usage.tokens_of(body.get("usage")))
         content = body["choices"][0]["message"].get("content") or ""
         try:

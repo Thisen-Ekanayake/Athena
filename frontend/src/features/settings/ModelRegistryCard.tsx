@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Brain, Check, ChevronDown, CircleStop, Eye, Gauge, Plus, Power, RefreshCw, Star, Trash2, Type, Wrench } from 'lucide-react'
+import { Brain, Check, ChevronDown, CircleStop, Eye, Gauge, Pause, Plus, Power, RefreshCw, Star, Trash2, Type, Wrench } from 'lucide-react'
 import { apiErrorMessage } from '../../api/error'
+import { usePauseBackground } from '../../api/queries/modelActivity'
 import {
   useBenchmark, useMakeDefault, useRegistry, useRemoveModel, useUnloadModel, useUpdateModel, type GpuInfo, type Registry,
   type RegistryModel,
@@ -167,6 +168,22 @@ function ModelSelect({ models, selected, onSelect }: { models: RegistryModel[]; 
   )
 }
 
+/** After an unload: background work that keeps using the model loads it straight back, unless it is paused. */
+function ReloadWarning({ name, by }: { name: string; by: string[] }) {
+  const pause = usePauseBackground()
+  const list = by.length > 1 ? `${by.slice(0, -1).join(', ')} and ${by[by.length - 1]}` : by[0]
+  return (
+    <Notice tone="warn" title={`${list} will load ${name} again`}>
+      <div className="grid justify-items-start gap-2">
+        <p>{name} was unloaded, but {by.length > 1 ? 'they' : 'it'} used it in the last two minutes and the router loads it back for the next request. Pause background work to keep it out of memory; resume it under Model activity.</p>
+        {pause.isSuccess ? <p className="text-good">Background work is paused.</p> : (
+          <Button variant="secondary" size="sm" disabled={pause.isPending} onClick={() => pause.mutate(true)}><Pause />Pause background work</Button>
+        )}
+      </div>
+    </Notice>
+  )
+}
+
 function ModelDetail({ m, benchmarking }: { m: RegistryModel; benchmarking: Registry['benchmark'] }) {
   const update = useUpdateModel()
   const remove = useRemoveModel()
@@ -239,6 +256,7 @@ function ModelDetail({ m, benchmarking }: { m: RegistryModel; benchmarking: Regi
           It holds {bytes(m.size_bytes)} of the {bytes(m.needed_bytes)} its weights need; a download was probably cut short. Download it again, then turn the model on.
         </Notice>
       )}
+      {unload.data && unload.data.reloaded_by.length > 0 && <ReloadWarning name={m.name} by={unload.data.reloaded_by} />}
       {lastFailed && usable && (
         <Notice tone="warn" title="The last benchmark did not finish">{m.last_benchmark?.error}</Notice>
       )}

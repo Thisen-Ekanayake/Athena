@@ -69,6 +69,20 @@ describe('the model registry', () => {
     expect(screen.queryByRole('button', { name: /Make default/ })).not.toBeInTheDocument()  // already is
   })
 
+  it('says when background work will load an unloaded model again, and pauses it', async () => {
+    const calls = mockApi({
+      'GET /models': { data: REGISTRY },
+      'POST /models/m1/unload': { data: { unloaded: ['qwen3.5-9b'], reloaded_by: ['Summaries', 'Cluster labels'] } },
+      'POST /models/activity/pause': { data: { paused: { by: 'Ada', since: 1 } } },
+    })
+    renderWithProviders(<ModelRegistryCard />)
+    await userEvent.click(await screen.findByRole('button', { name: /Unload/ }))
+    expect(await screen.findByText('Summaries and Cluster labels will load qwen3.5-9b again')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /Pause background work/ }))
+    expect(await screen.findByText('Background work is paused.')).toBeInTheDocument()
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toContain('POST /models/activity/pause')
+  })
+
   it('adds a model picked from a folder, with its projector and context sizes', async () => {
     const places = [{ name: 'Athena models', path: '/repo/models' }, { name: 'Home', path: '/home/me' }, { name: 'Computer', path: '/' }]
     const calls = mockApi({

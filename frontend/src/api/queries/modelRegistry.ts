@@ -174,7 +174,7 @@ export const useBrowse = (path: string | null, enabled = true) =>
 
 export const inspectModel = async (path: string) => (await apiClient.post<Inspection>('/models/inspect', { path })).data
 
-function useRegistryMutation<T>(fn: (body: T) => Promise<unknown>) {
+function useRegistryMutation<T, R = unknown>(fn: (body: T) => Promise<R>) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: fn,
@@ -198,4 +198,6 @@ export const useBenchmark = () =>
 
 export const useMakeDefault = () => useRegistryMutation((id: string) => apiClient.post(`/models/${id}/default`))
 
-export const useUnloadModel = () => useRegistryMutation((id: string) => apiClient.post(`/models/${id}/unload`))
+/** Unload a model now. ``reloaded_by``: background work that used it lately and will load it again unless paused. */
+export const useUnloadModel = () =>
+  useRegistryMutation((id: string) => apiClient.post<{ unloaded: string[]; reloaded_by: string[] }>(`/models/${id}/unload`).then((r) => r.data))

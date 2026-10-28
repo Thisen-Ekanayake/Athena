@@ -212,14 +212,16 @@ def caption(file) -> str | None:
     """A description of an uploaded image by the vision model, for project search."""
     from athena.core import llm, usage
     from athena.projects import files
-    from athena.model_server import lane
+    from athena.model_server import activity, lane
     model = llm.vision_model()
-    lane.yield_to_chat()
-    resp = llm.chat_client(timeout=300, model=model).chat.completions.create(
-        model=model, max_tokens=400, temperature=0.2, extra_body=llm.effort_extra(model, "off")[0],
-        messages=[{"role": "user", "content": [
-            {"type": "image_url", "image_url": {"url": files.image_data_url(file.path, file.mime)}},
-            {"type": "text", "text": CAPTION_PROMPT}]}])
+    lane.yield_to_chat(who="project_index", pausable=False)  # someone's upload: never held by a pause
+    with activity.track("project_index", model, user_id=file.user_id) as call:
+        resp = llm.chat_client(timeout=300, model=model).chat.completions.create(
+            model=model, max_tokens=400, temperature=0.2, extra_body=llm.effort_extra(model, "off")[0],
+            messages=[{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": files.image_data_url(file.path, file.mime)}},
+                {"type": "text", "text": CAPTION_PROMPT}]}])
+        call.tokens(*usage.tokens_of(resp.usage))
     usage.add("project_index", model, *usage.tokens_of(resp.usage), user_id=file.user_id)
     return (resp.choices[0].message.content or "").strip() or None
 
@@ -237,7 +239,7 @@ def _upsert(source: str, project_id: UUID, user_id: UUID, kind: str, title: str,
     passages = [p for p in passages if p.strip()][:MAX_CHUNKS]
     for start in range(0, len(passages), EMBED_BATCH):
         batch = passages[start:start + EMBED_BATCH]
-        lane.yield_to_chat()
+        lane.yield_to_chat(who="project_index", pausable=False)
         vectors = llm.embed(batch, feature="project_index", user_id=user_id)
         qdrant.upsert(COLLECTION, points=[qm.PointStruct(
             id=str(uuid.uuid5(_NAMESPACE, f"{source}:{start + i}")), vector=vec.tolist(),

@@ -131,9 +131,15 @@ BUDGET_MESSAGE = ("\n\nConsidering the limited time by the user, I have to give 
                   "directly now.\n")
 DEFAULT_VISION_MODEL = "qwen3.5-9b-vision"
 DEFAULT_CONTEXT = 8192    # a model's context when its preset does not say
-MODELS_TTL = 30.0
+MODELS_TTL = 5.0         # the picker's "loaded" marks follow the routers within a few seconds
 _models_cache: tuple[float, list[dict]] | None = None
 _cpu_cache: tuple[float, list[dict]] | None = None
+
+
+def forget_server_models() -> None:
+    """Drop the cached router lists, after a load or unload this process asked for."""
+    global _models_cache, _cpu_cache
+    _models_cache = _cpu_cache = None
 
 
 def _names(setting: str, default: str = "") -> list[str]:
@@ -331,15 +337,19 @@ def chat_json(prompt: str, schema: dict, name: str, system: str | None = None, t
 
     from athena.core import usage as usage_log
 
+    from athena.model_server import activity
+
     model = chat_model(task)
     messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
-    resp = chat_client(timeout=timeout, model=model).chat.completions.create(
-        model=model, messages=messages, temperature=0, max_tokens=max_tokens,
-        response_format={"type": "json_schema", "json_schema": {"name": name, "schema": schema}},
-        extra_body=chat_extra(),
-    )
-    usage = {"model": model, "input_tokens": getattr(resp.usage, "prompt_tokens", 0) or 0,
-             "output_tokens": getattr(resp.usage, "completion_tokens", 0) or 0}
+    with activity.track(feature, model, user_id=user_id) as call:
+        resp = chat_client(timeout=timeout, model=model).chat.completions.create(
+            model=model, messages=messages, temperature=0, max_tokens=max_tokens,
+            response_format={"type": "json_schema", "json_schema": {"name": name, "schema": schema}},
+            extra_body=chat_extra(),
+        )
+        usage = {"model": model, "input_tokens": getattr(resp.usage, "prompt_tokens", 0) or 0,
+                 "output_tokens": getattr(resp.usage, "completion_tokens", 0) or 0}
+        call.tokens(usage["input_tokens"], usage["output_tokens"])
     if feature:
         usage_log.add(feature, model, usage["input_tokens"], usage["output_tokens"], user_id=user_id)
     try:
@@ -395,23 +405,27 @@ def embed(texts: list[str], instruct: str | None = None, timeout: float = 120.0,
     ``instruct`` marks the texts as queries in Qwen3-Embedding's format; documents go in as they are. With a
     ``feature`` the call is counted in the usage log.
     """
+    from athena.core import usage
+    from athena.model_server import activity
+
     if instruct:
         texts = [f"Instruct: {instruct}\nQuery: {t}" for t in texts]
     url, model = embed_base_url(), embed_model()
-    if is_llama_cpp(url):
-        with httpx.Client(timeout=timeout) as http:
-            def count(text: str) -> int:
-                resp = http.post(f"{server_root(url)}/tokenize", json={"content": text, "model": model})
-                resp.raise_for_status()
-                return len(resp.json()["tokens"])
-            texts = [fit(t, EMBED_MAX_TOKENS, count)[0] for t in texts]
     kwargs = {}
     if get_setting("EMBED_DIMENSIONS"):
         kwargs["dimensions"] = int(get_setting("EMBED_DIMENSIONS"))
-    client = OpenAI(base_url=url, api_key=embed_api_key(), timeout=timeout, max_retries=2)
-    resp = client.embeddings.create(input=texts, model=model, **kwargs)
+    with activity.track(feature, model, kind="embed", user_id=user_id) as call:  # tokenizing loads the model too
+        if is_llama_cpp(url):
+            with httpx.Client(timeout=timeout) as http:
+                def count(text: str) -> int:
+                    resp = http.post(f"{server_root(url)}/tokenize", json={"content": text, "model": model})
+                    resp.raise_for_status()
+                    return len(resp.json()["tokens"])
+                texts = [fit(t, EMBED_MAX_TOKENS, count)[0] for t in texts]
+        client = OpenAI(base_url=url, api_key=embed_api_key(), timeout=timeout, max_retries=2)
+        resp = client.embeddings.create(input=texts, model=model, **kwargs)
+        call.tokens(usage.tokens_of(getattr(resp, "usage", None))[0])
     if feature:
-        from athena.core import usage
         usage.add(feature, model, usage.tokens_of(resp.usage)[0], kind="embed", user_id=user_id)
     raw = np.asarray([d.embedding for d in sorted(resp.data, key=lambda d: d.index)], dtype=np.float32)
     if raw.shape[1] < EMBED_DIM:

@@ -100,6 +100,14 @@ export function Composer({ onSend, onStop, streaming, initial, placeholder = 'As
     warmModel({ model: m, context: ctx }).catch(() => setWatching(false))
   }
 
+  // Another context of the picked model is loaded (the last one a benchmark measured, or one picked elsewhere): load
+  // the picked one, so the picker and the model server agree before the first message.
+  const otherContextLoaded = !loadedHere && !streaming && !!current?.contexts?.some((c) => c.loaded)
+  useEffect(() => {
+    if (otherContextLoaded) warm(model, context)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otherContextLoaded, model, context])
+
   const submit = (e?: FormEvent) => {
     e?.preventDefault()
     if (streaming || !text.trim() || !model || strayImages.length) return

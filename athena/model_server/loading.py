@@ -20,12 +20,15 @@ import time
 import httpx
 from loguru import logger
 
-from athena.model_server import lane
+from athena.model_server import activity, lane
 
 LOAD_KEY = "athena:model_load:{preset}"
 LOAD_TIMEOUT = 600.0
 MISSING_WAIT = 30.0      # seconds a preset the router does not list yet may take to appear after a reload
 POLL = 0.5
+UNLOAD_WAIT = 15.0
+STARTUP_WAIT = 120.0     # the routers start beside the API and may answer a little later
+STARTUP_POLL = 2.0
 _threads: dict[str, threading.Thread] = {}
 _guard = threading.Lock()
 
@@ -103,12 +106,13 @@ def ensure_loaded(t: dict, timeout: float = LOAD_TIMEOUT, for_chat: bool = True)
     return load(t, timeout, for_chat) is None
 
 
-def load(t: dict, timeout: float = LOAD_TIMEOUT, for_chat: bool = True) -> str | None:
+def load(t: dict, timeout: float = LOAD_TIMEOUT, for_chat: bool = True, cause: str | None = None) -> str | None:
     """Load ``t``'s preset and wait until it is ready: None when it is, else why not. Records the load time. A load
     for a chat keeps background work waiting (``lane``); a benchmark's does not, or it would wait for itself.
 
     A preset the router does not list yet (its file was just rewritten) gets one reload and up to MISSING_WAIT
-    seconds to appear; a load the router reports failed ends at once, with llama-server's exit code."""
+    seconds to appear; a load the router reports failed ends at once, with llama-server's exit code. ``cause``
+    names it on the activity page (a chat, else a benchmark, by default)."""
     from athena.core import llm
     from athena.model_server import registry
     preset, url = t["preset"], t["url"]
@@ -125,6 +129,9 @@ def load(t: dict, timeout: float = LOAD_TIMEOUT, for_chat: bool = True) -> str |
             if status == "loaded":
                 if started is not None:
                     _record(t, time.time() - started)
+                    activity.loaded(registry.server_for(t["plan"]), preset,
+                                    cause or ("chat" if for_chat else "benchmark"), time.time() - started)
+                    llm.forget_server_models()
                 return None
             if status == "failed" and asked:
                 code = ((listed.get(preset) or {}).get("status") or {}).get("exit_code")
@@ -159,21 +166,70 @@ def load(t: dict, timeout: float = LOAD_TIMEOUT, for_chat: bool = True) -> str |
         _clear(key)
 
 
-def unload(row: dict) -> list[str]:
-    """Take every preset of a registered model out of memory, on both routers; returns the ones unloaded."""
+def unload(row: dict, wait: float = UNLOAD_WAIT) -> list[str]:
+    """Take every preset of a registered model out of memory, on both routers; returns the ones unloaded.
+
+    The router answers before its model process has stopped, so this waits (up to ``wait`` seconds) until the
+    router no longer lists them as loaded, and the page that asked shows them gone."""
     from athena.core import llm
     from athena.model_server import registry
     names = {p for c in row["contexts"] for p in (c["preset"], c["vision_preset"]) if p}
     done = []
-    for url in (llm.chat_base_url(), registry.cpu_base_url()):
+    for server, url in (("gpu", llm.chat_base_url()), ("cpu", registry.cpu_base_url())):
+        asked = []
         for m in router_models(url):
             if m.get("id") in names and _status(m) in ("loaded", "loading"):
                 try:
                     httpx.post(f"{llm.server_root(url)}/models/unload", json={"model": m["id"]}, timeout=30.0)
-                    done.append(m["id"])
+                    asked.append(m["id"])
                 except httpx.HTTPError as exc:
                     logger.info(f"Unloading {m['id']}: {exc}")
+        deadline = time.monotonic() + wait
+        while asked and time.monotonic() < deadline:
+            if not any(m.get("id") in asked and _status(m) in ("loaded", "loading") for m in router_models(url)):
+                break
+            time.sleep(POLL)
+        for preset in asked:
+            activity.swap(server, preset, None, "unload")
+        done += asked
+    llm.forget_server_models()
     return done
+
+
+def resting_target() -> dict | None:
+    """The default chat model at its default context: what is loaded when nobody asked for anything else."""
+    from athena.core import llm
+    try:
+        return target(llm.chat_model(), None)
+    except Exception as exc:
+        logger.debug(f"No default chat model: {exc}")
+        return None
+
+
+def load_on_start(wait: float = STARTUP_WAIT) -> threading.Thread:
+    """At start-up, in a thread: once the router answers, load the default chat model at its default context, so
+    the first chat does not wait for it. Skipped when the router already holds a model (a restart of the API alone),
+    when background work is paused (an admin keeps the GPU free), and for a hosted model server."""
+    def go():
+        from athena.model_server import registry
+        t = resting_target()
+        if t is None or not registry.is_local(t["url"]):
+            return
+        deadline = time.monotonic() + wait
+        while not (listed := router_models(t["url"])):
+            if time.monotonic() > deadline:
+                return
+            time.sleep(STARTUP_POLL)
+        if lane.paused() or any(_status(m) in ("loaded", "loading") for m in listed):
+            return
+        if reason := load(t, for_chat=False, cause="startup"):
+            logger.info(f"Default model not loaded at start-up: {reason}")
+        else:
+            logger.info(f"Loaded {t['preset']} at start-up")
+
+    thread = threading.Thread(target=go, daemon=True, name="load-on-start")
+    thread.start()
+    return thread
 
 
 def _mark(key: str, started: float | None, t: dict, waiting: bool = False) -> None:

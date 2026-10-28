@@ -12,6 +12,7 @@ import { timeAgo } from '../components/items/format'
 import { SyncLog } from '../components/layout/SyncLog'
 import { useStartSync } from '../api/queries/sync'
 import { SharingSettings } from '../features/evolution/SharingSettings'
+import { ModelActivityCard } from '../features/settings/ModelActivityCard'
 import { ModelRegistryCard } from '../features/settings/ModelRegistryCard'
 import { ModelsCard } from '../features/settings/ModelsCard'
 import { FeedMixSettings } from '../features/settings/FeedMixSettings'
@@ -366,6 +367,13 @@ function KeysSection() {
           description="The GGUF files the local model server runs. Add one from a folder on this machine; Athena reads what it can do, works out whether each context size loads on the GPU, splits with the CPU or runs on the CPU, and measures its speed. Users pick the model and context in the chat box."
         />
         <ModelRegistryCard />
+      </div>
+      <div>
+        <SectionTitle
+          title="Model activity"
+          description="What the loaded models are doing right now and lately: which feature is calling (a chat, summaries, a map’s labelling…), who asked, how far each request has got, what waits for the model, and when models were swapped. Only sizes and times are kept, never what was asked or answered."
+        />
+        <ModelActivityCard />
       </div>
       <div>
         <SectionTitle
