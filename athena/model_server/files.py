@@ -16,6 +16,7 @@ from athena.model_server import gguf, registry
 
 SPLIT = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$", re.I)
 MAX_ENTRIES = 500
+SYSTEM = ("/proc", "/sys", "/dev", "/run", "/boot", "/etc")  # never a model folder
 
 
 def _setting(key: str) -> str:
@@ -41,16 +42,57 @@ def roots() -> list[str]:
     return [r for i, r in enumerate(real) if not any(r.startswith(o.rstrip("/") + "/") for o in real[:i])]
 
 
+def checked(path: str) -> str:
+    """``path`` resolved (symlinks too), if it lies inside an allowed folder; use what this returns, not ``path``,
+    so the file read is the one that was checked."""
+    rp = os.path.realpath(os.path.expanduser(path))
+    for root in roots():
+        if rp == root or rp.startswith(root.rstrip("/") + "/"):
+            return rp
+    raise PermissionError("That is outside the folders models may come from")
+
+
 def allowed(path: str) -> bool:
-    rp = os.path.realpath(path)
-    return any(rp == r or rp.startswith(r.rstrip("/") + "/") for r in roots())
+    try:
+        checked(path)
+    except PermissionError:
+        return False
+    return True
+
+
+def _system(rp: str) -> bool:
+    return rp in ("/", os.path.realpath(Path.home())) or any(rp == s or rp.startswith(s + "/") for s in SYSTEM)
+
+
+def _holds_models(folder: str) -> bool:
+    """A .gguf file in the folder or one level down."""
+    try:
+        with os.scandir(folder) as it:
+            subs = []
+            for e in it:
+                if e.name.lower().endswith(".gguf") and e.is_file():
+                    return True
+                if e.is_dir() and not e.name.startswith("."):
+                    subs.append(e.path)
+        for sub in subs[:MAX_ENTRIES]:
+            with os.scandir(sub) as it:
+                if any(e.name.lower().endswith(".gguf") and e.is_file() for e in it):
+                    return True
+    except OSError:
+        return False
+    return False
 
 
 def add_root(path: str) -> list[str]:
+    """Allow a folder from now on: one that holds models, not the whole disk, a home folder or a system folder."""
     from athena.core.config_store import set_setting
     rp = os.path.realpath(os.path.expanduser(path))
     if not os.path.isdir(rp):
         raise ValueError(f"{path} is not a folder on this machine")
+    if _system(rp):
+        raise ValueError(f"{rp} is too wide or a system folder; allow the folder the models are in")
+    if not _holds_models(rp):
+        raise ValueError(f"{rp} holds no .gguf files (nor do its folders)")
     current = [p.strip() for p in _setting("MODEL_DIRS").split(",") if p.strip()]
     if rp not in current:
         set_setting("MODEL_DIRS", ",".join(current + [rp]))
@@ -67,9 +109,9 @@ def browse(path: str | None) -> dict:
     if not path:
         return {"path": None, "parent": None, "roots": tops,
                 "entries": [{"name": r, "path": r, "kind": "dir", "size_bytes": None} for r in tops]}
-    rp = os.path.realpath(os.path.expanduser(path))
-    if not allowed(rp) or not os.path.isdir(rp):
-        raise PermissionError("That folder is outside the folders models may come from")
+    rp = checked(path)
+    if not os.path.isdir(rp):
+        raise FileNotFoundError(rp)
     dirs, files = [], []
     with os.scandir(rp) as it:
         for e in it:

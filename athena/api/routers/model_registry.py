@@ -74,7 +74,12 @@ def _writable() -> None:
 
 
 def _describe(path: str, kind: str = "model") -> dict:
-    if not files.allowed(path) or not os.path.isfile(path):
+    """The GGUF file's header; ``info["path"]`` is the resolved path that was checked, the one to use from here."""
+    try:
+        path = files.checked(path)
+    except PermissionError:
+        path = None
+    if path is None or not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="That file is not in a folder models may come from")
     try:
         info = gguf.describe(path, check=kind == "model")
@@ -219,7 +224,10 @@ def locate(body: PathBody, user: User = Depends(auth.require_admin)):
     else:
         raise HTTPException(status_code=404, detail="No folder or .gguf file at that path on this machine")
     if not files.allowed(folder):
-        files.add_root(folder)
+        try:
+            files.add_root(folder)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
         registry.invalidate()
     return {"folder": folder, "file": picked}
 
@@ -232,15 +240,14 @@ def inspect(body: PathBody, session: Session = Depends(get_db), user: User = Dep
     while db.by_name(session, name) is not None:
         name, n = f"{base}-{n}", n + 1
     contexts, default = _contexts(None, None, info, info["role"])
-    projectors = files.projectors_for(body.path, info) if info["role"] == "chat" else []
+    projectors = files.projectors_for(info["path"], info) if info["role"] == "chat" else []
     preview = []
     for c in contexts:
         full, zero = gpu.estimate(info, info["size_bytes"], c)
         plan = gpu.plan(layers=(info.get("layers") or 32) + 1, size_bytes=info["size_bytes"], placement="auto",
                         full_mb=full, zero_mb=zero, info=gpu.gpu())
         preview.append({"tokens": c, **plan})
-    taken = [r["path"] for r in registry.snapshot() if os.path.realpath(registry.resolve(r["path"]))
-             == os.path.realpath(body.path)]
+    taken = [r["path"] for r in registry.snapshot() if os.path.realpath(registry.resolve(r["path"])) == info["path"]]
     return {"info": info, "name": name, "contexts": contexts, "default_context": default, "projectors": projectors,
             "reasoning": info["thinks"], "tools": info["tools"], "preview": preview, "already": bool(taken)}
 
@@ -259,9 +266,9 @@ def add_model(body: ModelAdd, session: Session = Depends(get_db), user: User = D
     contexts, default = _contexts(body.contexts, body.default_context, info, role)
     options = {"embedding": "true", "pooling": "last" if info.get("architecture", "").startswith("qwen") else "mean",
                "batch-size": "2048", "ubatch-size": "2048"} if role == "embed" else {}
-    m = db.add_model(session, name=name, path=os.path.realpath(body.path), mmproj_path=mmproj and mmproj["path"],
+    m = db.add_model(session, name=name, path=info["path"], mmproj_path=mmproj and mmproj["path"],
                      size_bytes=info["size_bytes"], mmproj_bytes=mmproj and mmproj["size_bytes"],
-                     fingerprint=registry.fingerprint(body.path), info=info, role=role,
+                     fingerprint=registry.fingerprint(info["path"]), info=info, role=role,
                      reasoning=info["thinks"] if body.reasoning is None else body.reasoning,
                      tools=info["tools"] if body.tools is None else body.tools, placement=body.placement or "auto",
                      contexts=contexts, default_context=default, options=options, plans={},

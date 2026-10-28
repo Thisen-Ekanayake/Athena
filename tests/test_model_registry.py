@@ -3,6 +3,7 @@ estimates, the chat's choice of preset, load progress, chats going first, and th
 from __future__ import annotations
 
 import struct
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -422,6 +423,35 @@ def test_incomplete_files_are_refused_and_typed_paths_are_opened(api, tmp_path, 
     got = api.post("/api/v1/models/locate", json={"path": str(model)}).json()
     assert got == {"folder": str(elsewhere), "file": str(model)} and added == [str(elsewhere)]
     assert api.post("/api/v1/models/locate", json={"path": str(tmp_path / "nope")}).status_code == 404
+
+
+def test_only_folders_holding_models_are_allowed(api, tmp_path, monkeypatch):
+    saved = {}
+    import athena.core.config_store as store
+    monkeypatch.setattr(store, "set_setting", lambda k, v: saved.__setitem__(k, v))
+    for wide in ("/", "/etc", str(Path.home())):
+        refused = api.post("/api/v1/models/locate", json={"path": wide})
+        assert refused.status_code == 422, wide
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert "no .gguf" in api.post("/api/v1/models/locate", json={"path": str(empty)}).json()["detail"]
+    nested = tmp_path / "hub" / "qwen"
+    nested.mkdir(parents=True)
+    write_gguf(nested / "q.gguf", qwen_header())
+    assert api.post("/api/v1/models/folders", json={"path": str(tmp_path / "hub")}).status_code == 200
+    assert saved["MODEL_DIRS"] == str(tmp_path / "hub")
+
+
+def test_a_symlinked_file_is_read_where_it_resolves(api, tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    real = write_gguf(outside / "real.gguf", qwen_header())
+    link = tmp_path / "models" / "link.gguf"
+    link.symlink_to(real)
+    # the link sits in an allowed folder, but the file it points at does not
+    assert api.post("/api/v1/models/inspect", json={"path": str(link)}).status_code == 404
+    monkeypatch.setattr(files, "roots", lambda: [str(registry.REPO / "models"), str(outside)])
+    assert api.post("/api/v1/models/inspect", json={"path": str(link)}).json()["info"]["path"] == str(real)
 
 
 def test_docker_setups_see_the_registry_read_only(api, monkeypatch, tmp_path):
