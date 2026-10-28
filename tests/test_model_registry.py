@@ -415,7 +415,7 @@ def test_the_default_moves_when_it_is_turned_off_and_turned_off_models_unload(ap
     emb = next(m for m in api.get("/api/v1/models").json()["models"] if m["role"] == "embed")
     assert api.post(f"/api/v1/models/{emb['id']}/default").status_code == 422
     assert api.patch(f"/api/v1/models/{emb['id']}", json={"enabled": False}).status_code == 409
-    assert api.post(f"/api/v1/models/{small['id']}/unload").json() == {"unloaded": []}
+    assert api.post(f"/api/v1/models/{small['id']}/unload").json() == {"unloaded": [], "reloaded_by": []}
 
 
 def test_incomplete_files_are_refused(api, tmp_path):

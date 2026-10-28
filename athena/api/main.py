@@ -17,10 +17,10 @@ from loguru import logger
 from athena.api.routers import (
     feed, items, clusters, search, sources, sync, app_settings, saved, evolution, inbox, auth as auth_routes,
     users, watches, usage, share, momentum, personal, interests, reviews, scoring, summaries, projects, chats,
-    model_registry,
+    model_registry, model_activity,
 )
 from athena.api import qa_api
-from athena.api.auth import active_user, require_admin
+from athena.api.auth import acting_admin, acting_user
 from athena.api.config import settings
 
 _basic_auth = HTTPBasic()
@@ -51,6 +51,8 @@ def create_app() -> FastAPI:
             await run_in_threadpool(registry.write_presets)
         except Exception as exc:
             logger.warning(f"Model registry presets not written: {exc}")
+        from athena.model_server import loading
+        loading.load_on_start()  # the default chat model at its default context, so the first chat need not wait
         yield
 
     # Disable built-in docs and schema; we mount our own routes with auth below.
@@ -101,8 +103,8 @@ def create_app() -> FastAPI:
     # ── Routers ─────────────────────────────────────────
     # Every route needs a logged-in account, except logging in itself, shared map links and /health.
     # Admin-only routes add require_admin themselves (see routers/users.py, sources.py, evolution.py, ...).
-    login = [Depends(active_user)]
-    admin = [Depends(require_admin)]
+    login = [Depends(acting_user)]   # active_user, and named on the model calls the request makes
+    admin = [Depends(acting_admin)]
     app.include_router(auth_routes.router)
     app.include_router(users.router)
     app.include_router(feed.router, dependencies=login)
@@ -118,6 +120,7 @@ def create_app() -> FastAPI:
     app.include_router(sources.router, dependencies=login)
     app.include_router(sync.router, dependencies=login)  # starting one is for admins; the route says so
     app.include_router(app_settings.router, dependencies=admin)
+    app.include_router(model_activity.router, dependencies=admin)  # before the registry's /{model_id} routes
     app.include_router(model_registry.router, dependencies=admin)
     app.include_router(saved.router, dependencies=login)
     app.include_router(evolution.router, dependencies=login)

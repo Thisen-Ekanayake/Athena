@@ -12,7 +12,8 @@ PATCH  /api/v1/models/{id}               — any of those but path, or {enabled}
 DELETE /api/v1/models/{id}
 POST   /api/v1/models/{id}/benchmark     — {force}: measure its speed again (only missing contexts without force)
 POST   /api/v1/models/{id}/default       — make a chat model the default (LLM_CHAT_MODEL)
-POST   /api/v1/models/{id}/unload        — take it out of GPU or CPU memory now
+POST   /api/v1/models/{id}/unload        — take it out of GPU or CPU memory now; says which background work
+                                           (summaries, ...) used it lately and will load it again unless paused
 
 Turning the default chat model off makes another chat model the default; turning any model off unloads it.
 """
@@ -31,6 +32,7 @@ from sqlalchemy.orm import Session
 
 from athena.api import auth
 from athena.api.deps import get_db
+from athena.api.routers import model_activity
 from athena.core import llm
 from athena.core.models import User
 from athena.database import model_registry as db
@@ -372,4 +374,6 @@ def unload_model(model_id: UUID, session: Session = Depends(get_db), user: User 
     if m is None:
         raise HTTPException(status_code=404, detail="Model not found")
     row = registry.find(m.name)
-    return {"unloaded": loading.unload(row) if row else []}
+    unloaded = loading.unload(row) if row else []
+    # Background work that keeps using the model loads it straight back; the page offers to pause it.
+    return {"unloaded": unloaded, "reloaded_by": model_activity.reloads(set(unloaded))}
