@@ -8,6 +8,7 @@ it found it: the chat model that was loaded before is loaded again at the end.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import threading
 import time
@@ -15,7 +16,8 @@ import time
 import httpx
 from loguru import logger
 
-from athena.model_server import lane, loading, registry, stats
+from athena.core import usage
+from athena.model_server import activity, lane, loading, registry, stats
 
 STATUS_KEY = "athena:model_bench"
 MODEL_KEY = "athena:model_bench:{id}"
@@ -87,8 +89,10 @@ def one(t: dict) -> dict:
     body = {"model": t["preset"], "messages": [{"role": "user", "content": PROMPT}], "max_tokens": ANSWER_TOKENS,
             "temperature": 0, "ignore_eos": True, "cache_prompt": False,
             "chat_template_kwargs": {"enable_thinking": False}}
-    resp = httpx.post(f"{t['url']}/chat/completions", json=body, timeout=600.0)
-    resp.raise_for_status()
+    with activity.track("benchmark", t["preset"]) as call:
+        resp = httpx.post(f"{t['url']}/chat/completions", json=body, timeout=600.0)
+        resp.raise_for_status()
+        call.tokens(*usage.tokens_of(resp.json().get("usage")))
     timings = resp.json().get("timings") or {}
     return {"gen_tps": timings.get("predicted_per_second"), "prompt_tps": timings.get("prompt_per_second")}
 
@@ -116,7 +120,7 @@ def run(model_id: str, force: bool = False) -> dict:
                   if (m.get("status") or {}).get("value") == "loaded"]
         for i, context in enumerate(todo):
             _status(model=row["name"], model_id=model_id, context=context, step=i + 1, of=len(todo), state="running")
-            lane.yield_to_chat(me=BENCH)
+            lane.yield_to_chat(me=BENCH, who="benchmark", pausable=False)
             lane.hold(LANE_SECONDS, what=BENCH)  # background work waits, so it does not swap the model out
             t = loading.target(row["name"], context)
             try:
@@ -137,8 +141,8 @@ def run(model_id: str, force: bool = False) -> dict:
             stats.invalidate()
             done[context] = result
             logger.info(f"Benchmark {t['preset']}: {result}")
-        if before and todo and (back := registry.preset_info(before[0])) and back["row"]["role"] == "chat":
-            loading.ensure_loaded(loading.target(back["model"], back["context"], back["vision"]), for_chat=False)
+        if todo:
+            restore(before)
         errors = [v["error"] for v in done.values() if "error" in v]
         _status(model=row["name"], model_id=model_id, state="failed" if errors and len(errors) == len(done) else "done",
                 results={str(k): v for k, v in done.items()}, error=errors[0] if errors else None)
@@ -152,6 +156,16 @@ def run(model_id: str, force: bool = False) -> dict:
         r.delete(LOCK_KEY)
 
 
+def restore(before: list[str]) -> None:
+    """After a benchmark, load the chat model that was loaded before it, else the default chat model at its default
+    context: never leave the last context measured (often the largest) in memory."""
+    back = registry.preset_info(before[0]) if before else None
+    t = (loading.target(back["model"], back["context"], back["vision"]) if back and back["row"]["role"] == "chat"
+         else loading.resting_target())
+    if t:
+        loading.load(t, for_chat=False)
+
+
 def start(model_id: str, force: bool = False) -> None:
     """Run in a thread of this process: the API has no GPU of its own to protect, and a worker may not be up."""
     def go():
@@ -159,4 +173,5 @@ def start(model_id: str, force: bool = False) -> None:
             run(model_id, force)
         except Exception as exc:
             logger.warning(f"Benchmark of {model_id} failed: {exc}")
-    threading.Thread(target=go, daemon=True, name=f"bench-{model_id}").start()
+    # In the request's context, so its calls name the admin who started it.
+    threading.Thread(target=contextvars.copy_context().run, args=(go,), daemon=True, name=f"bench-{model_id}").start()
