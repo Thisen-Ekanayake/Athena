@@ -3,9 +3,11 @@ A chat turn: the messages for the model, its streamed thinking and answer, and t
 
 A turn in a project starts with the project's passages that best answer the question (athena.projects.index),
 numbered so the answer cites them as [n]; tools can add more sources (athena.projects.tools). The system prompt
-carries the project's instructions and what is in it. Files on the message go in as text, images to the vision
-model. Everything is fitted into the model's context: the thinking budget and room for the answer first, then the
-passages and files, then as many earlier turns as fit.
+carries the project's instructions and what is in it, the research maps shared with the model as graphs
+(athena.evolution.digest), and the chat's files: they stay with every turn, oldest first, so the start of the
+prompt stays the same from turn to turn and llama.cpp reuses it. Images go to the vision model on their own turn
+and as their caption after it. Everything is fitted into the model's context: the thinking budget and room for the
+answer first, then the maps, files and passages, then as many earlier turns as fit.
 
 ``run`` yields events for the page (server-sent events, athena.api.routers.chats):
     {"type": "sources", "sources": [...]}        the numbered sources so far
@@ -36,6 +38,8 @@ MAX_STEPS = 4               # model calls that may use tools; one more answers w
 LOAD_WAIT = 600             # seconds a turn waits for its model to load
 CHARS_PER_TOKEN = 3.0       # a cautious estimate (prose runs near 4)
 HISTORY_TURNS = 20
+MAP_SHARE = 0.3             # of the prompt budget, at most, for the maps shared as graphs
+FILES_SHARE = 0.5           # of what is left after the maps, at most, for the chat's files
 TITLE_SCHEMA = {"type": "object", "properties": {"title": {"type": "string"}}, "required": ["title"],
                 "additionalProperties": False}
 
@@ -88,15 +92,83 @@ class Turn:
     artifacts: list[dict]            # [{id, title, chars}] in this project or chat
     history: list[dict]              # earlier turns: [{role, content}]
     question: str
-    attachments: list[dict]          # [{id, filename, kind, text, path, mime, caption}]
+    attachments: list[dict]          # this message's files: [{id, filename, kind, text, path, mime, caption}]
     model: str
     effort: str
     first_turn: bool
     context: int | None = None       # the context size picked; the model's default when None
+    files: list[dict] = field(default_factory=list)        # the chat's files still in it, oldest first
+    shared_maps: list[dict] = field(default_factory=list)  # [{key, data}]: maps the model gets as graphs
+    open_maps: list[str] = field(default_factory=list)     # maps only the user sees: "Name (slug)"
     events: list[dict] = field(default_factory=list)
 
 
-def system_prompt(turn: Turn) -> str:
+def map_share(prompt_budget: int, maps: int) -> int:
+    """Tokens each shared map may take."""
+    return int(prompt_budget * MAP_SHARE) // max(maps, 1)
+
+
+def pick_level(levels: dict[str, str], share: int) -> str:
+    """The most detailed level that fits ``share`` tokens; the smallest when none does."""
+    from athena.evolution import digest
+    return next((level for level in digest.LEVELS if tokens(levels[level]) <= share), digest.MINIMAL)
+
+
+def maps_block(turn: Turn, prompt_budget: int | None = None) -> str:
+    """The shared maps as graphs, each at the most detail its share of the prompt allows, and the maps only the
+    user has open."""
+    from athena.evolution import digest
+    parts = []
+    if turn.shared_maps:
+        share = map_share(prompt_budget, len(turn.shared_maps)) if prompt_budget else None
+        graphs = []
+        for m in turn.shared_maps:
+            levels = {level: digest.render(m["data"], m["key"], level) for level in digest.LEVELS}
+            text = levels[pick_level(levels, share)] if share else levels[digest.FULL]
+            graphs.append(clip(text, share)[0] if share else text)
+        parts.append(digest.LEGEND + "\n\n" + "\n\n".join(graphs))
+    if turn.open_maps:
+        parts.append("The user has these maps open beside the chat; you were not given them, and query_map reads "
+                     "them if the user asks about them: " + "; ".join(turn.open_maps) + ".")
+    return "\n\n".join(parts)
+
+
+def map_refs(turn: Turn) -> dict[str, dict]:
+    """Every paper id the shared maps name (A3), for linking the answer's mentions."""
+    from athena.evolution import digest
+    known: dict[str, dict] = {}
+    for m in turn.shared_maps:
+        known |= digest.refs(m["data"], m["key"])
+    return known
+
+
+def files_block(turn: Turn, budget: int) -> tuple[str, list[str]]:
+    """The chat's files within ``budget`` tokens, oldest first: text files as text (each cut to an equal share
+    when they do not all fit), earlier images as their caption. This message's images go in as images."""
+    notices, parts, used = [], [], 0
+    current = {a["id"] for a in turn.attachments}
+    texts = [f for f in turn.files if f["kind"] != "image"]
+    for i, f in enumerate(texts):
+        share = max((budget - used) // max(len(texts) - i, 1), 200)
+        body, cut = clip(f.get("text") or "(no text could be read from this file)", share)
+        if cut:
+            notices.append(f"{f['filename']} was too long for the model's context; it read the first part. "
+                           "A larger context (in the model menu) reads more of it.")
+        parts.append(f"File {f['filename']}:\n\n{body}")
+        used += tokens(body)
+    for f in turn.files:
+        if f["kind"] == "image" and f["id"] not in current:
+            parts.append(f"Image {f['filename']} (as the vision model described it): {f['caption']}"
+                         if f.get("caption") else
+                         f"Image {f['filename']}: not described yet; ask the user to attach it again if it matters.")
+    if not parts:
+        return "", notices
+    return ("Files the user attached in this chat (they stay with the conversation until removed):\n\n"
+            + "\n\n---\n\n".join(parts)), notices
+
+
+def system_prompt(turn: Turn, prompt_budget: int | None = None, files: str = "") -> str:
+    """Instructions first, then what changes least to most (maps, files, artifacts), so turns share a prefix."""
     text = SYSTEM.format(today=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     if turn.project_id:
         catalog = "\n".join(turn.catalog[:60]) or "(nothing yet)"
@@ -106,35 +178,30 @@ def system_prompt(turn: Turn) -> str:
                                description=f" {turn.project_description}" if turn.project_description else "")
         if turn.instructions.strip():
             text += INSTRUCTIONS.format(instructions=turn.instructions.strip())
+    if maps := maps_block(turn, prompt_budget):
+        text += "\n\n" + maps
+    if files:
+        text += "\n\n" + files
     if turn.artifacts:
         text += "\n\nArtifacts you can read or edit:\n" + "\n".join(
             f"- {a['title']} (id {a['id']}, {a['chars']} characters)" for a in turn.artifacts[:30])
     return text
 
 
-def user_content(turn: Turn, passages: list[dict], budget: int, image_urls: dict[str, str]) -> tuple[object, list]:
-    """The question with its passages and files, within ``budget`` tokens; returns (content, notices)."""
-    notices, parts = [], []
+def user_content(turn: Turn, passages: list[dict], image_urls: dict[str, str]) -> object:
+    """The question with the project's passages and this message's images (its other files are in the system
+    prompt, files_block)."""
+    parts = []
     if passages:
         listed = "\n\n".join(f"[{p['n']}] {p['title']} ({p['kind']})\n{p['text']}" for p in passages)
         parts.append(f"Passages from the project:\n\n{listed}")
-    used = tokens(turn.question) + sum(tokens(p) for p in parts)
-    texts = [a for a in turn.attachments if a["kind"] != "image"]
-    for i, a in enumerate(texts):
-        share = max((budget - used) // max(len(texts) - i, 1), 200)
-        body, cut = clip(a.get("text") or "(no text could be read from this file)", share)
-        if cut:
-            notices.append(f"{a['filename']} was too long for the model's context; it read the first part. "
-                           "A larger context (in the model menu) reads more of it.")
-        parts.append(f"Attached file {a['filename']}:\n\n{body}")
-        used += tokens(body)
     parts.append(turn.question)
     text = "\n\n---\n\n".join(parts)
     images = [a for a in turn.attachments if a["kind"] == "image" and a["id"] in image_urls]
     if not images:
-        return text, notices
+        return text
     return [{"type": "image_url", "image_url": {"url": image_urls[a["id"]]}} for a in images] + \
-        [{"type": "text", "text": text}], notices
+        [{"type": "text", "text": text}]
 
 
 CITATION = re.compile(r" ?\[(\d+)\](?![(:])")
@@ -236,13 +303,17 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
         for a in turn.attachments:
             if a["kind"] == "image":
                 image_urls[a["id"]] = await run_in_threadpool(uploads.image_data_url, a["path"], a["mime"])
-        system = system_prompt(turn)
-        room = setup["prompt_budget"] - tokens(system) - 800 * len(image_urls)
-        content, notices = user_content(turn, passages, int(room * 0.7), image_urls)
+        system = system_prompt(turn, setup["prompt_budget"])
+        content = user_content(turn, passages, image_urls)
+        used = tokens(content if isinstance(content, str) else content[-1]["text"])
+        room = setup["prompt_budget"] - tokens(system) - 800 * len(image_urls) - used
+        files, notices = files_block(turn, int(max(room, 0) * FILES_SHARE))
         for text in notices:
             yield {"type": "notice", "text": text}
-        used = tokens(content if isinstance(content, str) else content[-1]["text"])
-        messages = [{"role": "system", "content": system}] + fit_history(turn.history, room - used) + [
+        if files:
+            system = system_prompt(turn, setup["prompt_budget"], files)
+            room -= tokens(files)
+        messages = [{"role": "system", "content": system}] + fit_history(turn.history, room) + [
             {"role": "user", "content": content}]
         estimate = sum(tokens(m["content"] if isinstance(m["content"], str) else json.dumps(m["content"]))
                        for m in messages)
@@ -366,7 +437,8 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
                   "stats": turn_stats(setup["model"], timing, asked_at, first_token_at, load_ms,
                                       sum(kept) or None),
                   "reasoning_ms": reasoning_ms or None, "steps": steps, "sources": ctx.sources,
-                  "artifacts": ctx.artifacts, "model": setup["model"], "effort": turn.effort, "status": status,
+                  "artifacts": ctx.artifacts, "map_refs": digest_mentions(answer, turn) or None,
+                  "model": setup["model"], "effort": turn.effort, "status": status,
                   "error": error, "input_tokens": prompt_tokens, "output_tokens": output_tokens}
         if status == "stopped":  # the page went away: no awaiting here, the task is being cancelled
             save(fields)
@@ -374,6 +446,14 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
     saved = await run_in_threadpool(save, fields)
     await run_in_threadpool(usage.add, "chat", setup["model"], prompt_tokens, output_tokens, "chat", turn.user_id)
     yield {"type": "done", "message": saved}
+
+
+def digest_mentions(answer: str, turn: Turn) -> dict[str, dict]:
+    """The shared maps' papers the answer names by id."""
+    if not turn.shared_maps:
+        return {}
+    from athena.evolution import digest
+    return digest.mentioned(answer, map_refs(turn))
 
 
 def turn_stats(preset: str, timing: dict, asked_at: float | None, first_token_at: float | None,

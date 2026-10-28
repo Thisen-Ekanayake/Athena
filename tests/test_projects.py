@@ -17,7 +17,8 @@ from athena.api.deps import get_db, get_redis
 from athena.api.main import app
 from athena.core import llm
 from athena.core.models import (
-    AppSetting, Artifact, ArtifactVersion, ChatMessage, ContentCategory, ContentItem, Conversation, EvoIdeaCheck,
+    AppSetting, Artifact, ArtifactVersion, ChatMessage, ContentCategory, ContentItem, Conversation, ConversationMap,
+    EvoIdeaCheck, EvoTopicPaper,
     EvoPaper, EvoTopic, LitReview, Project, ProjectItem, SavedList, SavedListItem, Source, SourceCategory,
     SourceType, UsageEvent, User, UserFile, UserSession,
 )
@@ -127,11 +128,38 @@ def test_history_keeps_the_latest_turns_that_fit():
 
 
 def test_long_files_are_cut_and_said_so():
-    t = turn(attachments=[{"id": "1", "filename": "book.txt", "kind": "text", "text": "word " * 20000}])
-    content, notices = chat.user_content(t, [{"n": 1, "title": "LoRA", "kind": "paper", "text": "Adapters."}], 2000,
-                                         {})
-    assert "[1] LoRA (paper)" in content and "[…cut to fit]" in content and content.endswith("Why?")
+    book = {"id": "1", "filename": "book.txt", "kind": "text", "text": "word " * 20000}
+    t = turn(attachments=[book], files=[book])
+    text, notices = chat.files_block(t, 2000)
+    assert "File book.txt" in text and "[…cut to fit]" in text
     assert notices and "book.txt" in notices[0]
+    content = chat.user_content(t, [{"n": 1, "title": "LoRA", "kind": "paper", "text": "Adapters."}], {})
+    assert content.startswith("Passages from the project") and "[1] LoRA (paper)" in content
+    assert content.endswith("Why?") and "word" not in content
+
+
+def test_earlier_images_go_in_as_their_caption():
+    fig = {"id": "f", "filename": "fig.png", "kind": "image", "caption": "A loss curve falling."}
+    old = {"id": "g", "filename": "old.png", "kind": "image", "caption": None}
+    text, _ = chat.files_block(turn(files=[fig, old]), 2000)
+    assert "Image fig.png (as the vision model described it): A loss curve falling." in text
+    assert "Image old.png: not described yet" in text
+    text, _ = chat.files_block(turn(files=[fig], attachments=[fig]), 2000)
+    assert text == ""  # this message's image goes in as an image
+
+
+def test_shared_maps_shrink_to_fit_and_open_maps_are_one_line():
+    from tests.test_evolution_digest import data
+    t = turn(shared_maps=[{"key": "A", "data": data()}], open_maps=["Diffusion (diffusion)"])
+    roomy = chat.system_prompt(t, 100_000)
+    assert "Map A: PEFT [slug peft]" in roomy and "A4 fixes A1: “adapters" in roomy and "LoRA (A3)" in roomy
+    assert "open beside the chat" in roomy and "Diffusion (diffusion)" in roomy
+    tight = chat.system_prompt(t, 600)
+    assert "Map A: PEFT" in tight and "“adapters" not in tight
+    assert chat.digest_mentions("LoRA (A4) improves on Adapters (A1).", t) == {
+        "A4": {"slug": "peft", "map": "PEFT", "paper_id": "p4", "label": "LoRA", "year": 2021},
+        "A1": {"slug": "peft", "map": "PEFT", "paper_id": "p1", "label": "Adapters", "year": 2019}}
+    assert chat.digest_mentions("A4", turn()) == {}
 
 
 def test_the_system_prompt_carries_project_instructions():
@@ -163,9 +191,10 @@ pytestmark_api = pytest.mark.real_auth
 @pytest.fixture
 def env(monkeypatch, tmp_path):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    for model in (User, UserSession, AppSetting, UsageEvent, Source, ContentItem, EvoTopic, EvoPaper, EvoIdeaCheck,
-                  LitReview, SavedList, SavedListItem, Project, ProjectItem, Conversation, ChatMessage, UserFile,
-                  Artifact, ArtifactVersion):
+    for model in (User, UserSession, AppSetting, UsageEvent, Source, ContentItem, EvoTopic, EvoPaper, EvoTopicPaper,
+                  EvoIdeaCheck,
+                  LitReview, SavedList, SavedListItem, Project, ProjectItem, Conversation, ConversationMap,
+                  ChatMessage, UserFile, Artifact, ArtifactVersion):
         model.__table__.create(engine)
     Session = sessionmaker(bind=engine)
 
@@ -185,6 +214,8 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(index, "delete_project", lambda pid, qdrant=None: None)
     monkeypatch.setenv("ATHENA_UPLOADS_DIR", str(tmp_path / "uploads"))
     monkeypatch.setattr(llm, "_server_models", lambda: [])
+    from athena.api.routers import chats as chats_router
+    monkeypatch.setattr(chats_router, "_caption_images", lambda ids, model: None)  # no vision model here
     redis = FakeRedis()
     app.dependency_overrides[get_db] = session
     app.dependency_overrides[get_redis] = lambda: redis
@@ -203,6 +234,8 @@ def env(monkeypatch, tmp_path):
         s.execute(EvoTopic.__table__.insert().values(id=ids["topic"], slug="peft", name="PEFT", status="ready",
                                                      aliases=None, seeds=None, config=None,
                                                      built_at=datetime(2026, 10, 1, tzinfo=timezone.utc)))
+        s.execute(EvoTopic.__table__.insert().values(id=uuid4(), slug="diffusion", name="Diffusion", status="building",
+                                                     aliases=None, seeds=None, config=None, built_at=None))
         s.commit()
     admin = TestClient(app)
     assert setup_admin(admin).status_code == 201
@@ -600,3 +633,117 @@ def test_a_text_only_model_refuses_images_and_the_context_is_kept(env, monkeypat
         "content": "What is this?", "model": "seer", "context": 32768, "attachment_ids": [fid]})
     assert ok.status_code == 200 and sent == {"model": "seer@32k-vision", "context": 32768}
     assert admin.get(f"/api/v1/chats/{c['id']}").json()["context"] == 32768
+
+
+# ── files and maps stay with the chat ────────────────────────────────
+
+
+class Answerer:
+    """Answers in one call, naming two map papers by id; records what it was sent."""
+
+    def __init__(self, answer="LoRA (A4) fixed a limitation of Adapters (A1)."):
+        self.calls, self.answer = [], answer
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+    async def create(self, **kwargs):
+        self.calls.append(kwargs)
+        chunks = [chunk(content=self.answer), chunk(usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5))]
+
+        async def stream():
+            for c in chunks:
+                yield c
+        return stream()
+
+    @property
+    def system(self) -> str:
+        return self.calls[-1]["messages"][0]["content"]
+
+
+@pytest.fixture
+def answerer(monkeypatch):
+    model = Answerer()
+    monkeypatch.setattr(llm, "async_chat_client", lambda **kw: model)
+    monkeypatch.setattr(llm, "model_context", lambda m: 20480)
+    monkeypatch.setattr(chat, "title_for", lambda q, a, m: None)
+    return model
+
+
+@pytestmark_api
+def test_files_stay_with_every_turn_until_taken_out(env, answerer):
+    admin, bo, ids, Session, queued = env
+    c = admin.post("/api/v1/chats", json={}).json()
+    notes = admin.post(f"/api/v1/chats/{c['id']}/files", files=[
+        ("files", ("notes.md", b"# Notes\nAdapters are cheap.", "text/markdown"))]).json()["files"][0]
+    admin.post(f"/api/v1/chats/{c['id']}/messages", json={"content": "Read this", "attachment_ids": [notes["id"]]})
+    assert "Adapters are cheap." in answerer.system
+    assert answerer.calls[-1]["messages"][-1] == {"role": "user", "content": "Read this"}
+    admin.post(f"/api/v1/chats/{c['id']}/messages", json={"content": "And now?"})
+    assert "File notes.md" in answerer.system and "Adapters are cheap." in answerer.system
+
+    assert bo.patch(f"/api/v1/chats/{c['id']}/files/{notes['id']}", json={"detached": True}).status_code == 404
+    r = admin.patch(f"/api/v1/chats/{c['id']}/files/{notes['id']}", json={"detached": True})
+    assert r.status_code == 200 and r.json()["detached"] is True
+    admin.post(f"/api/v1/chats/{c['id']}/messages", json={"content": "Still there?"})
+    assert "Adapters are cheap." not in answerer.system
+    view = admin.get(f"/api/v1/chats/{c['id']}").json()
+    assert view["files"][0]["detached"] is True
+    assert view["messages"][0]["attachments"][0]["filename"] == "notes.md"  # the message still shows it
+
+
+@pytestmark_api
+def test_maps_in_a_chat_are_shown_or_shared_as_graphs(env, answerer, monkeypatch):
+    from athena.evolution import digest
+    from tests.test_evolution_digest import data
+    admin, bo, ids, Session, queued = env
+    monkeypatch.setattr(digest, "digest", lambda session, topic: data() if topic.built_at else None)
+    c = admin.post("/api/v1/chats", json={}).json()
+    url = f"/api/v1/chats/{c['id']}/maps"
+    assert admin.post(url, json={"maps": [{"id": "diffusion"}]}).status_code == 422  # not built
+    assert admin.post(url, json={"maps": [{"id": "nope"}]}).status_code == 404
+    assert bo.post(url, json={"maps": [{"id": "peft"}]}).status_code == 404
+    maps = admin.post(url, json={"maps": [{"id": "peft"}]}).json()["maps"]
+    assert [(m["slug"], m["key"], m["share"]) for m in maps] == [("peft", "A", False)]
+    assert admin.get(f"/api/v1/chats/{c['id']}").json()["maps"][0]["name"] == "PEFT"
+
+    got = events(admin.post(f"/api/v1/chats/{c['id']}/messages", json={"content": "Hi"}))
+    done = next(e for e in got if e["type"] == "done")
+    assert "open beside the chat" in answerer.system and "PEFT (peft)" in answerer.system
+    assert "Map A:" not in answerer.system and done["message"]["map_refs"] == {}
+
+    assert admin.patch(f"{url}/peft", json={"share": True}).json()["maps"][0]["share"] is True
+    got = events(admin.post(f"/api/v1/chats/{c['id']}/messages", json={"content": "How did PEFT develop?"}))
+    assert "Map A: PEFT [slug peft]" in answerer.system and "A4 fixes A1" in answerer.system
+    assert "open beside the chat" not in answerer.system
+    refs = next(e for e in got if e["type"] == "done")["message"]["map_refs"]
+    assert set(refs) == {"A4", "A1"} and refs["A4"]["paper_id"] == "p4"
+    assert admin.get(f"/api/v1/chats/{c['id']}").json()["messages"][-1]["map_refs"]["A1"]["label"] == "Adapters"
+
+    seen = admin.get(f"{url}/{ids['topic']}/digest").json()
+    assert seen["key"] == "A" and seen["level"] in digest.LEVELS
+    assert seen["levels"]["full"]["text"].startswith("Map A: PEFT") and seen["levels"]["minimal"]["tokens"] > 0
+    assert admin.delete(f"{url}/peft").status_code == 204
+    assert admin.get(f"/api/v1/chats/{c['id']}").json()["maps"] == []
+    assert admin.delete(f"{url}/peft").status_code == 404
+
+
+@pytestmark_api
+def test_a_projects_shared_map_goes_to_its_chats(env, answerer, monkeypatch):
+    from athena.evolution import digest
+    from tests.test_evolution_digest import data
+    admin, bo, ids, Session, queued = env
+    monkeypatch.setattr(digest, "digest", lambda session, topic: data())
+    pid = admin.post("/api/v1/projects", json={"name": "Thesis"}).json()["id"]
+    item = admin.post(f"/api/v1/projects/{pid}/items", json={"kind": "map", "id": "peft"}).json()
+    paper = admin.post(f"/api/v1/projects/{pid}/items", json={"kind": "paper", "id": str(ids["lora"])}).json()
+    assert item["share"] is False and item["slug"] == "peft"
+    assert admin.patch(f"/api/v1/projects/{pid}/items/{paper['id']}", json={"share": True}).status_code == 404
+    assert bo.patch(f"/api/v1/projects/{pid}/items/{item['id']}", json={"share": True}).status_code == 404
+    assert admin.patch(f"/api/v1/projects/{pid}/items/{item['id']}", json={"share": True}).json()["share"] is True
+
+    c = admin.post("/api/v1/chats", json={"project_id": pid}).json()
+    admin.post(f"/api/v1/chats/{c['id']}/messages", json={"content": "Hi"})
+    assert "Map A: PEFT" in answerer.system
+    # attached to the chat as well: one graph, with the chat's letter
+    admin.post(f"/api/v1/chats/{c['id']}/maps", json={"maps": [{"id": "peft", "share": True}]})
+    admin.post(f"/api/v1/chats/{c['id']}/messages", json={"content": "Again"})
+    assert answerer.system.count("[slug peft]") == 1

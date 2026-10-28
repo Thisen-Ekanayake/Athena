@@ -99,8 +99,9 @@ def test_a_built_map_becomes_a_graph(session, monkeypatch):
                                               ("noise", 2022, "Unrelated", False, False)]:
         p = EvoPaper(id=uuid4(), openalex_id=f"W{key}", title=title, year=year)
         papers[key] = p  # Core insert: SQLite has no ARRAY for merged_ids
-        session.execute(EvoPaper.__table__.insert().values(id=p.id, openalex_id=p.openalex_id, title=title, year=year,
-                                                          authors=[], authorships=[], merged_ids=None, extra={}))
+        session.execute(EvoPaper.__table__.insert().values(
+            id=p.id, openalex_id=p.openalex_id, title=title, year=year, authors=[], authorships=[], merged_ids=None,
+            extra={}))
         session.add(EvoTopicPaper(id=uuid4(), topic_id=topic.id, paper_id=p.id, kind="method", on_main_path=main,
                                   is_milestone_auto=milestone, milestone_score=1.0 if milestone else 0.1,
                                   score_detail={"relevance": 1}))
