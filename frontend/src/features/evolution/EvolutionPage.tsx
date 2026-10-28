@@ -25,6 +25,7 @@ import { ProposalPanel } from './ProposalPanel'
 import { ShareMenu } from './ShareMenu'
 import { WriteReviewButton } from '../reviews/WriteReviewButton'
 import { TimelineStrip } from './TimelineStrip'
+import { useFullScreen } from './useFullScreen'
 import {
   createProposal,
   isBuilding,
@@ -58,43 +59,6 @@ const LIMITS = [
   { value: '600', label: '600' },
   { value: '0', label: 'All' }, // 0 asks the API for every paper in the map
 ]
-
-/**
- * Shows an element full screen. Without the Fullscreen API (Safari on iPhone) it fills the window
- * instead, and Escape leaves.
- */
-function useFullScreen<T extends HTMLElement>() {
-  const ref = useRef<T>(null)
-  const [on, setOn] = useState(false)
-  useEffect(() => {
-    const sync = () => {
-      if (!document.fullscreenElement) setOn(false)
-    }
-    document.addEventListener('fullscreenchange', sync)
-    return () => document.removeEventListener('fullscreenchange', sync)
-  }, [])
-  const leave = () => {
-    if (document.fullscreenElement) void document.exitFullscreen()
-    setOn(false)
-  }
-  useEffect(() => {
-    if (!on) return
-    // Browsers usually leave full screen on Escape themselves; this covers the window-filling fallback.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      if (document.fullscreenElement) void document.exitFullscreen()
-      setOn(false)
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [on])
-  const toggle = () => {
-    if (on) return leave()
-    setOn(true)
-    if (document.fullscreenEnabled) ref.current?.requestFullscreen().catch(() => {})
-  }
-  return { ref, on, toggle }
-}
 
 type Tab = 'map' | 'path' | 'gaps' | 'ask' | 'people' | 'links' | 'changes' | 'no-full-text'
 const TABS: { id: Tab; label: string }[] = [
