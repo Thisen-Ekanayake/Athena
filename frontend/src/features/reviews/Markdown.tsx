@@ -70,20 +70,31 @@ function renderList(items: ListItem[], inl: (s: string) => ReactNode): ReactNode
   )
 }
 
+/** A map paper a chat answer names by id (A3): the label and year shown on hover, and what a click opens. */
+export interface MapMention {
+  label: string
+  year: number | null
+  map: string
+}
+
 /**
  * The Markdown reviews and chats use: headings, paragraphs, bullet and numbered lists, code blocks, quotes, tables,
  * **bold**, *italics*, `code`, [text](links), bare links, and [n] citations. Citations jump to reference n (``ref-n``
- * on the page), or call ``onCite`` when given. Anything else shows as plain text.
+ * on the page), or call ``onCite`` when given. Map paper ids in ``mapRefs`` (A3) become links that call ``onMapRef``.
+ * Anything else shows as plain text.
  */
-export function Markdown({ text, idPrefix = 'ref', onCite, className }: {
+export function Markdown({ text, idPrefix = 'ref', onCite, mapRefs, onMapRef, className }: {
   text: string
   idPrefix?: string
   onCite?: (n: number) => void
+  mapRefs?: Record<string, MapMention>
+  onMapRef?: (id: string) => void
   className?: string
 }) {
   const blocks: ReactNode[] = []
   const lines = text.split('\n')
-  const inl = (s: string) => inline(s, idPrefix, onCite)
+  const refs = mapRefs && onMapRef && Object.keys(mapRefs).length ? { known: mapRefs, open: onMapRef } : undefined
+  const inl = (s: string) => inline(s, idPrefix, onCite, refs)
   let i = 0
   while (i < lines.length) {
     const line = lines[i]
@@ -158,7 +169,24 @@ export function Markdown({ text, idPrefix = 'ref', onCite, className }: {
 
 const TOKEN = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*\s][^*]*\*|\[[^\]]+\]\(https?:\/\/[^\s)]+\)|\[\d+(?:\s*,\s*\d+)*\]|https?:\/\/[^\s)]+)/g
 
-function inline(text: string, idPrefix: string, onCite?: (n: number) => void): ReactNode {
+const MAP_REF = /\b([A-Z]\d{1,3})\b/
+
+/** Plain text with the known map paper ids (A3) as small links to the paper in its map. */
+function withMapRefs(text: string, refs: { known: Record<string, MapMention>; open: (id: string) => void }): ReactNode {
+  return text.split(new RegExp(MAP_REF.source, 'g')).map((part, k) => {
+    const ref = k % 2 ? refs.known[part] : undefined
+    if (!ref) return <Fragment key={k}>{part}</Fragment>
+    return (
+      <button key={k} type="button" onClick={() => refs.open(part)} title={`${ref.label}${ref.year ? ` (${ref.year})` : ''} in ${ref.map}: open it in the map`}
+        className="mx-px inline-flex items-center rounded border border-accent-line bg-accent-soft px-1 font-mono text-[11.5px] leading-[1.35] text-accent-ink hover:bg-accent/20">
+        {part}
+      </button>
+    )
+  })
+}
+
+function inline(text: string, idPrefix: string, onCite?: (n: number) => void,
+  refs?: { known: Record<string, MapMention>; open: (id: string) => void }): ReactNode {
   const parts = text.split(TOKEN)
   return parts.map((part, k) => {
     if (!part) return null
@@ -187,6 +215,7 @@ function inline(text: string, idPrefix: string, onCite?: (n: number) => void): R
       )
     }
     if (/^https?:\/\//.test(part)) return <a key={k} href={part} target="_blank" rel="noopener noreferrer" className="break-all text-accent-ink hover:underline">{part}</a>
+    if (refs && MAP_REF.test(part)) return <Fragment key={k}>{withMapRefs(part, refs)}</Fragment>
     return <Fragment key={k}>{part}</Fragment>
   })
 }

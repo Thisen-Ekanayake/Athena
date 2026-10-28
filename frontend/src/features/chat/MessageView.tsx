@@ -5,7 +5,7 @@ import {
   RotateCcw, Search, TriangleAlert,
 } from 'lucide-react'
 import type { ArtifactRef } from '../../api/queries/artifacts'
-import type { ChatMessage, ChatSource, LoadState, SearchResult, ToolStep, TurnStats } from '../../api/queries/chats'
+import type { ChatMessage, ChatSource, LoadState, MapRef, SearchResult, ToolStep, TurnStats } from '../../api/queries/chats'
 import { fileUrl, useAddToProject } from '../../api/queries/projects'
 import { Button } from '../../ui/Button'
 import { Spinner } from '../../ui/Spinner'
@@ -37,6 +37,8 @@ export interface AssistantTurn {
   stats?: TurnStats | null
   tokensIn?: number
   tokensOut?: number
+  /** The map papers the answer named by id (A3) */
+  mapRefs?: Record<string, MapRef>
 }
 
 /** How an answer ran, as label/value rows for its details: model, effort, tokens, speed, device, timings. */
@@ -215,10 +217,12 @@ export function ArtifactCard({ artifact, onOpen }: { artifact: ArtifactRef; onOp
   )
 }
 
-export function AssistantMessage({ turn, projectId, onOpenArtifact, onRetry }: {
+export function AssistantMessage({ turn, projectId, onOpenArtifact, onOpenMapRef, onRetry }: {
   turn: AssistantTurn
   projectId: string | null
   onOpenArtifact: (id: string) => void
+  /** Open a map paper the answer named, in the map beside the chat */
+  onOpenMapRef?: (ref: MapRef) => void
   onRetry?: () => void
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false)
@@ -247,7 +251,10 @@ export function AssistantMessage({ turn, projectId, onOpenArtifact, onRetry }: {
       )}
       {waiting && turn.loading && turn.loading.status !== 'loaded' && <LoadCard state={turn.loading} className="max-w-md" />}
       {waiting && !(turn.loading && turn.loading.status !== 'loaded') && <Spinner label={turn.sources.length ? 'Reading the project…' : 'Waiting for the model…'} />}
-      {turn.content && <Markdown text={turn.content} onCite={turn.sources.length ? cite : undefined} />}
+      {turn.content && (
+        <Markdown text={turn.content} onCite={turn.sources.length ? cite : undefined} mapRefs={turn.mapRefs}
+          onMapRef={onOpenMapRef && turn.mapRefs ? (id) => onOpenMapRef(turn.mapRefs![id]) : undefined} />
+      )}
       {turn.live && turn.content && <span className="h-3 w-1.5 animate-pulse bg-accent" aria-hidden="true" />}
       {turn.artifacts.length > 0 && (
         <div className="grid gap-1.5">{turn.artifacts.map((a) => <ArtifactCard key={a.id} artifact={a} onOpen={onOpenArtifact} />)}</div>
