@@ -30,6 +30,13 @@ export interface Draft {
   messageId: string | null
 }
 
+/** A map in the side panel: which one, the paper selected in it, and the chat it is attached to (for its switch) */
+export interface MapPanel {
+  slug: string
+  paperId?: string | null
+  chatId?: string
+}
+
 export interface SendBody {
   content?: string
   model: string
@@ -109,6 +116,9 @@ interface ChatStreams {
   /** The artifact open beside the chat, if any */
   artifactId: string | null
   openArtifact: (id: string | null) => void
+  /** The research map open beside the chat or project, if any (one panel at a time: it closes the artifact) */
+  mapPanel: MapPanel | null
+  openMap: (map: MapPanel | null) => void
 }
 
 const controllers = new Map<string, AbortController>()
@@ -125,7 +135,9 @@ const refresh = async (chatId: string) => {
 export const useChatStreams = create<ChatStreams>((set, get) => ({
   drafts: {},
   artifactId: null,
-  openArtifact: (id) => set({ artifactId: id }),
+  openArtifact: (id) => set(id ? { artifactId: id, mapPanel: null } : { artifactId: null }),
+  mapPanel: null,
+  openMap: (map) => set(map ? { mapPanel: map, artifactId: null } : { mapPanel: null }),
 
   stop: (chatId) => controllers.get(chatId)?.abort(),
 
@@ -173,7 +185,7 @@ export const useChatStreams = create<ChatStreams>((set, get) => ({
         buffer = parsed.rest
         for (const event of parsed.events) {
           update((d) => apply(d, event))
-          if (event.type === 'artifact' && !get().artifactId) set({ artifactId: event.artifact.id })
+          if (event.type === 'artifact' && !get().artifactId && !get().mapPanel) set({ artifactId: event.artifact.id })
           if (event.type === 'title') void queryClient.invalidateQueries({ queryKey: ['chats'] })
         }
       }

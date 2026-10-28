@@ -9,11 +9,18 @@ GET    /api/v1/chat/models/state?model=&context=&vision=
 GET    /api/v1/chats?project_id=&standalone=&q=&archived=
                                                  — yours, pinned first then most recent; archived=true: only those
 POST   /api/v1/chats                             — {project_id?, model?, effort?, context?}
-GET    /api/v1/chats/{id}                        — the chat with its messages, files and artifacts
+GET    /api/v1/chats/{id}                        — the chat with its messages, files, maps (its own and its
+                                                   project's) and artifacts
 PATCH  /api/v1/chats/{id}                        — {title}, {project_id} (null: out of its project), {pinned},
                                                    {archived}; any of them
 DELETE /api/v1/chats/{id}
-POST   /api/v1/chats/{id}/files                  — attach files to the next message (multipart)
+POST   /api/v1/chats/{id}/files                  — attach files to the next message (multipart); they stay with
+                                                   every later turn
+PATCH  /api/v1/chats/{id}/files/{file_id}        — {detached}: out of the chat's turns (kept on its message), or back
+POST   /api/v1/chats/{id}/maps                   — {maps: [{id (topic id or slug), share}]}: attach research maps
+PATCH  /api/v1/chats/{id}/maps/{topic}           — {share}: give the model the map as a graph, or only show it
+DELETE /api/v1/chats/{id}/maps/{topic}
+GET    /api/v1/chats/{id}/maps/{topic}/digest    — the graph the model gets, at each level, and the one it would use
 POST   /api/v1/chats/{id}/messages               — send one, streamed as server-sent events (athena.projects.chat);
                                                    {retry: true} answers the last question again
 GET    /api/v1/artifacts?project_id=&chat_id=
@@ -32,6 +39,7 @@ refuse other accounts once spent.
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import UUID
@@ -41,15 +49,17 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from athena.api import auth
 from athena.api.deps import get_db
 from athena.api.routers.projects import _forget, store_upload
 from athena.core import llm, usage
-from athena.core.models import ChatMessage, Conversation, Project, User, UserFile
+from athena.core.models import ChatMessage, Conversation, EvoTopic, Project, ProjectItem, User, UserFile
 from athena.model_server import loading
 from athena.database import projects as db
+from athena.evolution import digest
 from athena.projects import chat, files as uploads, index, tasks, tools
 
 router = APIRouter(prefix="/api/v1", tags=["Chats"])
@@ -79,6 +89,23 @@ class MessageSend(BaseModel):
     context: int | None = Field(None, ge=512, le=1_048_576)
     attachment_ids: list[UUID] = Field(default_factory=list, max_length=20)
     retry: bool = False
+
+
+class MapPick(BaseModel):
+    id: str = Field(..., min_length=1, max_length=200)
+    share: bool = False
+
+
+class MapsAttach(BaseModel):
+    maps: list[MapPick] = Field(..., min_length=1, max_length=26)
+
+
+class MapShare(BaseModel):
+    share: bool
+
+
+class FileDetach(BaseModel):
+    detached: bool
 
 
 class ArtifactCreate(BaseModel):
@@ -195,6 +222,8 @@ def get_chat(chat_id: UUID, session: Session = Depends(get_db), user: User = Dep
     return db.conversation_dict(c, project) | {
         "messages": [_message(m) for m in db.messages_of(session, c.id)],
         "files": [db.file_dict(f) for f in db.files_of(session, conversation_id=c.id)],
+        "maps": db.describe_chat_maps(session, c.id),
+        "project_maps": _project_maps(session, c),
         "artifacts": [db.artifact_dict(a, content=False)
                       for a in db.artifacts_of(session, user.id, conversation_id=c.id)],
     }
@@ -234,6 +263,121 @@ async def upload_chat_files(chat_id: UUID, files: list[UploadFile] = File(...), 
     c = _own_chat(session, chat_id, user)
     saved = [await store_upload(session, user, f, conversation_id=c.id) for f in files]
     return {"files": [db.file_dict(f) for f in saved]}
+
+
+@router.patch("/chats/{chat_id}/files/{file_id}")
+def detach_chat_file(chat_id: UUID, file_id: UUID, body: FileDetach, session: Session = Depends(get_db),
+                     user: User = Depends(auth.active_user)):
+    """Take a file out of the chat's turns, or bring it back; its message keeps showing it either way."""
+    c = _own_chat(session, chat_id, user)
+    f = db.get_file(session, user.id, file_id)
+    if f is None or f.conversation_id != c.id:
+        raise HTTPException(status_code=404, detail="File not found in this chat")
+    f.detached_at = datetime.now(timezone.utc) if body.detached else None
+    session.commit()
+    return db.file_dict(f)
+
+
+# ── maps ─────────────────────────────────────────────────────────────
+
+
+@router.post("/chats/{chat_id}/maps", status_code=201)
+def attach_chat_maps(chat_id: UUID, body: MapsAttach, session: Session = Depends(get_db),
+                     user: User = Depends(auth.active_user)):
+    c = _own_chat(session, chat_id, user)
+    try:
+        db.attach_maps(session, c, [(m.id, m.share) for m in body.maps])
+    except db.MapError as exc:
+        raise HTTPException(status_code=404 if "not found" in str(exc) else 422, detail=str(exc))
+    return {"maps": db.describe_chat_maps(session, c.id)}
+
+
+def _own_chat_map(session: Session, chat_id: UUID, topic: str, user: User):
+    c = _own_chat(session, chat_id, user)
+    cm = db.chat_map(session, c.id, topic)
+    if cm is None:
+        raise HTTPException(status_code=404, detail="That map is not in this chat")
+    return c, cm
+
+
+@router.patch("/chats/{chat_id}/maps/{topic}")
+def share_chat_map(chat_id: UUID, topic: str, body: MapShare, session: Session = Depends(get_db),
+                   user: User = Depends(auth.active_user)):
+    c, cm = _own_chat_map(session, chat_id, topic, user)
+    cm.share = body.share
+    session.commit()
+    return {"maps": db.describe_chat_maps(session, c.id)}
+
+
+@router.delete("/chats/{chat_id}/maps/{topic}", status_code=204)
+def detach_chat_map(chat_id: UUID, topic: str, session: Session = Depends(get_db),
+                    user: User = Depends(auth.active_user)):
+    _, cm = _own_chat_map(session, chat_id, topic, user)
+    session.delete(cm)
+    session.commit()
+    return Response(status_code=204)
+
+
+@router.get("/chats/{chat_id}/maps/{topic}/digest")
+def chat_map_digest(chat_id: UUID, topic: str, session: Session = Depends(get_db),
+                    user: User = Depends(auth.active_user)):
+    """The graph as the model gets it: every level with its size, and the level the next turn would use. For a map
+    of the chat, or one its project shares."""
+    c = _own_chat(session, chat_id, user)
+    t = db.find_map(session, topic)
+    shared = _shared_maps(session, c)
+    cm = db.chat_map(session, c.id, topic) if t else None
+    key = next((m["key"] for m in shared if m["topic"].id == t.id), None) if t else None
+    if t is None or (cm is None and key is None):
+        raise HTTPException(status_code=404, detail="That map is not in this chat")
+    key = key or cm.key
+    data = digest.digest(session, t)
+    if data is None:
+        raise HTTPException(status_code=409, detail="The map is not built yet")
+    levels = {level: digest.render(data, key, level) for level in digest.LEVELS}
+    model = c.model or llm.chat_model()
+    setup = chat.plan(chat.Turn(
+        user_id=user.id, conversation_id=c.id, message_id=c.id, project_id=None, project_name=None,
+        project_description="", instructions="", catalog=[], artifacts=[], history=[], question="", attachments=[],
+        model=model, effort=c.effort or "low", first_turn=False, context=c.context))
+    share = chat.map_share(setup["prompt_budget"], max(len(shared), 1))
+    return {"key": key, "share": key is not None and (cm is None or cm.share), "budget": share,
+            "level": chat.pick_level(levels, share),
+            "levels": {level: {"text": text, "tokens": chat.tokens(text)} for level, text in levels.items()}}
+
+
+def _project_maps(session: Session, c: Conversation) -> list[dict]:
+    """The maps of the chat's project, with the letter a shared one has in this chat's turns (the project's switch,
+    ``item_id``, changes every chat in it)."""
+    if not c.project_id:
+        return []
+    keys = {m["topic"].id: m["key"] for m in _shared_maps(session, c)}
+    rows = session.execute(select(ProjectItem, EvoTopic).join(EvoTopic, EvoTopic.id == ProjectItem.topic_id)
+                           .where(ProjectItem.project_id == c.project_id).order_by(ProjectItem.added_at)).all()
+    return [{"item_id": str(i.id), "topic_id": str(t.id), "slug": t.slug, "name": t.name, "share": bool(i.share),
+             "key": keys.get(t.id), "built": t.built_at is not None} for i, t in rows]
+
+
+def _shared_maps(session: Session, c: Conversation) -> list[dict]:
+    """The maps the model gets as graphs: the chat's shared ones, then its project's shared ones not already
+    there, each with a letter (project maps take the letters the chat leaves free, oldest first)."""
+    held = db.chat_maps(session, c.id)
+    out = [{"key": cm.key, "topic": t} for cm, t in held if cm.share and t.built_at]
+    if c.project_id:
+        taken = {t.id for _, t in held}
+        used = {cm.key for cm, _ in held}
+        free = (k for k in db.MAP_KEYS if k not in used)
+        rows = session.execute(select(ProjectItem, EvoTopic).join(EvoTopic, EvoTopic.id == ProjectItem.topic_id)
+                               .where(ProjectItem.project_id == c.project_id, ProjectItem.share.is_(True))
+                               .order_by(ProjectItem.added_at)).all()
+        for _, t in rows:
+            if t.id in taken or not t.built_at:
+                continue
+            key = next(free, None)
+            if key is None:
+                break
+            out.append({"key": key, "topic": t})
+    return out
 
 
 # ── a turn ───────────────────────────────────────────────────────────
@@ -326,8 +470,14 @@ async def send_message(chat_id: UUID, body: MessageSend, session: Session = Depe
                    db.artifacts_of(session, user.id, project_id=project.id if project else None,
                                    conversation_id=None if project else c.id)],
         history=_history(history), question=question, attachments=[_attachment(f) for f in files], model=model,
-        effort=effort, first_turn=first_turn, maps=tools.ready_maps(session), context=context)
+        effort=effort, first_turn=first_turn, context=context,
+        files=[_attachment(f) for f in reversed(db.files_of(session, conversation_id=c.id))
+               if f.status == "ready" and f.detached_at is None],
+        shared_maps=[{"key": m["key"], "data": data} for m in _shared_maps(session, c)
+                     if (data := digest.digest(session, m["topic"]))],
+        open_maps=[f"{t.name} ({t.slug})" for cm, t in db.chat_maps(session, c.id) if not cm.share])
     reply_id, title_wanted = reply.id, first_turn and c.title == "New chat"
+    to_caption = [f.id for f in files if f.kind == "image" and not f.caption]
 
     def retrieve(q: str):
         return index.retrieve(turn.project_id, q)
@@ -368,10 +518,28 @@ async def send_message(chat_id: UUID, body: MessageSend, session: Session = Depe
             yield _sse({"type": "title", "title": title})
         if project and wrote:  # artifacts written in a project join its search
             tasks.queue(project.id)
+        if to_caption:  # later turns read the images as captions, while the vision model is still loaded
+            threading.Thread(target=_caption_images, args=(to_caption, llm.chat_preset(model, context, True)),
+                             daemon=True).start()
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _caption_images(file_ids: list[UUID], model: str) -> None:
+    """Describe a turn's images once, so later turns send a few lines of text instead of the image."""
+    from athena.database.db import SessionLocal
+    with SessionLocal() as s:
+        for fid in file_ids:
+            f = s.get(UserFile, fid)
+            if f is None or f.caption:
+                continue
+            try:
+                f.caption = index.caption(f, model=model, feature="chat", wait=False)
+                s.commit()
+            except Exception as exc:
+                logger.info(f"Chat image {fid}: no caption: {exc}")
 
 
 def _sse(payload: dict) -> str:

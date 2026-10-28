@@ -9,6 +9,7 @@ GET    /api/v1/projects/{id}                     — the project with its items,
 PATCH  /api/v1/projects/{id}                     — name, description, instructions
 DELETE /api/v1/projects/{id}                     — with its chats, files and artifacts
 POST   /api/v1/projects/{id}/items               — add {kind, id} or an outside paper {kind: paper, meta}
+PATCH  /api/v1/projects/{id}/items/{item_id}     — {share}: a map goes to every chat in the project as a graph
 DELETE /api/v1/projects/{id}/items/{item_id}
 POST   /api/v1/projects/{id}/reindex             — index everything again (after a map rebuild, say)
 POST   /api/v1/projects/{id}/files               — upload files into the project's knowledge (multipart)
@@ -46,6 +47,10 @@ class ProjectUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=120)
     description: str | None = Field(None, max_length=2000)
     instructions: str | None = Field(None, max_length=20000)
+
+
+class ItemShare(BaseModel):
+    share: bool
 
 
 class ItemAdd(BaseModel):
@@ -124,6 +129,16 @@ def add_item(project_id: UUID, body: ItemAdd, session: Session = Depends(get_db)
     if created:
         tasks.queue(p.id)
     return db.describe_items(session, [item])[0] | {"created": created}
+
+
+@router.patch("/projects/{project_id}/items/{item_id}")
+def share_item(project_id: UUID, item_id: UUID, body: ItemShare, session: Session = Depends(get_db),
+               user: User = Depends(auth.active_user)):
+    """A map's ``share``: every chat in the project gets it as a graph (athena.evolution.digest)."""
+    item = db.share_item(session, _own(session, project_id, user), item_id, body.share)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Map not found in this project")
+    return db.describe_items(session, [item])[0]
 
 
 @router.delete("/projects/{project_id}/items/{item_id}", status_code=204)

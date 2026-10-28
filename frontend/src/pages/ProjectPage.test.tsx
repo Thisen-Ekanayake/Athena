@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { Project } from '../api/queries/projects'
@@ -58,5 +58,19 @@ describe('ProjectPage', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Actions for LoRA questions' }))
     await userEvent.click(screen.getByRole('button', { name: 'Archive' }))
     await waitFor(() => expect(calls).toContainEqual(expect.objectContaining({ method: 'PATCH', body: { archived: true } })))
+  })
+
+  it('keeps maps in their own section, where one can go to every chat as a graph', async () => {
+    const calls = mockApi({
+      'GET /projects/p1': { data: PROJECT },
+      'GET /chat/models': { data: { models: [], default: 'qwen3.5-9b', efforts: [], default_effort: 'low', vision_model: '' } },
+      'PATCH /projects/p1/items/i2': ({ body }) => ({ data: { ...PROJECT.items[1], ...(body as object) } }),
+    })
+    renderWithProviders(<ProjectPage />, { route: '/projects/p1', path: '/projects/:id' })
+    const knowledge = (await screen.findByText(/^Knowledge/)).closest('section, div[class*="rounded"]') as HTMLElement
+    expect(within(knowledge).queryByText('PEFT')).not.toBeInTheDocument()
+    expect(screen.getByText('Only you see it')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Give PEFT to the model' }))
+    await waitFor(() => expect(calls).toContainEqual(expect.objectContaining({ method: 'PATCH', url: '/projects/p1/items/i2', body: { share: true } })))
   })
 })

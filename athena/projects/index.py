@@ -208,21 +208,23 @@ def item_passages(session: Session, item, full_text: bool = True) -> tuple[str, 
     return item.ref, [], None
 
 
-def caption(file) -> str | None:
-    """A description of an uploaded image by the vision model, for project search."""
+def caption(file, model: str | None = None, feature: str = "project_index", wait: bool = True) -> str | None:
+    """A description of an uploaded image by the vision model, for project search and later chat turns. A chat
+    captions right after its own turn (``wait`` False), while the chat still holds the model."""
     from athena.core import llm, usage
     from athena.projects import files
     from athena.model_server import activity, lane
-    model = llm.vision_model()
-    lane.yield_to_chat(who="project_index", pausable=False)  # someone's upload: never held by a pause
-    with activity.track("project_index", model, user_id=file.user_id) as call:
+    model = model or llm.vision_model()
+    if wait:
+        lane.yield_to_chat(who=feature, pausable=False)  # someone's upload: never held by a pause
+    with activity.track(feature, model, user_id=file.user_id) as call:
         resp = llm.chat_client(timeout=300, model=model).chat.completions.create(
             model=model, max_tokens=400, temperature=0.2, extra_body=llm.effort_extra(model, "off")[0],
             messages=[{"role": "user", "content": [
                 {"type": "image_url", "image_url": {"url": files.image_data_url(file.path, file.mime)}},
                 {"type": "text", "text": CAPTION_PROMPT}]}])
         call.tokens(*usage.tokens_of(resp.usage))
-    usage.add("project_index", model, *usage.tokens_of(resp.usage), user_id=file.user_id)
+    usage.add(feature, model, *usage.tokens_of(resp.usage), user_id=file.user_id)
     return (resp.choices[0].message.content or "").strip() or None
 
 

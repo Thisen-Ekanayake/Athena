@@ -21,7 +21,7 @@ from athena.core.models.personal import (
 )
 from athena.core.models.model_server import LlmModel, LlmBenchmark
 from athena.core.models.projects import (
-    Project, ProjectItem, Conversation, ChatMessage, UserFile, Artifact, ArtifactVersion,
+    Project, ProjectItem, Conversation, ConversationMap, ChatMessage, UserFile, Artifact, ArtifactVersion,
 )
 
 __all__ = [
@@ -84,6 +84,7 @@ __all__ = [
     "Project",
     "ProjectItem",
     "Conversation",
+    "ConversationMap",
     "ChatMessage",
     "UserFile",
     "Artifact",

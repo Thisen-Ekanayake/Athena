@@ -70,20 +70,36 @@ function renderList(items: ListItem[], inl: (s: string) => ReactNode): ReactNode
   )
 }
 
+/** A map paper a chat answer names by id (A3): what its citation shows, and where it opens. */
+export interface MapMention {
+  slug: string
+  paper_id: string
+  map: string
+  label: string
+  title?: string
+  authors?: string | null
+  year: number | null
+}
+
 /**
  * The Markdown reviews and chats use: headings, paragraphs, bullet and numbered lists, code blocks, quotes, tables,
  * **bold**, *italics*, `code`, [text](links), bare links, and [n] citations. Citations jump to reference n (``ref-n``
- * on the page), or call ``onCite`` when given. Anything else shows as plain text.
+ * on the page), or call ``onCite`` when given. Map paper ids in ``mapRefs`` ([A3] or A3) become citations (title,
+authors, year) that call ``onMapRef``.
+ * Anything else shows as plain text.
  */
-export function Markdown({ text, idPrefix = 'ref', onCite, className }: {
+export function Markdown({ text, idPrefix = 'ref', onCite, mapRefs, onMapRef, className }: {
   text: string
   idPrefix?: string
   onCite?: (n: number) => void
+  mapRefs?: Record<string, MapMention>
+  onMapRef?: (id: string) => void
   className?: string
 }) {
   const blocks: ReactNode[] = []
   const lines = text.split('\n')
-  const inl = (s: string) => inline(s, idPrefix, onCite)
+  const refs = mapRefs && onMapRef && Object.keys(mapRefs).length ? { known: mapRefs, open: onMapRef } : undefined
+  const inl = (s: string) => inline(s, idPrefix, onCite, refs)
   let i = 0
   while (i < lines.length) {
     const line = lines[i]
@@ -158,7 +174,37 @@ export function Markdown({ text, idPrefix = 'ref', onCite, className }: {
 
 const TOKEN = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*\s][^*]*\*|\[[^\]]+\]\(https?:\/\/[^\s)]+\)|\[\d+(?:\s*,\s*\d+)*\]|https?:\/\/[^\s)]+)/g
 
-function inline(text: string, idPrefix: string, onCite?: (n: number) => void): ReactNode {
+const MAP_REF = /(\[[A-Z]\d{1,3}\]|\b[A-Z]\d{1,3}\b)/
+
+const clipped = (text: string, n: number) => (text.length > n ? `${text.slice(0, n - 1).trimEnd()}…` : text)
+
+/** Plain text with the known map paper ids ([A3] or A3) as citations: title, authors and year, opening the paper in
+ * its map. A link underneath, so a middle click opens the whole map there. */
+function withMapRefs(text: string, refs: { known: Record<string, MapMention>; open: (id: string) => void }): ReactNode {
+  return text.split(new RegExp(MAP_REF.source, 'g')).map((part, k) => {
+    const id = part.replace(/^\[|\]$/g, '')
+    const ref = k % 2 ? refs.known[id] : undefined
+    if (!ref) return <Fragment key={k}>{part}</Fragment>
+    const title = ref.title ?? ref.label
+    const by = [ref.authors, ref.year].filter(Boolean).join(', ')
+    return (
+      <a key={k} href={`/evolution/${ref.slug}?paper=${ref.paper_id}`} data-map-ref={id}
+        onClick={(e) => {
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+          e.preventDefault()
+          refs.open(id)
+        }}
+        title={`${title}${by ? ` (${by})` : ''}, in the map ${ref.map}. Click to open it in the map.`}
+        className="rounded-sm text-accent-ink underline decoration-accent-line decoration-dotted underline-offset-[3px] hover:bg-accent-soft hover:decoration-solid">
+        {clipped(title, 90)}
+        {by && <span className="text-fg-3">{` (${by})`}</span>}
+      </a>
+    )
+  })
+}
+
+function inline(text: string, idPrefix: string, onCite?: (n: number) => void,
+  refs?: { known: Record<string, MapMention>; open: (id: string) => void }): ReactNode {
   const parts = text.split(TOKEN)
   return parts.map((part, k) => {
     if (!part) return null
@@ -187,6 +233,7 @@ function inline(text: string, idPrefix: string, onCite?: (n: number) => void): R
       )
     }
     if (/^https?:\/\//.test(part)) return <a key={k} href={part} target="_blank" rel="noopener noreferrer" className="break-all text-accent-ink hover:underline">{part}</a>
+    if (refs && MAP_REF.test(part)) return <Fragment key={k}>{withMapRefs(part, refs)}</Fragment>
     return <Fragment key={k}>{part}</Fragment>
   })
 }

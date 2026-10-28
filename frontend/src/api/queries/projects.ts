@@ -35,6 +35,9 @@ export interface ProjectItem {
   url?: string | null
   slug?: string
   built?: boolean
+  /** Maps: every chat in the project gets the map as a graph */
+  share?: boolean
+  topic_id?: string
   index_status: IndexStatus
   index_error: string | null
   added_at: string
@@ -52,6 +55,8 @@ export interface UserFile {
   index_status: IndexStatus
   chars: number
   caption: string | null
+  /** Taken out of the chat's turns; its message still shows it */
+  detached?: boolean
   project_id: string | null
   conversation_id: string | null
   created_at: string
@@ -135,11 +140,13 @@ export const useDeleteProject = () => {
   })
 }
 
+export const addToProject = async (projectId: string, item: ItemToAdd) =>
+  (await apiClient.post<ProjectItem & { created: boolean }>(`/projects/${projectId}/items`, item)).data
+
 export const useAddToProject = () => {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ projectId, item }: { projectId: string; item: ItemToAdd }) =>
-      (await apiClient.post<ProjectItem & { created: boolean }>(`/projects/${projectId}/items`, item)).data,
+    mutationFn: ({ projectId, item }: { projectId: string; item: ItemToAdd }) => addToProject(projectId, item),
     onSuccess: (_d, { projectId }) => {
       qc.invalidateQueries({ queryKey: ['project', projectId] })
       qc.invalidateQueries({ queryKey: ['projects'] })
@@ -156,6 +163,20 @@ export const useRemoveFromProject = () => {
     onSuccess: (_d, { projectId }) => {
       qc.invalidateQueries({ queryKey: ['project', projectId] })
       qc.invalidateQueries({ queryKey: ['projects'] })
+    },
+  })
+}
+
+/** Give a project's map to its chats as a graph, or stop. */
+export const useShareProjectMap = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ projectId, itemId, share }: { projectId: string; itemId: string; share: boolean }) =>
+      (await apiClient.patch<ProjectItem>(`/projects/${projectId}/items/${itemId}`, { share })).data,
+    onSuccess: (_d, { projectId }) => {
+      qc.invalidateQueries({ queryKey: ['project', projectId] })
+      qc.invalidateQueries({ queryKey: ['chat'] })  // the project's chats list its maps
+      qc.invalidateQueries({ queryKey: ['map-digest'] })
     },
   })
 }

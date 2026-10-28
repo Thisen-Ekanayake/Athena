@@ -151,6 +151,64 @@ export interface ToolStep {
   artifact?: ArtifactRef
 }
 
+/** A map paper an answer named by id (A3), from the graph the model was given. */
+export interface MapRef {
+  slug: string
+  map: string
+  paper_id: string
+  /** The name citing papers use (LoRA), else the title */
+  label: string
+  /** Missing on answers from before citations showed them */
+  title?: string
+  /** "Hu", "Hu and Shen" or "Hu et al." */
+  authors?: string | null
+  year: number | null
+}
+
+/** A research map attached to a chat. With ``share`` the model gets it as a graph; otherwise only the user sees it. */
+export interface ChatMap {
+  topic_id: string
+  slug: string
+  name: string
+  description: string | null
+  share: boolean
+  /** Its letter in the chat: its papers are A1, A2… */
+  key: string
+  built: boolean
+  built_at: string | null
+  added_at: string
+  papers?: number
+  milestones?: number
+}
+
+/** A map of the chat's project. Its switch (``item_id``) gives it to every chat in the project. */
+export interface ProjectMap {
+  item_id: string
+  topic_id: string
+  slug: string
+  name: string
+  share: boolean
+  /** Its letter in this chat's turns, when shared */
+  key: string | null
+  built: boolean
+}
+
+/** A map to attach: its id or slug, and whether the model gets it */
+export interface MapPick {
+  id: string
+  share: boolean
+}
+
+export interface MapDigest {
+  key: string
+  share: boolean
+  /** Tokens this map may take on the next turn */
+  budget: number
+  /** The level the next turn would use */
+  level: 'full' | 'compact' | 'minimal'
+  levels: Record<'full' | 'compact' | 'minimal', { text: string; tokens: number }>
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -161,6 +219,8 @@ export interface ChatMessage {
   sources: ChatSource[]
   attachments: { id: string; filename: string; kind: UserFile['kind'] }[]
   artifacts: ArtifactRef[]
+  /** The map papers the answer named, by id */
+  map_refs?: Record<string, MapRef>
   model: string | null
   effort: Effort | null
   status: 'done' | 'stopped' | 'failed' | 'streaming'
@@ -174,6 +234,9 @@ export interface ChatMessage {
 export interface Chat extends ChatSummary {
   messages: ChatMessage[]
   files: UserFile[]
+  maps: ChatMap[]
+  /** The project's maps, when the chat is in one */
+  project_maps?: ProjectMap[]
   artifacts: ArtifactSummary[]
 }
 
@@ -249,5 +312,56 @@ export const useDeleteChat = () => {
       qc.invalidateQueries({ queryKey: ['project'] })
       qc.invalidateQueries({ queryKey: ['projects'] })
     },
+  })
+}
+
+export const attachChatMaps = async (chatId: string, maps: MapPick[]) =>
+  (await apiClient.post<{ maps: ChatMap[] }>(`/chats/${chatId}/maps`, { maps })).data.maps
+
+export const useAttachChatMaps = (chatId: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (maps: MapPick[]) => attachChatMaps(chatId, maps),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['chat', chatId] }),
+  })
+}
+
+export const useShareChatMap = (chatId: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ topic, share }: { topic: string; share: boolean }) =>
+      (await apiClient.patch<{ maps: ChatMap[] }>(`/chats/${chatId}/maps/${topic}`, { share })).data.maps,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['chat', chatId] })
+      qc.invalidateQueries({ queryKey: ['map-digest', chatId] })
+    },
+  })
+}
+
+export const useDetachChatMap = (chatId: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (topic: string) => {
+      await apiClient.delete(`/chats/${chatId}/maps/${topic}`)
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['chat', chatId] }),
+  })
+}
+
+/** The graph the model gets for a map in this chat. */
+export const useMapDigest = (chatId: string | undefined, topic: string, enabled: boolean) =>
+  useQuery({
+    queryKey: ['map-digest', chatId, topic],
+    queryFn: async () => (await apiClient.get<MapDigest>(`/chats/${chatId}/maps/${topic}/digest`)).data,
+    enabled: enabled && !!chatId,
+  })
+
+/** Take a file out of the chat's turns, or bring it back. */
+export const useDetachChatFile = (chatId: string) => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ fileId, detached }: { fileId: string; detached: boolean }) =>
+      (await apiClient.patch<UserFile>(`/chats/${chatId}/files/${fileId}`, { detached })).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['chat', chatId] }),
   })
 }

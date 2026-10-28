@@ -1,16 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   BookOpen, FileText, GitBranch, Image as ImageIcon, Lightbulb, Library, MessageSquare, MoreHorizontal, NotebookPen, Pin,
-  Plus, RefreshCw, ScrollText, Upload, X,
+  Plus, RefreshCw, ScrollText, Sparkles, Upload, X,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+import { useQueryClient } from '@tanstack/react-query'
 import { apiErrorMessage } from '../api/error'
 import { useCreateArtifact } from '../api/queries/artifacts'
 import { createChat, type ChatSummary } from '../api/queries/chats'
 import {
-  fileUrl, uploadChatFiles, useDeleteFile, useDeleteProject, useProject, useReindexProject, useRemoveFromProject,
-  useUpdateProject, useUploadProjectFiles, type IndexStatus, type ItemKind, type Project,
+  addToProject, fileUrl, uploadChatFiles, useDeleteFile, useDeleteProject, useProject, useReindexProject, useRemoveFromProject,
+  useShareProjectMap, useUpdateProject, useUploadProjectFiles, type IndexStatus, type ItemKind, type Project,
 } from '../api/queries/projects'
 import { useChatStreams } from '../store/chatStore'
 import { Button } from '../ui/Button'
@@ -24,7 +25,13 @@ import { inputClass } from '../ui/inputClass'
 import { ArtifactPanel } from '../features/chat/ArtifactPanel'
 import { ChatActions, HIDE_ON_HOVER, RenameField, SHOW_ON_HOVER } from '../features/chat/ChatActions'
 import { Composer, type Outgoing } from '../features/chat/Composer'
+import { MapPicker } from '../features/chat/MapPicker'
 import { AddKnowledge } from '../features/projects/AddKnowledge'
+
+// The lineage map's drawing code is large: it loads when a map is first opened.
+const MapPanel = lazy(() => import('../features/chat/MapPanel').then((m) => ({ default: m.MapPanel })))
+
+const SIDE_PANEL = 'fixed inset-y-0 right-0 z-40 w-full shadow-pop sm:w-[min(100vw,560px)] xl:w-[min(46vw,640px)] xl:shadow-none'
 
 const KIND_ICONS: Record<ItemKind, typeof FileText> = { paper: BookOpen, map: GitBranch, review: ScrollText, idea_check: Lightbulb, list: Library }
 const KIND_LABELS: Record<ItemKind, string> = { paper: 'Paper', map: 'Map', review: 'Review', idea_check: 'Idea check', list: 'Saved list' }
@@ -128,7 +135,8 @@ function Knowledge({ project }: { project: Project }) {
   const removeFile = useDeleteFile()
   const reindex = useReindexProject(project.id)
   const fileRef = useRef<HTMLInputElement>(null)
-  const total = project.items.length + project.files.length
+  const items = project.items.filter((i) => i.kind !== 'map')  // maps have their own section
+  const total = items.length + project.files.length
   return (
     <Card>
       <CardHeader icon={Library} title={`Knowledge${total ? ` · ${total}` : ''}`} action={
@@ -151,11 +159,11 @@ function Knowledge({ project }: { project: Project }) {
       {upload.isError && <p className="px-4 pb-2 text-[12px] text-bad">{apiErrorMessage(upload.error, 'The files could not be uploaded.')}</p>}
       {total === 0 ? (
         <p className="px-4 pb-4 text-[12.5px] text-fg-3">
-          Add papers, maps, reviews and your own files. Chats here search them and cite what they use.
+          Add papers, reviews and your own files. Chats here search them and cite what they use.
         </p>
       ) : (
         <ul className="grid grid-cols-[minmax(0,1fr)] pb-2">
-          {project.items.map((i) => {
+          {items.map((i) => {
             const Icon = KIND_ICONS[i.kind]
             const title = i.link ? <Link to={i.link} className="hover:underline">{i.title}</Link>
               : i.url ? <a href={i.url} target="_blank" rel="noopener noreferrer" className="hover:underline">{i.title}</a> : i.title
@@ -225,6 +233,78 @@ function Artifacts({ project, onOpen }: { project: Project; onOpen: (id: string)
   )
 }
 
+/** The project's research maps: open one beside the page, give it to every chat as a graph, add or remove maps.
+ * Their milestones and open problems are in the project's search either way. */
+function Maps({ project, onOpen }: { project: Project; onOpen: (slug: string) => void }) {
+  const share = useShareProjectMap()
+  const remove = useRemoveFromProject()
+  const qc = useQueryClient()
+  const [picking, setPicking] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const maps = project.items.filter((i) => i.kind === 'map')
+
+  const add = async (picks: { id: string; share: boolean }[]) => {
+    setBusy(true)
+    setError(null)
+    try {
+      for (const pick of picks) {
+        const item = await addToProject(project.id, { kind: 'map', id: pick.id })
+        if (pick.share !== !!item.share) await share.mutateAsync({ projectId: project.id, itemId: item.id, share: pick.share })
+      }
+      setPicking(false)
+    } catch (e) {
+      setError(apiErrorMessage(e, 'The maps could not be added.'))
+    } finally {
+      setBusy(false)
+      void qc.invalidateQueries({ queryKey: ['project', project.id] })
+      void qc.invalidateQueries({ queryKey: ['projects'] })
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader icon={GitBranch} title={`Maps${maps.length ? ` · ${maps.length}` : ''}`} action={
+        <Button variant="ghost" size="icon-sm" aria-label="Add maps" title="Add research maps" onClick={() => {
+          setError(null)
+          setPicking(true)
+        }}><Plus /></Button>
+      } />
+      {maps.length === 0 ? (
+        <p className="px-4 pb-4 text-[12.5px] text-fg-3">Add research maps to view them here. Give one to the model and every chat in the project gets it as a graph of its lineage.</p>
+      ) : (
+        <ul className="grid grid-cols-[minmax(0,1fr)] pb-2">
+          {maps.map((m) => (
+            <li key={m.id} className="group flex items-center gap-2.5 px-4 py-1.5 hover:bg-surface-2">
+              <button type="button" onClick={() => m.slug && onOpen(m.slug)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left" title="Open beside the project">
+                <GitBranch className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden="true" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] text-fg">{m.title}</span>
+                  <span className="block truncate text-[11.5px] text-fg-3">{m.share ? 'Every chat here gets it as a graph' : 'Only you see it'}</span>
+                </span>
+              </button>
+              <IndexChip status={m.index_status} error={m.index_error} />
+              <button type="button" aria-pressed={!!m.share} disabled={share.isPending}
+                onClick={() => share.mutate({ projectId: project.id, itemId: m.id, share: !m.share })}
+                aria-label={m.share ? `Stop giving ${m.title} to the model` : `Give ${m.title} to the model`}
+                title={m.share ? 'The project’s chats get a summary of this map. Click to stop.' : 'Give the project’s chats a summary of this map'}
+                className={cn('rounded p-1 hover:bg-surface-3', m.share ? 'text-accent' : 'text-fg-3 hover:text-fg')}>
+                <Sparkles className="h-3.5 w-3.5" />
+              </button>
+              <button type="button" onClick={() => remove.mutate({ projectId: project.id, itemId: m.id })} aria-label={`Remove ${m.title}`} title="Remove from the project"
+                className="rounded p-0.5 text-fg-3 opacity-0 group-hover:opacity-100 hover:text-fg focus:opacity-100"><X className="h-3.5 w-3.5" /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {picking && (
+        <MapPicker title="Add maps to the project" onClose={() => setPicking(false)} onAttach={(picks) => void add(picks)}
+          attached={maps.map((m) => m.slug ?? '')} busy={busy} error={error} />
+      )}
+    </Card>
+  )
+}
+
 /** One of the project's chats. Hovered, its menu (rename, archive, delete) and pin take the date's place. */
 function ChatRow({ chat }: { chat: ChatSummary }) {
   const [renaming, setRenaming] = useState(false)
@@ -260,10 +340,16 @@ export function ProjectPage() {
   const send = useChatStreams((s) => s.send)
   const artifactId = useChatStreams((s) => s.artifactId)
   const openArtifact = useChatStreams((s) => s.openArtifact)
+  const mapPanel = useChatStreams((s) => s.mapPanel)
+  const openMap = useChatStreams((s) => s.openMap)
+  const share = useShareProjectMap()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => () => openArtifact(null), [id, openArtifact])
+  useEffect(() => () => {
+    openArtifact(null)
+    openMap(null)
+  }, [id, openArtifact, openMap])
 
   if (project.isLoading) return <Spinner label="Opening the project…" />
   if (!project.data) return <Notice tone="error" title="Project not found">It may have been deleted. <Link to="/projects" className="underline">All projects</Link></Notice>
@@ -285,7 +371,7 @@ export function ProjectPage() {
   }
 
   return (
-    <div className={cn('mx-auto max-w-6xl', artifactId && 'xl:pr-[min(46vw,640px)]')}>
+    <div className={cn('mx-auto max-w-6xl', (artifactId || mapPanel) && 'xl:pr-[min(46vw,640px)]')}>
       <Header project={p} />
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
@@ -303,12 +389,20 @@ export function ProjectPage() {
           <Instructions project={p} />
           <Knowledge project={p} />
           <Artifacts project={p} onOpen={openArtifact} />
+          <Maps project={p} onOpen={(slug) => openMap({ slug })} />
         </aside>
       </div>
-      {artifactId && (
-        <ArtifactPanel key={artifactId} id={artifactId} onClose={() => openArtifact(null)}
-          className="fixed inset-y-0 right-0 z-40 w-full shadow-pop sm:w-[min(100vw,560px)] xl:w-[min(46vw,640px)] xl:shadow-none" />
-      )}
+      {artifactId && <ArtifactPanel key={artifactId} id={artifactId} onClose={() => openArtifact(null)} className={SIDE_PANEL} />}
+      {mapPanel && (() => {
+        const item = p.items.find((i) => i.kind === 'map' && i.slug === mapPanel.slug)
+        return (
+          <Suspense fallback={null}>
+            <MapPanel key={mapPanel.slug} slug={mapPanel.slug} paperId={mapPanel.paperId ?? null} className={SIDE_PANEL}
+              onSelect={(paperId) => openMap({ ...mapPanel, paperId })} onClose={() => openMap(null)}
+              share={item ? { on: !!item.share, pending: share.isPending, onChange: (on) => share.mutate({ projectId: p.id, itemId: item.id, share: on }) } : undefined} />
+          </Suspense>
+        )
+      })()}
     </div>
   )
 }

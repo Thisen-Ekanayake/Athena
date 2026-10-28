@@ -9,15 +9,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import Integer, func, select, update
 from sqlalchemy.orm import Session
 
 from athena.core.models import (
-    Artifact, ArtifactVersion, ChatMessage, ContentItem, Conversation, EvoIdeaCheck, EvoPaper, EvoTopic, LitReview,
-    Project, ProjectItem, SavedList, SavedListItem, UserFile,
+    Artifact, ArtifactVersion, ChatMessage, ContentItem, Conversation, ConversationMap, EvoIdeaCheck, EvoPaper,
+    EvoTopic, EvoTopicPaper, LitReview, Project, ProjectItem, SavedList, SavedListItem, UserFile,
 )
 
 KINDS = ("paper", "map", "review", "idea_check", "list")
+MAP_KEYS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"  # one letter per map a chat holds
 TITLE_MAX = 120
 
 
@@ -188,6 +189,16 @@ def remove_item(session: Session, project: Project, item_id: UUID) -> bool:
     return True
 
 
+def share_item(session: Session, project: Project, item_id: UUID, share: bool) -> ProjectItem | None:
+    """Give a project's map to its chats as a graph, or stop; None for an item that is not one of its maps."""
+    item = session.get(ProjectItem, item_id)
+    if item is None or item.project_id != project.id or item.kind != "map":
+        return None
+    item.share = share
+    session.commit()
+    return item
+
+
 def items_of(session: Session, project_id: UUID) -> list[ProjectItem]:
     return list(session.execute(select(ProjectItem).where(ProjectItem.project_id == project_id)
                                 .order_by(ProjectItem.added_at.desc())).scalars())
@@ -227,7 +238,8 @@ def describe_items(session: Session, items: list[ProjectItem]) -> list[dict]:
             extra = {"url": m.get("url")}
         elif i.topic_id and (t := topics.get(i.topic_id)):
             title, subtitle, link = t.name, t.description, f"/evolution/{t.slug}"
-            extra = {"slug": t.slug, "built": t.built_at is not None}
+            extra = {"slug": t.slug, "built": t.built_at is not None, "share": bool(i.share),
+                     "topic_id": str(t.id)}
         elif i.review_id and (r := reviews.get(i.review_id)):
             title, subtitle, link = r.title, r.status, f"/reviews/{r.id}"
         elif i.idea_check_id and (c := ideas.get(i.idea_check_id)):
@@ -311,6 +323,8 @@ def delete_conversation(session: Session, c: Conversation) -> list[str]:
         session.delete(row)
     for row in session.execute(select(ChatMessage).where(ChatMessage.conversation_id == c.id)).scalars():
         session.delete(row)
+    for row in session.execute(select(ConversationMap).where(ConversationMap.conversation_id == c.id)).scalars():
+        session.delete(row)
     session.execute(update(Artifact).where(Artifact.conversation_id == c.id).values(conversation_id=None))
     session.delete(c)
     session.commit()
@@ -320,7 +334,8 @@ def delete_conversation(session: Session, c: Conversation) -> list[str]:
 def message_dict(m: ChatMessage) -> dict:
     return {"id": str(m.id), "role": m.role, "content": m.content, "reasoning": m.reasoning,
             "reasoning_ms": m.reasoning_ms, "steps": m.steps or [], "sources": m.sources or [],
-            "attachments": m.attachments or [], "artifacts": m.artifacts or [], "model": m.model, "effort": m.effort,
+            "attachments": m.attachments or [], "artifacts": m.artifacts or [], "map_refs": m.map_refs or {},
+            "model": m.model, "effort": m.effort,
             "status": m.status, "error": m.error, "input_tokens": m.input_tokens, "output_tokens": m.output_tokens,
             "stats": m.stats, "created_at": _iso(m.created_at)}
 
@@ -340,13 +355,92 @@ def add_message(session: Session, conversation: Conversation, role: str, content
     return m
 
 
+# ── maps in chats ────────────────────────────────────────────────────
+
+
+class MapError(ValueError):
+    """A map that cannot be attached: not found, not built, or no letter left."""
+
+
+def map_stats(session: Session, topic_ids: list[UUID]) -> dict[UUID, dict]:
+    """Papers and milestones per map, for the lists."""
+    if not topic_ids:
+        return {}
+    rows = session.execute(select(EvoTopicPaper.topic_id, func.count(), func.sum(
+        func.cast(EvoTopicPaper.is_milestone_auto, Integer))).where(EvoTopicPaper.topic_id.in_(topic_ids))
+        .group_by(EvoTopicPaper.topic_id)).all()
+    return {t: {"papers": n, "milestones": int(m or 0)} for t, n, m in rows}
+
+
+def chat_map_dict(cm: ConversationMap, t: EvoTopic, stats: dict | None = None) -> dict:
+    return {"topic_id": str(t.id), "slug": t.slug, "name": t.name, "description": t.description,
+            "share": cm.share, "key": cm.key, "built": t.built_at is not None, "built_at": _iso(t.built_at),
+            "added_at": _iso(cm.added_at)} | (stats or {})
+
+
+def chat_maps(session: Session, conversation_id: UUID) -> list[tuple[ConversationMap, EvoTopic]]:
+    return list(session.execute(
+        select(ConversationMap, EvoTopic).join(EvoTopic, EvoTopic.id == ConversationMap.topic_id)
+        .where(ConversationMap.conversation_id == conversation_id).order_by(ConversationMap.added_at)).all())
+
+
+def describe_chat_maps(session: Session, conversation_id: UUID) -> list[dict]:
+    rows = chat_maps(session, conversation_id)
+    stats = map_stats(session, [t.id for _, t in rows])
+    return [chat_map_dict(cm, t, stats.get(t.id)) for cm, t in rows]
+
+
+def find_map(session: Session, ident: str) -> EvoTopic | None:
+    """A map by id or slug."""
+    if _is_uuid(ident):
+        return session.get(EvoTopic, UUID(str(ident)))
+    return session.execute(select(EvoTopic).where(EvoTopic.slug == ident)).scalar_one_or_none()
+
+
+def attach_maps(session: Session, c: Conversation, wanted: list[tuple[str, bool]]) -> list[ConversationMap]:
+    """Attach built maps (id or slug, share) to a chat; one already there takes the new share. Each new map
+    gets the first letter no map in the chat holds, so a removed map's letter can come back."""
+    held = {cm.topic_id: cm for cm, _ in chat_maps(session, c.id)}
+    used = {cm.key for cm in held.values()}
+    out = []
+    for ident, share in wanted:
+        topic = find_map(session, ident)
+        if topic is None:
+            raise MapError("Map not found")
+        if topic.built_at is None:
+            raise MapError(f"The map {topic.name} is not built yet")
+        if topic.id in held:
+            held[topic.id].share = share
+            out.append(held[topic.id])
+            continue
+        key = next((k for k in MAP_KEYS if k not in used), None)
+        if key is None:
+            raise MapError(f"A chat holds at most {len(MAP_KEYS)} maps")
+        used.add(key)
+        cm = ConversationMap(conversation_id=c.id, topic_id=topic.id, share=share, key=key, added_at=_now())
+        session.add(cm)
+        held[topic.id] = cm
+        out.append(cm)
+    c.updated_at = _now()
+    session.commit()
+    return out
+
+
+def chat_map(session: Session, conversation_id: UUID, ident: str) -> ConversationMap | None:
+    topic = find_map(session, ident)
+    if topic is None:
+        return None
+    return session.execute(select(ConversationMap).where(ConversationMap.conversation_id == conversation_id,
+                                                         ConversationMap.topic_id == topic.id)).scalar_one_or_none()
+
+
 # ── files ────────────────────────────────────────────────────────────
 
 
 def file_dict(f: UserFile) -> dict:
     return {"id": str(f.id), "filename": f.filename, "mime": f.mime, "kind": f.kind, "size": f.size,
             "pages": f.pages, "status": f.status, "error": f.error, "index_status": f.index_status,
-            "chars": len(f.text or ""), "caption": f.caption,
+            "chars": len(f.text or ""), "caption": f.caption, "detached": f.detached_at is not None,
             "project_id": str(f.project_id) if f.project_id else None,
             "conversation_id": str(f.conversation_id) if f.conversation_id else None,
             "created_at": _iso(f.created_at)}

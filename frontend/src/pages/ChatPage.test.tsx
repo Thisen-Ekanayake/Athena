@@ -1,9 +1,16 @@
+import type { ReactNode } from 'react'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Chat, ChatMessage, ChatModels } from '../api/queries/chats'
+import type { Chat, ChatMap, ChatMessage, ChatModels, MapDigest } from '../api/queries/chats'
+import type { EvolutionNode, EvolutionTopic } from '../features/evolution/api'
 import { mockApi, renderWithProviders } from '../test/utils'
 import { ChatPage } from './ChatPage'
+
+// The lineage map draws with WebGL, which jsdom lacks; the panel around it is under test.
+vi.mock('../features/evolution/EvolutionGraph', () => ({
+  EvolutionGraph: ({ nodes, actions }: { nodes: EvolutionNode[]; actions?: ReactNode }) => <div data-testid="graph">{nodes.length} papers{actions}</div>,
+}))
 
 const MODELS: ChatModels = {
   models: [
@@ -24,7 +31,7 @@ const message = (m: Partial<ChatMessage>): ChatMessage => ({
 
 const CHAT: Chat = {
   id: 'c1', title: 'LoRA questions', project_id: 'p1', project_name: 'Thesis', model: 'qwen3.5-9b', effort: 'medium', pinned: false, archived: false,
-  created_at: '2026-10-24T10:00:00Z', updated_at: '2026-10-24T10:01:00Z', files: [],
+  created_at: '2026-10-24T10:00:00Z', updated_at: '2026-10-24T10:01:00Z', files: [], maps: [],
   artifacts: [{ id: 'a1', title: 'Related work', version: 2, project_id: 'p1', conversation_id: 'c1', index_status: 'indexed', created_at: '', updated_at: '', chars: 40 }],
   messages: [
     message({ id: 'u1', role: 'user', content: 'What does LoRA freeze?' }),
@@ -157,9 +164,115 @@ describe('ChatPage', () => {
     renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
     await waitFor(() => expect(screen.getByTitle('Model, context and effort')).toHaveTextContent('tiny'))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Attach images' })).toBeDisabled())  // once the models are in
-    expect(screen.getByRole('button', { name: 'Attach files' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Attach' })).toBeEnabled()
     await userEvent.click(screen.getByTitle('Model, context and effort'))
     expect(screen.getByRole('radio', { name: /^tiny.*text only/ })).toBeInTheDocument()
     expect(screen.getByText(/tiny reads text and files only/)).toBeInTheDocument()
   })
+
+  it('attaches research maps from the paperclip, each with or without a summary for the model', async () => {
+    const attached: ChatMap = { ...PEFT_MAP, share: true }
+    const calls = mockApi({
+      'GET /chats/c1': { data: CHAT }, 'GET /chat/models': { data: MODELS }, 'GET /projects': { data: { projects: [] } },
+      'GET /evolution/topics': { data: [TOPIC, { ...TOPIC, slug: 'diffusion', name: 'Diffusion', built_at: null, status: 'building' }] },
+      'POST /chats/c1/maps': { status: 201, data: { maps: [attached] } },
+      ...MAP_ROUTES,
+    })
+    renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
+    await userEvent.click(await screen.findByRole('button', { name: 'Attach' }))
+    await userEvent.click(screen.getByRole('button', { name: /Research map/ }))
+    const dialog = await screen.findByRole('dialog', { name: 'Attach research maps' })
+    expect(within(dialog).queryByText('Diffusion')).not.toBeInTheDocument()  // not built: not offered
+    await userEvent.click(within(dialog).getByRole('checkbox', { name: /^PEFT/ }))
+    await userEvent.click(within(dialog).getByRole('checkbox', { name: 'Summary for the model' }))
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Attach map' }))
+    await waitFor(() => expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ maps: [{ id: 'peft', share: true }] }))
+    // one map: it opens beside the chat
+    const panel = await screen.findByRole('complementary', { name: 'Research map' })
+    await waitFor(() => expect(panel).toHaveTextContent('2 papers · 1 milestones'))
+  })
+
+  it('opens a map paper the answer named, and shows what the model was given', async () => {
+    const chat: Chat = {
+      ...CHAT, maps: [{ ...PEFT_MAP, share: true }],
+      messages: [message({
+        id: 'a2', content: '[A4] removed the latency of Adapters (A1). A100 GPUs help.',
+        map_refs: { A4: { slug: 'peft', map: 'PEFT', paper_id: 'p4', label: 'LoRA', title: 'LoRA: Low-Rank Adaptation', authors: 'Hu et al.', year: 2021 },
+          A1: { slug: 'peft', map: 'PEFT', paper_id: 'p1', label: 'Adapters', year: 2019 } },
+      })],
+    }
+    const digest: MapDigest = {
+      key: 'A', share: true, budget: 2400, level: 'compact',
+      levels: { full: { text: 'Map A: PEFT (full)', tokens: 3000 }, compact: { text: 'Map A: PEFT\nA4 fixes A1', tokens: 900 }, minimal: { text: 'Map A: PEFT', tokens: 200 } },
+    }
+    mockApi({
+      'GET /chats/c1': { data: chat }, 'GET /chat/models': { data: MODELS }, 'GET /projects': { data: { projects: [] } },
+      'GET /evolution/topics': { data: [TOPIC] }, 'GET /chats/c1/maps/peft/digest': { data: digest }, ...MAP_ROUTES,
+    })
+    renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
+    // cited by title, authors and year; an answer from before titles were kept shows the name
+    const lora = (await screen.findByText('LoRA: Low-Rank Adaptation')).closest('a')!
+    expect(lora).toHaveTextContent('LoRA: Low-Rank Adaptation (Hu et al., 2021)')
+    expect(lora).toHaveAttribute('href', '/evolution/peft?paper=p4')
+    expect(screen.getByText('Adapters').closest('a')).toHaveTextContent('Adapters (2019)')
+    expect(screen.getByText(/A100/).closest('a')).toBeNull()  // not a paper the map named
+    expect(screen.getByText(/removed the latency/).textContent).not.toContain('[A4]')
+    await userEvent.click(lora)
+    const panel = await screen.findByRole('complementary', { name: 'Research map' })
+    expect(within(panel).getByRole('link', { name: /Full map/ })).toHaveAttribute('href', '/evolution/peft?paper=p4')
+    expect(within(panel).getByRole('checkbox', { name: 'Summary for the model' })).toBeChecked()
+    await userEvent.click(within(panel).getByRole('button', { name: /What the model sees/ }))
+    expect(await within(panel).findByText(/A4 fixes A1/)).toBeInTheDocument()
+    expect(within(panel).getByText(/The next turn uses/)).toHaveTextContent('compact')
+  })
+
+  it('keeps the chat’s maps and artifacts on the right edge, one click from opening', async () => {
+    mockApi({
+      'GET /chats/c1': { data: { ...CHAT, maps: [PEFT_MAP] } }, 'GET /chat/models': { data: MODELS }, 'GET /projects': { data: { projects: [] } },
+      'GET /evolution/topics': { data: [TOPIC] }, ...MAP_ROUTES,
+    })
+    renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
+    const rail = await screen.findByRole('navigation', { name: 'Maps and artifacts' })
+    expect(within(rail).getByRole('button', { name: 'Related work' })).toBeInTheDocument()
+    expect(within(rail).getByRole('button', { name: 'Attach a research map' })).toBeInTheDocument()
+    await userEvent.click(within(rail).getByRole('button', { name: 'PEFT' }))
+    expect(await screen.findByRole('complementary', { name: 'Research map' })).toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Maps and artifacts' })).not.toBeInTheDocument()  // the panel holds the edge now
+  })
+
+  it('puts the project’s maps on the right edge too, with the project’s switch', async () => {
+    const calls = mockApi({
+      'GET /chats/c1': { data: { ...CHAT, project_maps: [{ item_id: 'i9', topic_id: 't1', slug: 'peft', name: 'PEFT', share: true, key: 'A', built: true }] } },
+      'GET /chat/models': { data: MODELS }, 'GET /projects': { data: { projects: [] } }, 'GET /evolution/topics': { data: [TOPIC] },
+      'PATCH /projects/p1/items/i9': { data: { id: 'i9', share: false } }, ...MAP_ROUTES,
+    })
+    renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
+    const rail = await screen.findByRole('navigation', { name: 'Maps and artifacts' })
+    await userEvent.click(within(rail).getByRole('button', { name: /^PEFT · from Thesis/ }))
+    const panel = await screen.findByRole('complementary', { name: 'Research map' })
+    expect(panel).toHaveTextContent('Every chat in Thesis gets this map as a graph.')
+    await userEvent.click(within(panel).getByRole('checkbox', { name: 'Summary for the model' }))
+    await waitFor(() => expect(calls).toContainEqual(expect.objectContaining({ method: 'PATCH', url: '/projects/p1/items/i9', body: { share: false } })))
+  })
 })
+
+const TOPIC: EvolutionTopic = {
+  id: 't1', slug: 'peft', name: 'PEFT', aliases: [], description: 'Adapting large models cheaply.', status: 'ready', status_detail: null,
+  built_at: '2026-10-10T00:00:00Z', origin: 'curated', query: null, build_stats: {}, paper_count: 120, milestone_count: 9,
+}
+
+const PEFT_MAP: ChatMap = {
+  topic_id: 't1', slug: 'peft', name: 'PEFT', description: null, share: false, key: 'A', built: true, built_at: '2026-10-10T00:00:00Z', added_at: '',
+}
+
+const node = (id: string, milestone: boolean): EvolutionNode => ({
+  id, openalex_id: `W${id}`, title: id, year: 2021, year_source: 'openalex', authors: [], author_count: 0, venue: null, cited_by_count: 1,
+  kind: 'method', role: 'core', named_method: null, in_degree: 0, pagerank: 0, citation_percentile: 0, specificity: 0, on_main_path: milestone,
+  milestone_score: 0, score_detail: {}, is_milestone: milestone, is_milestone_auto: milestone, milestone_override: null, override_note: null,
+  full_text_status: 'parsed', url: '',
+})
+
+const MAP_ROUTES = {
+  'GET /evolution/topics/peft': { data: TOPIC },
+  'GET /evolution/topics/peft/graph': { data: { topic: TOPIC, nodes: [node('p1', true), node('p4', false)], edges: [], loose_edges: [], total_papers: 2, strict_links: 0, year_range: [2019, 2021] } },
+}
