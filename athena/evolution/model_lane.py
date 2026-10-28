@@ -27,7 +27,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from athena.core import llm, usage
-from athena.model_server import lane
+from athena.model_server import activity, lane
 from athena.core.config_store import get_setting
 from athena.core.models import EvoTopic
 from athena.database import evolution as db
@@ -95,13 +95,15 @@ def _fit(http: httpx.Client, url: str, text: str) -> tuple[str, bool]:
 
 
 def _embed(http: httpx.Client, url: str, texts: list[str]) -> np.ndarray:
-    lane.yield_to_chat()  # between batches, a chat gets the GPU first
+    lane.yield_to_chat(who="map_embed")  # between batches, a chat gets the GPU first
     body: dict = {"input": texts, "model": embed_model_name()}
     dimensions = get_setting("EVOLUTION_EMBED_DIMENSIONS") or get_setting("EMBED_DIMENSIONS")
     if dimensions:  # OpenAI's text-embedding-3 models shorten vectors themselves
         body["dimensions"] = int(dimensions)
-    resp = http.post(f"{url}/v1/embeddings", json=body)
-    resp.raise_for_status()
+    with activity.track("map_embed", body["model"], kind="embed") as call:
+        resp = http.post(f"{url}/v1/embeddings", json=body)
+        resp.raise_for_status()
+        call.tokens(usage.tokens_of(resp.json().get("usage"))[0])
     usage.add("map_embed", body["model"], usage.tokens_of(resp.json().get("usage"))[0], kind="embed")
     data = sorted(resp.json()["data"], key=lambda d: d["index"])
     raw = np.asarray([d["embedding"] for d in data])
@@ -246,7 +248,7 @@ def classify_pending(limit: int | None = None) -> dict:
             if not rows:
                 break
             out = []
-            lane.yield_to_chat()
+            lane.yield_to_chat(who="map_build")
             for ctx, citing_title, cited_title in rows:
                 v = clf.classify(citing_title, cited_title, ctx.sentence, ctx.marked)
                 # A failed answer is stored as "unknown" so it is not retried forever.
@@ -258,7 +260,7 @@ def classify_pending(limit: int | None = None) -> dict:
             logger.info(f"Labelled {labelled} citing sentences, {strict} strict "
                         f"({labelled / max(time.time() - start, 1e-6):.1f}/s)")
         while limit is None and (rows := db.pending_gap_candidates(session, 64)):
-            lane.yield_to_chat()
+            lane.yield_to_chat(who="map_build")
             out = []
             for gap, title in rows:
                 label = clf.is_gap(title, gap.section_type, gap.sentence) or "unknown"

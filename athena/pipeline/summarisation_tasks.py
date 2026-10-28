@@ -10,6 +10,7 @@ from athena.core import llm
 from athena.core.redis_client import get_redis
 from athena.database.db import SessionLocal
 from athena.core.models import ContentItem, SummaryStatus, JobType
+from athena.model_server import activity, lane
 from athena.pipeline.summarisation import (
     check_budget_before_call,
     log_usage_and_update_spend,
@@ -54,22 +55,32 @@ def _text_to_summarise(item: ContentItem, staged: str) -> Optional[str]:
     return text if len(words) <= MAX_SUMMARY_WORDS else " ".join(words[:MAX_SUMMARY_WORDS])
 
 
-def _complete(system_prompt: str, user_msg: str, name: str, schema: dict):
-    """One summary-model call with a JSON-schema answer; returns the response and the model used."""
-    from athena.model_server import lane
+def _complete(system_prompt: str, user_msg: str, name: str, schema: dict, feature: str = "summary",
+              pausable: bool = True):
+    """One summary-model call with a JSON-schema answer; returns the response and the model used. Waits for chats
+    first, and while background work is paused when ``pausable`` (``lane.Paused`` past the hold)."""
     model = llm.chat_model("summary")
-    lane.yield_to_chat()
-    res = llm.chat_client(model=model).chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_msg}
-        ],
-        temperature=0.3,
-        response_format={"type": "json_schema", "json_schema": {"name": name, "schema": schema}},
-        extra_body=llm.chat_extra(),
-    )
+    lane.yield_to_chat(who=feature, pausable=pausable)
+    with activity.track(feature, model) as call:
+        res = llm.chat_client(model=model).chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg}
+            ],
+            temperature=0.3,
+            response_format={"type": "json_schema", "json_schema": {"name": name, "schema": schema}},
+            extra_body=llm.chat_extra(),
+        )
+        call.tokens(getattr(res.usage, "prompt_tokens", 0), getattr(res.usage, "completion_tokens", 0))
     return res, model
+
+
+def _requeue(task, *args) -> None:
+    """Background work was paused past what one task may wait: queue this one again on its own queue."""
+    queue = (task.request.delivery_info or {}).get("routing_key")
+    logger.info(f"{task.name}{args}: background work is paused; queued again")
+    task.apply_async(args=args, countdown=lane.REQUEUE_SECONDS, **({"queue": queue} if queue else {}))
 
 
 def build_item_summary_prompt(item: ContentItem, text_content: str, prompt_tpl: str) -> str:
@@ -151,7 +162,9 @@ def summarise_item_worker(self, item_id: str, tier: int = 2):
         user_msg = build_item_summary_prompt(item, text_content, active_prompt.user_prompt_tpl)
 
         try:
-            res, model = _complete(active_prompt.system_prompt, user_msg, "item_summary", ITEM_SCHEMA)
+            # Tier 3 is someone opening the item and asking for its summary: it never waits for a pause.
+            res, model = _complete(active_prompt.system_prompt, user_msg, "item_summary", ITEM_SCHEMA,
+                                   pausable=tier != 3)
             raw_response = res.choices[0].message.content
 
             # Validate
@@ -181,6 +194,9 @@ def summarise_item_worker(self, item_id: str, tier: int = 2):
                 # Retry if JSON validation failed
                 raise self.retry(exc=Exception(f"Validation Error: {err_msg}"))
 
+        except lane.Paused:
+            _requeue(self, item_id, tier)
+            return
         except Exception as e:
             session.rollback()
             logger.error(f"Model or inner error for {item_id}: {e}")
@@ -253,7 +269,8 @@ def label_cluster_worker(self, cluster_id: str):
         )
 
         try:
-            res, model = _complete(active_prompt.system_prompt, user_msg, "cluster_summary", CLUSTER_SCHEMA)
+            res, model = _complete(active_prompt.system_prompt, user_msg, "cluster_summary", CLUSTER_SCHEMA,
+                                   feature="cluster_label")
             raw_response = res.choices[0].message.content
 
             try:
@@ -282,6 +299,9 @@ def label_cluster_worker(self, cluster_id: str):
                 logger.error(f"Validation failed for cluster {cluster_id}: {err_msg}")
                 raise self.retry(exc=Exception(f"Cluster Label Error: {err_msg}"))
 
+        except lane.Paused:
+            _requeue(self, cluster_id)
+            return
         except Exception as e:
             logger.error(f"Model error for cluster {cluster_id}: {e}")
             raise self.retry(exc=e)

@@ -34,9 +34,15 @@ def process_full_text(slug: str, reparse: bool = False) -> dict:
 
 @celery_app.task
 def run_gpu_lane(embed: bool = True, classify: bool = True) -> dict:
-    """Embed pending chunks, then label pending citing sentences, one model on the GPU at a time."""
+    """Embed pending chunks, then label pending citing sentences, one model on the GPU at a time. Queued again when
+    background work stays paused (the work left pending is picked up then)."""
     from athena.evolution.model_lane import run_lane
-    return run_lane(embed=embed, classify=classify)
+    from athena.model_server import lane
+    try:
+        return run_lane(embed=embed, classify=classify)
+    except lane.Paused as exc:
+        run_gpu_lane.apply_async(args=[embed, classify], countdown=lane.REQUEUE_SECONDS)
+        return {"paused": str(exc)}
 
 
 @celery_app.task
@@ -90,8 +96,12 @@ def refresh_full_text(slug: str) -> dict:
 @celery_app.task
 def refresh_gpu_lane() -> dict:
     from athena.evolution.model_lane import run_lane
+    from athena.model_server import lane
     try:
         return run_lane()
+    except lane.Paused as exc:  # the snapshot goes ahead; the lane runs once background work resumes
+        run_gpu_lane.apply_async(countdown=lane.REQUEUE_SECONDS)
+        return {"paused": str(exc)}
     except Exception as exc:  # no model server: the snapshot still records the rebuild
         logger.warning(f"Refresh: GPU lane did not run: {exc}")
         return {"error": str(exc)[:300]}
