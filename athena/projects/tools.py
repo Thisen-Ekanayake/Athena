@@ -179,7 +179,7 @@ MAPS_LISTED = 40
 
 
 def ready_maps(session) -> list[str]:
-    """One line per built map, for the system prompt and for a failed lookup: "Name (slug): description"."""
+    """One line per built map, for a failed lookup: "Name (slug): description"."""
     from sqlalchemy import select
 
     from athena.core.models import EvoTopic
