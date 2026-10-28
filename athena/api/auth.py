@@ -173,6 +173,21 @@ def require_admin(user: User = Depends(active_user)) -> User:
     return user
 
 
+# Async, so the context variable is set in the request's own context, which the route (and a sync route's thread)
+# then runs in: every model call the request makes names its user on the activity page.
+async def acting_user(user: User = Depends(active_user)) -> User:
+    """``active_user``, also named as who asked for the model calls this request makes."""
+    from athena.model_server import activity
+    activity.acting_user.set(str(user.id))
+    return user
+
+
+async def acting_admin(user: User = Depends(require_admin)) -> User:
+    from athena.model_server import activity
+    activity.acting_user.set(str(user.id))
+    return user
+
+
 # ── daily limits ───────────────────────────────────────────────────────
 
 

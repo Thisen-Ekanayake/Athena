@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from athena.core import llm, usage
+from athena.model_server import activity
 from athena.core.models import ContentItem, QAFetchCache, User
 from athena.core.qa_fetcher import fetch_article_content
 from athena.api.auth import spend
@@ -163,6 +164,7 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
 
         async def generate():
             client = llm.async_chat_client()
+            call = activity.start("qa", model, user_id=user.id)
             try:
                 # Send partial content flag as initial event
                 if result.partial:
@@ -185,6 +187,8 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
                     if delta:
                         parts.append(delta)
                         yield f"data: {json.dumps({'token': delta})}\n\n"
+                call.tokens(*usage.tokens_of(counted))
+                activity.finish(call)
                 yield "data: [DONE]\n\n"
 
                 # Update tokens and cost: the server's counts, else the estimates
@@ -200,8 +204,10 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
                 r.incrbyfloat(f"qa_spend:{today_str}", cost)
 
             except Exception as e:
+                activity.finish(call, e)
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
             finally:
+                activity.finish(call, GeneratorExit())  # stopped mid-answer; a no-op otherwise
                 r.decr("qa_active_streams")
 
         return StreamingResponse(generate(), media_type="text/event-stream")

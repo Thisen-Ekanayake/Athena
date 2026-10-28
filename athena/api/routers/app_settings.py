@@ -12,6 +12,7 @@ from athena.api.deps import get_db, get_redis
 from athena.core import llm
 from athena.core.config_store import get_setting
 from athena.core.models import AppSetting
+from athena.model_server import activity
 
 router = APIRouter(prefix="/api/v1/settings", tags=["Settings"])
 
@@ -189,13 +190,15 @@ def test_models():
     """One tiny chat call and one embedding, so a new endpoint or model can be checked from the UI."""
     def chat():
         model = llm.chat_model()
-        res = llm.chat_client(timeout=120).chat.completions.create(
-            model=model, messages=[{"role": "user", "content": "Reply with the word ready."}],
-            max_tokens=5, extra_body=llm.chat_extra())
+        with activity.track("connection_test", model):
+            res = llm.chat_client(timeout=120).chat.completions.create(
+                model=model, messages=[{"role": "user", "content": "Reply with the word ready."}],
+                max_tokens=5, extra_body=llm.chat_extra())
         return {"model": model, "reply": (res.choices[0].message.content or "").strip()[:40]}
 
     def embed():
-        return {"model": llm.embed_model(), "dimensions": int(llm.embed(["ready"], timeout=120).shape[1])}
+        return {"model": llm.embed_model(),
+                "dimensions": int(llm.embed(["ready"], timeout=120, feature="connection_test").shape[1])}
 
     return {"chat": _timed(chat), "embed": _timed(embed)}
 

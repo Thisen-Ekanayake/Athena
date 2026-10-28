@@ -78,3 +78,44 @@ class FakeRedis:
         items = self.store.get(key, [])
         self.store[key] = items[start:None if end == -1 else end + 1]
         return True
+
+    # What the model activity page keeps (athena.model_server.activity)
+
+    def getset(self, key, value):
+        old, self.store[key] = self.store.get(key), value
+        return old
+
+    def mget(self, keys):
+        return [self.store.get(k) for k in keys]
+
+    def hdel(self, key, *fields):
+        h = self.store.get(key, {})
+        return sum(h.pop(f, None) is not None for f in fields)
+
+    def hincrbyfloat(self, key, field, n):
+        h = self.store.setdefault(key, {})
+        h[field] = float(h.get(field) or 0) + n
+        return h[field]
+
+    def lpush(self, key, *values):
+        self.store.setdefault(key, [])[:0] = reversed(values)
+        return len(self.store[key])
+
+    def llen(self, key):
+        return len(self.store.get(key, []))
+
+    def pipeline(self):
+        return _Pipeline(self)
+
+
+class _Pipeline:
+    """Commands run as they are called; ``execute`` returns nothing useful."""
+
+    def __init__(self, redis: FakeRedis):
+        self._redis = redis
+
+    def __getattr__(self, name):
+        return getattr(self._redis, name)
+
+    def execute(self):
+        return []

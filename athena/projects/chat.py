@@ -203,7 +203,7 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
     from fastapi.concurrency import run_in_threadpool
 
     from athena.core import llm, usage
-    from athena.model_server import lane, loading
+    from athena.model_server import activity, lane, loading
     from athena.projects import files as uploads
     from athena.projects.tools import LABELS, TOOLS, Context
 
@@ -220,6 +220,7 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
     timing = {"predicted_n": 0, "predicted_ms": 0.0, "prompt_n": 0, "prompt_ms": 0.0}
     kept = [0, 0]  # the last call's prompt and answer tokens: what the context holds after this turn
     asked_at = first_token_at = load_ms = None
+    model_call = None  # the model call running now (athena.model_server.activity)
     lane.hold()
 
     try:
@@ -274,6 +275,7 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
         for step in range(MAX_STEPS + 1):
             offer_tools = step < MAX_STEPS
             kwargs = {"tools": TOOLS} if offer_tools else {}
+            model_call = activity.start("chat", setup["model"], user_id=turn.user_id)
             stream = await client.chat.completions.create(
                 model=setup["model"], messages=list(messages), max_tokens=setup["max_tokens"], stream=True,
                 temperature=0.6 if setup["budget"] else 0.7, stream_options={"include_usage": True},
@@ -292,6 +294,7 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
                     i, o = usage.tokens_of(chunk.usage)
                     counted_in, counted_out = counted_in + i, counted_out + o
                     kept[:] = [i, o]
+                    model_call.tokens(i, o)
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -316,6 +319,7 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
                         call["name"] += tc.function.name
                     if tc.function and tc.function.arguments:
                         call["arguments"] += tc.function.arguments
+            activity.finish(model_call)
             if think_started:
                 reasoning_ms += int((time.monotonic() - think_started) * 1000)
             for key in timing:
@@ -355,8 +359,12 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
     except Exception as exc:
         logger.warning(f"Chat {turn.conversation_id}: the model failed: {exc}")
         status, error = "failed", f"The model did not answer: {str(exc)[:300]}"
+        if model_call:
+            activity.finish(model_call, exc)
         yield {"type": "error", "message": error}
     finally:
+        if model_call:
+            activity.finish(model_call, GeneratorExit())  # the page went away mid-answer; a no-op otherwise
         answer = drop_unknown_citations("\n\n".join(content_parts), len(ctx.sources))
         prompt_tokens = counted_in or estimate
         output_tokens = counted_out or tokens(answer + "".join(reasoning_parts))

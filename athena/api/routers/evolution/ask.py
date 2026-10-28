@@ -19,6 +19,7 @@ from athena.core.models import User
 from athena.database import evolution as db
 from athena.core import llm, usage
 from athena.evolution import ask
+from athena.model_server import activity
 from athena.api.routers.evolution._common import _built_topic_or_409, _topic_or_404
 
 router = APIRouter()
@@ -63,6 +64,7 @@ async def ask_map(slug: str, body: AskRequest, session: Session = Depends(get_db
         yield _sse({"sources": public, "abstract_only": sum(s.abstract_only for s in sources)})
         parts: list[str] = []
         counted = None
+        call = activity.start("map_qa", model, user_id=user.id)
         try:
             stream = await llm.async_chat_client().chat.completions.create(
                 model=model, messages=chat, max_tokens=ANSWER_TOKENS, temperature=0.2, stream=True,
@@ -74,9 +76,14 @@ async def ask_map(slug: str, body: AskRequest, session: Session = Depends(get_db
                 if delta:
                     parts.append(delta)
                     yield _sse({"token": delta})
+            call.tokens(*usage.tokens_of(counted))
+            activity.finish(call)
         except Exception as exc:  # the model server went away mid-answer
+            activity.finish(call, exc)
             logger.warning(f"Ask {slug}: the answer failed: {exc}")
             yield _sse({"error": f"The model did not answer: {str(exc)[:200]}"})
+        finally:
+            activity.finish(call, GeneratorExit())  # the page went away mid-answer; a no-op otherwise
         answer = "".join(parts)
         prompt_tokens, output_tokens = usage.tokens_of(counted)
         prompt_tokens, output_tokens = prompt_tokens or input_tokens, output_tokens or len(answer) // 4

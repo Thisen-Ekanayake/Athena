@@ -419,13 +419,16 @@ def _partial(sections: list[Section]) -> list[dict]:
 def model_chat(user_id, model_used: dict) -> Chat:
     """A chat call through athena.core.llm that records its usage against the user."""
     from athena.core import llm, usage
+    from athena.model_server import activity
     model = llm.chat_model("lit_review")
     model_used["model"] = model
 
     def chat(messages: list[dict], max_tokens: int) -> tuple[str, int, int]:
-        resp = llm.chat_client(model=model).chat.completions.create(
-            model=model, messages=messages, max_tokens=max_tokens, temperature=0.2, extra_body=llm.chat_extra())
-        tokens_in, tokens_out = usage.tokens_of(resp.usage)
+        with activity.track("lit_review", model, user_id=user_id) as call:
+            resp = llm.chat_client(model=model).chat.completions.create(
+                model=model, messages=messages, max_tokens=max_tokens, temperature=0.2, extra_body=llm.chat_extra())
+            tokens_in, tokens_out = usage.tokens_of(resp.usage)
+            call.tokens(tokens_in, tokens_out)
         usage.add("lit_review", model, tokens_in, tokens_out, user_id=user_id)
         model_used["in"] = model_used.get("in", 0) + tokens_in
         model_used["out"] = model_used.get("out", 0) + tokens_out
