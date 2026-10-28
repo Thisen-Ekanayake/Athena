@@ -142,10 +142,9 @@ def test_the_system_prompt_carries_project_instructions():
     assert "Draft (id a1" in text
 
 
-def test_the_system_prompt_lists_the_maps():
-    text = chat.system_prompt(turn(maps=["PEFT (peft): Adapting large models."]))
-    assert "- PEFT (peft): Adapting large models." in text and "query_map" in text
-    assert "(none yet)" in chat.system_prompt(turn())
+def test_the_system_prompt_does_not_list_every_map():
+    text = chat.system_prompt(turn())
+    assert "query_map" in text and "PEFT" not in text
 
 
 def test_made_up_citations_are_dropped():
@@ -408,7 +407,7 @@ def test_a_turn_thinks_writes_an_artifact_and_is_saved(env, monkeypatch, usage_r
 
     first = model.calls[0]
     assert first["extra_body"]["reasoning_budget_tokens"] == 4096 and first["tools"]
-    assert "- PEFT (peft)" in first["messages"][0]["content"]
+    assert "PEFT" not in first["messages"][0]["content"]
     assert first["messages"][-1] == {"role": "user", "content": "Draft me notes"}
     assert model.calls[1]["messages"][-1]["role"] == "tool"
 

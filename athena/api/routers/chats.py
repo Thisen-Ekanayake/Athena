@@ -326,7 +326,7 @@ async def send_message(chat_id: UUID, body: MessageSend, session: Session = Depe
                    db.artifacts_of(session, user.id, project_id=project.id if project else None,
                                    conversation_id=None if project else c.id)],
         history=_history(history), question=question, attachments=[_attachment(f) for f in files], model=model,
-        effort=effort, first_turn=first_turn, maps=tools.ready_maps(session), context=context)
+        effort=effort, first_turn=first_turn, context=context)
     reply_id, title_wanted = reply.id, first_turn and c.title == "New chat"
 
     def retrieve(q: str):

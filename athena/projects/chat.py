@@ -49,15 +49,10 @@ SYSTEM = (
     "they ask for, then say in one or two sentences what you wrote instead of repeating it); read_artifact and "
     "edit_artifact change an existing one.\n\n"
     "For a question about a research topic, field, method or paper, call a tool before you answer, without asking "
-    "first: query_map when one of the maps below covers it (the list only names the maps; what is in them comes "
-    "from query_map), search_papers otherwise. Answer from what they return. Never answer a research question "
-    "from memory alone; if the tools find nothing, say so and say that what follows is not drawn from sources. "
+    "first: query_map when a map may cover it (it finds a map by its topic's name, and lists the maps when none "
+    "matches), search_papers otherwise. Answer from what they return. Never answer a research question from "
+    "memory alone; if the tools find nothing, say so and say that what follows is not drawn from sources. "
     "Greetings, questions about you and follow-ups the conversation already answers need no tool.")
-
-MAPS = """
-
-Athena's research maps (query_map takes the name or the slug in brackets):
-{maps}"""
 
 PROJECT = """
 You are working in the user's project "{name}".{description}
@@ -98,13 +93,11 @@ class Turn:
     effort: str
     first_turn: bool
     context: int | None = None       # the context size picked; the model's default when None
-    maps: list[str] = field(default_factory=list)  # the built research maps (athena.projects.tools.ready_maps)
     events: list[dict] = field(default_factory=list)
 
 
 def system_prompt(turn: Turn) -> str:
     text = SYSTEM.format(today=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-    text += MAPS.format(maps="\n".join(f"- {m}" for m in turn.maps) or "(none yet)")
     if turn.project_id:
         catalog = "\n".join(turn.catalog[:60]) or "(nothing yet)"
         if len(turn.catalog) > 60:
