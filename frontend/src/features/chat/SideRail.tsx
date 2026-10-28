@@ -1,13 +1,13 @@
 import { useState, type ReactNode } from 'react'
-import { GitBranch, NotebookPen, Plus } from 'lucide-react'
+import { FolderKanban, GitBranch, NotebookPen, Plus } from 'lucide-react'
 import { apiErrorMessage } from '../../api/error'
 import { useAttachChatMaps, type Chat } from '../../api/queries/chats'
 import { cn } from '../../ui/cn'
 import { MapPicker } from './MapPicker'
 
 /**
- * The right edge of a chat while no panel is open: its maps and artifacts, one click from opening beside the chat,
- * and a button to attach more maps. Names show on hover.
+ * The right edge of a chat while no panel is open: its maps, its project's maps and its artifacts, one click from
+ * opening beside the chat, and a button to attach more maps. Names show on hover.
  */
 export function SideRail({ chat, onOpenMap, onOpenArtifact }: {
   chat: Chat
@@ -18,6 +18,8 @@ export function SideRail({ chat, onOpenMap, onOpenArtifact }: {
   const [picking, setPicking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const maps = chat.maps ?? []
+  const own = new Set(maps.map((m) => m.slug))
+  const fromProject = (chat.project_maps ?? []).filter((m) => m.built && !own.has(m.slug))
   return (
     <nav aria-label="Maps and artifacts" className="fixed top-1/2 right-3 z-30 hidden -translate-y-1/2 flex-col items-center gap-1 rounded-xl border border-line bg-surface p-1 shadow-pop sm:flex">
       {maps.map((m) => (
@@ -26,13 +28,22 @@ export function SideRail({ chat, onOpenMap, onOpenArtifact }: {
           <span className={cn('absolute right-0.5 bottom-0.5 font-mono text-[9px] leading-none', m.share ? 'text-accent' : 'text-fg-3')}>{m.key}</span>
         </RailButton>
       ))}
-      {chat.artifacts.length > 0 && maps.length > 0 && <span className="my-0.5 h-px w-5 bg-line" aria-hidden="true" />}
+      {fromProject.length > 0 && maps.length > 0 && <span className="my-0.5 h-px w-5 bg-line" aria-hidden="true" />}
+      {fromProject.map((m) => (
+        <RailButton key={m.item_id} label={`${m.name} · from ${chat.project_name ?? 'the project'}${m.share ? ' · the model has a summary' : ''}`}
+          onClick={() => onOpenMap(m.slug)}>
+          <GitBranch className="h-4 w-4 text-accent" aria-hidden="true" />
+          <FolderKanban className="absolute top-0.5 right-0.5 h-2.5 w-2.5 text-fg-3" aria-hidden="true" />
+          {m.key && <span className="absolute right-0.5 bottom-0.5 font-mono text-[9px] leading-none text-accent">{m.key}</span>}
+        </RailButton>
+      ))}
+      {chat.artifacts.length > 0 && maps.length + fromProject.length > 0 && <span className="my-0.5 h-px w-5 bg-line" aria-hidden="true" />}
       {chat.artifacts.map((a) => (
         <RailButton key={a.id} label={a.title} onClick={() => onOpenArtifact(a.id)}>
           <NotebookPen className="h-4 w-4 text-fg-2" aria-hidden="true" />
         </RailButton>
       ))}
-      {(maps.length > 0 || chat.artifacts.length > 0) && <span className="my-0.5 h-px w-5 bg-line" aria-hidden="true" />}
+      {(maps.length > 0 || fromProject.length > 0 || chat.artifacts.length > 0) && <span className="my-0.5 h-px w-5 bg-line" aria-hidden="true" />}
       <RailButton label="Attach a research map" onClick={() => {
         setError(null)
         setPicking(true)

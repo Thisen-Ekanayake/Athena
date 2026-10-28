@@ -740,8 +740,14 @@ def test_a_projects_shared_map_goes_to_its_chats(env, answerer, monkeypatch):
     assert admin.patch(f"/api/v1/projects/{pid}/items/{item['id']}", json={"share": True}).json()["share"] is True
 
     c = admin.post("/api/v1/chats", json={"project_id": pid}).json()
+    assert admin.get(f"/api/v1/chats/{c['id']}").json()["project_maps"] == [
+        {"item_id": item["id"], "topic_id": str(ids["topic"]), "slug": "peft", "name": "PEFT", "share": True,
+         "key": "A", "built": True}]
+    assert admin.get(f"/api/v1/chats/{admin.post('/api/v1/chats', json={}).json()['id']}").json()["project_maps"] == []
     admin.post(f"/api/v1/chats/{c['id']}/messages", json={"content": "Hi"})
     assert "Map A: PEFT" in answerer.system
+    seen = admin.get(f"/api/v1/chats/{c['id']}/maps/peft/digest").json()  # a project's map: the model's view too
+    assert seen["key"] == "A" and seen["levels"]["full"]["text"].startswith("Map A: PEFT")
     # attached to the chat as well: one graph, with the chat's letter
     admin.post(f"/api/v1/chats/{c['id']}/maps", json={"maps": [{"id": "peft", "share": True}]})
     admin.post(f"/api/v1/chats/{c['id']}/messages", json={"content": "Again"})

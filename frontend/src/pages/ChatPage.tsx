@@ -6,7 +6,7 @@ import {
   attachChatMaps, createChat, useAttachChatMaps, useChat, useDeleteChat, useShareChatMap, useUpdateChat, type Chat, type ChatMessage,
   type MapPick,
 } from '../api/queries/chats'
-import { uploadChatFiles, useProject, useProjects } from '../api/queries/projects'
+import { uploadChatFiles, useProject, useProjects, useShareProjectMap } from '../api/queries/projects'
 import { useChatStreams, type Draft } from '../store/chatStore'
 import { Button } from '../ui/Button'
 import { Notice } from '../ui/Notice'
@@ -49,21 +49,34 @@ export function ChatPage() {
   )
 }
 
-/** The map open beside the chat, with its summary switch when the chat holds it. */
+/** The map open beside the chat, with its summary switch when the chat or its project holds it (a project's
+ * switch reaches every chat in the project). */
 function ChatMapPanel() {
   const panel = useChatStreams((s) => s.mapPanel)!
   const openMap = useChatStreams((s) => s.openMap)
   const chat = useChat(panel.chatId)
   const share = useShareChatMap(panel.chatId ?? '')
+  const shareInProject = useShareProjectMap()
   const held = chat.data?.maps?.find((m) => m.slug === panel.slug)
+  const inProject = held ? undefined : chat.data?.project_maps?.find((m) => m.slug === panel.slug)
+  const projectId = chat.data?.project_id
+  const switchFor = held
+    ? { on: held.share, pending: share.isPending, onChange: (on: boolean) => share.mutate({ topic: held.slug, share: on }) }
+    : inProject && projectId
+      ? {
+        on: inProject.share, pending: shareInProject.isPending,
+        note: `${inProject.share ? 'Every chat' : 'Only you, in every chat'} in ${chat.data?.project_name ?? 'the project'}${inProject.share ? ' gets this map as a graph.' : ' see this map.'}`,
+        onChange: (on: boolean) => shareInProject.mutate({ projectId, itemId: inProject.item_id, share: on }),
+      }
+      : undefined
   return (
     <MapPanel
       slug={panel.slug}
       paperId={panel.paperId ?? null}
       onSelect={(paperId) => openMap({ ...panel, paperId })}
       onClose={() => openMap(null)}
-      chatId={held ? panel.chatId : undefined}
-      share={held ? { on: held.share, pending: share.isPending, onChange: (on) => share.mutate({ topic: held.slug, share: on }) } : undefined}
+      chatId={held || inProject ? panel.chatId : undefined}
+      share={switchFor}
       className={SIDE_PANEL}
     />
   )

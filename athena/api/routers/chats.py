@@ -9,7 +9,8 @@ GET    /api/v1/chat/models/state?model=&context=&vision=
 GET    /api/v1/chats?project_id=&standalone=&q=&archived=
                                                  — yours, pinned first then most recent; archived=true: only those
 POST   /api/v1/chats                             — {project_id?, model?, effort?, context?}
-GET    /api/v1/chats/{id}                        — the chat with its messages, files, maps and artifacts
+GET    /api/v1/chats/{id}                        — the chat with its messages, files, maps (its own and its
+                                                   project's) and artifacts
 PATCH  /api/v1/chats/{id}                        — {title}, {project_id} (null: out of its project), {pinned},
                                                    {archived}; any of them
 DELETE /api/v1/chats/{id}
@@ -222,6 +223,7 @@ def get_chat(chat_id: UUID, session: Session = Depends(get_db), user: User = Dep
         "messages": [_message(m) for m in db.messages_of(session, c.id)],
         "files": [db.file_dict(f) for f in db.files_of(session, conversation_id=c.id)],
         "maps": db.describe_chat_maps(session, c.id),
+        "project_maps": _project_maps(session, c),
         "artifacts": [db.artifact_dict(a, content=False)
                       for a in db.artifacts_of(session, user.id, conversation_id=c.id)],
     }
@@ -319,23 +321,41 @@ def detach_chat_map(chat_id: UUID, topic: str, session: Session = Depends(get_db
 @router.get("/chats/{chat_id}/maps/{topic}/digest")
 def chat_map_digest(chat_id: UUID, topic: str, session: Session = Depends(get_db),
                     user: User = Depends(auth.active_user)):
-    """The graph as the model gets it: every level with its size, and the level the next turn would use."""
-    c, cm = _own_chat_map(session, chat_id, topic, user)
-    t = session.get(EvoTopic, cm.topic_id)
+    """The graph as the model gets it: every level with its size, and the level the next turn would use. For a map
+    of the chat, or one its project shares."""
+    c = _own_chat(session, chat_id, user)
+    t = db.find_map(session, topic)
+    shared = _shared_maps(session, c)
+    cm = db.chat_map(session, c.id, topic) if t else None
+    key = next((m["key"] for m in shared if m["topic"].id == t.id), None) if t else None
+    if t is None or (cm is None and key is None):
+        raise HTTPException(status_code=404, detail="That map is not in this chat")
+    key = key or cm.key
     data = digest.digest(session, t)
     if data is None:
         raise HTTPException(status_code=409, detail="The map is not built yet")
-    shared = _shared_maps(session, c)
-    levels = {level: digest.render(data, cm.key, level) for level in digest.LEVELS}
+    levels = {level: digest.render(data, key, level) for level in digest.LEVELS}
     model = c.model or llm.chat_model()
     setup = chat.plan(chat.Turn(
         user_id=user.id, conversation_id=c.id, message_id=c.id, project_id=None, project_name=None,
         project_description="", instructions="", catalog=[], artifacts=[], history=[], question="", attachments=[],
         model=model, effort=c.effort or "low", first_turn=False, context=c.context))
     share = chat.map_share(setup["prompt_budget"], max(len(shared), 1))
-    return {"key": cm.key, "share": cm.share, "budget": share,
+    return {"key": key, "share": key is not None and (cm is None or cm.share), "budget": share,
             "level": chat.pick_level(levels, share),
             "levels": {level: {"text": text, "tokens": chat.tokens(text)} for level, text in levels.items()}}
+
+
+def _project_maps(session: Session, c: Conversation) -> list[dict]:
+    """The maps of the chat's project, with the letter a shared one has in this chat's turns (the project's switch,
+    ``item_id``, changes every chat in it)."""
+    if not c.project_id:
+        return []
+    keys = {m["topic"].id: m["key"] for m in _shared_maps(session, c)}
+    rows = session.execute(select(ProjectItem, EvoTopic).join(EvoTopic, EvoTopic.id == ProjectItem.topic_id)
+                           .where(ProjectItem.project_id == c.project_id).order_by(ProjectItem.added_at)).all()
+    return [{"item_id": str(i.id), "topic_id": str(t.id), "slug": t.slug, "name": t.name, "share": bool(i.share),
+             "key": keys.get(t.id), "built": t.built_at is not None} for i, t in rows]
 
 
 def _shared_maps(session: Session, c: Conversation) -> list[dict]:

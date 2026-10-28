@@ -181,6 +181,18 @@ export interface ChatMap {
   milestones?: number
 }
 
+/** A map of the chat's project. Its switch (``item_id``) gives it to every chat in the project. */
+export interface ProjectMap {
+  item_id: string
+  topic_id: string
+  slug: string
+  name: string
+  share: boolean
+  /** Its letter in this chat's turns, when shared */
+  key: string | null
+  built: boolean
+}
+
 /** A map to attach: its id or slug, and whether the model gets it */
 export interface MapPick {
   id: string
@@ -223,6 +235,8 @@ export interface Chat extends ChatSummary {
   messages: ChatMessage[]
   files: UserFile[]
   maps: ChatMap[]
+  /** The project's maps, when the chat is in one */
+  project_maps?: ProjectMap[]
   artifacts: ArtifactSummary[]
 }
 

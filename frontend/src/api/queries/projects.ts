@@ -173,7 +173,11 @@ export const useShareProjectMap = () => {
   return useMutation({
     mutationFn: async ({ projectId, itemId, share }: { projectId: string; itemId: string; share: boolean }) =>
       (await apiClient.patch<ProjectItem>(`/projects/${projectId}/items/${itemId}`, { share })).data,
-    onSuccess: (_d, { projectId }) => qc.invalidateQueries({ queryKey: ['project', projectId] }),
+    onSuccess: (_d, { projectId }) => {
+      qc.invalidateQueries({ queryKey: ['project', projectId] })
+      qc.invalidateQueries({ queryKey: ['chat'] })  // the project's chats list its maps
+      qc.invalidateQueries({ queryKey: ['map-digest'] })
+    },
   })
 }
 

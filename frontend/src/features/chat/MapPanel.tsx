@@ -24,7 +24,8 @@ export function MapPanel({ slug, paperId, onSelect, onClose, share, chatId, clas
   paperId: string | null
   onSelect: (paperId: string | null) => void
   onClose: () => void
-  share?: { on: boolean; onChange: (on: boolean) => void; pending?: boolean }
+  /** ``note`` says what the switch reaches, when more than this chat (a project's map) */
+  share?: { on: boolean; onChange: (on: boolean) => void; pending?: boolean; note?: string }
   chatId?: string
   className?: string
 }) {
@@ -56,7 +57,7 @@ export function MapPanel({ slug, paperId, onSelect, onClose, share, chatId, clas
             <Sparkles className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
             Summary for the model
           </label>
-          <span className="text-[11.5px] text-fg-3">{share.on ? 'The model gets this map as a graph.' : 'Only you see this map.'}</span>
+          <span className="text-[11.5px] text-fg-3">{share.note ?? (share.on ? 'The model gets this map as a graph.' : 'Only you see this map.')}</span>
           {share.on && chatId && (
             <Button variant="ghost" size="sm" className="ml-auto" aria-expanded={seeing} onClick={() => setSeeing((s) => !s)}>
               <Eye /> {seeing ? 'Hide' : 'What the model sees'}

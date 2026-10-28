@@ -239,6 +239,21 @@ describe('ChatPage', () => {
     expect(await screen.findByRole('complementary', { name: 'Research map' })).toBeInTheDocument()
     expect(screen.queryByRole('navigation', { name: 'Maps and artifacts' })).not.toBeInTheDocument()  // the panel holds the edge now
   })
+
+  it('puts the project’s maps on the right edge too, with the project’s switch', async () => {
+    const calls = mockApi({
+      'GET /chats/c1': { data: { ...CHAT, project_maps: [{ item_id: 'i9', topic_id: 't1', slug: 'peft', name: 'PEFT', share: true, key: 'A', built: true }] } },
+      'GET /chat/models': { data: MODELS }, 'GET /projects': { data: { projects: [] } }, 'GET /evolution/topics': { data: [TOPIC] },
+      'PATCH /projects/p1/items/i9': { data: { id: 'i9', share: false } }, ...MAP_ROUTES,
+    })
+    renderWithProviders(<ChatPage />, { route: '/chats/c1', path: '/chats/:id' })
+    const rail = await screen.findByRole('navigation', { name: 'Maps and artifacts' })
+    await userEvent.click(within(rail).getByRole('button', { name: /^PEFT · from Thesis/ }))
+    const panel = await screen.findByRole('complementary', { name: 'Research map' })
+    expect(panel).toHaveTextContent('Every chat in Thesis gets this map as a graph.')
+    await userEvent.click(within(panel).getByRole('checkbox', { name: 'Summary for the model' }))
+    await waitFor(() => expect(calls).toContainEqual(expect.objectContaining({ method: 'PATCH', url: '/projects/p1/items/i9', body: { share: false } })))
+  })
 })
 
 const TOPIC: EvolutionTopic = {
