@@ -7,8 +7,12 @@ import { SharedMapPage } from './SharedMapPage'
 
 // The lineage map draws with WebGL and d3-force, which jsdom has neither of; the page around it is under test.
 vi.mock('./EvolutionGraph', () => ({
-  EvolutionGraph: ({ nodes, actions }: { nodes: EvolutionNode[]; actions?: ReactNode }) => (
-    <div data-testid="graph">{nodes.length} stars{actions}</div>
+  EvolutionGraph: ({ nodes, actions, showMainPath, showStrict }: {
+    nodes: EvolutionNode[]; actions?: ReactNode; showMainPath?: boolean; showStrict?: boolean
+  }) => (
+    <div data-testid="graph" data-lines={[showMainPath && 'main', showStrict && 'strict'].filter(Boolean).join(' ')}>
+      {nodes.length} stars{actions}
+    </div>
   ),
 }))
 
@@ -70,6 +74,14 @@ describe('SharedMapPage', () => {
     for (const label of ['On the main path', 'Seed paper', 'Takes on a stated limitation', 'Loose link']) {
       expect(screen.getByRole('button', { name: `What "${label}" means` })).toHaveAccessibleDescription(/\w/)
     }
+
+    // Each kind of line can be hidden.
+    expect(screen.getByTestId('graph')).toHaveAttribute('data-lines', 'main strict')
+    fireEvent.click(screen.getByRole('checkbox', { name: /On the main path/ }))
+    expect(screen.getByTestId('graph')).toHaveAttribute('data-lines', 'strict')
+    fireEvent.click(screen.getByRole('checkbox', { name: /Takes on a stated limitation/ }))
+    expect(screen.getByTestId('graph')).toHaveAttribute('data-lines', '')
+    expect(screen.getByRole('checkbox', { name: 'Loose link (0)' })).not.toBeChecked()
 
     fireEvent.click(screen.getByRole('button', { name: 'All' }))
     expect(await screen.findByTestId('graph')).toBeInTheDocument()

@@ -298,6 +298,8 @@ export function TopicView({ slug }: { slug: string }) {
   const setSelectedId = (id: string | null) => navigateTo(tab, id)
   const [limit, setLimit] = useState(250)
   const [showCitations, setShowCitations] = useState(false)
+  const [showMainPath, setShowMainPath] = useState(true)
+  const [showStrict, setShowStrict] = useState(true)
   const [showLoose, setShowLoose] = useState(false)
   const status = useTopicStatus(slug)
   const current = status.data
@@ -413,11 +415,15 @@ export function TopicView({ slug }: { slug: string }) {
                 <input id="evolution-citations" type="checkbox" checked={showCitations} onChange={(e) => setShowCitations(e.target.checked)} className="accent-[var(--accent)]" />
                 Every citation
               </label>
-              <label className="flex items-center gap-2" title="A later paper whose text matches an earlier paper's stated gap, with no citation needed">
-                <input id="evolution-loose" type="checkbox" checked={showLoose} onChange={(e) => setShowLoose(e.target.checked)} className="accent-[var(--accent)]" />
-                Loose links ({loose_edges.length})
-              </label>
-              <Legend />
+              <Legend
+                mainPath={showMainPath}
+                onMainPath={setShowMainPath}
+                strict={showStrict}
+                onStrict={setShowStrict}
+                loose={showLoose}
+                onLoose={setShowLoose}
+                looseCount={loose_edges.length}
+              />
               <span className="ml-auto flex items-center gap-1">
                 {timeline.data.without_full_text.length > 0 && (
                   <Button variant="ghost" size="sm" onClick={() => setTab('no-full-text')} title="Notable papers whose full text is not openly available, so their gaps and citing sentences are missing">
@@ -439,6 +445,8 @@ export function TopicView({ slug }: { slug: string }) {
                 selectedId={selectedId}
                 onSelect={setSelectedId}
                 showCitations={showCitations}
+                showMainPath={showMainPath}
+                showStrict={showStrict}
                 onExporter={(e) => { exporter.current = e }}
                 className={fullScreen ? 'h-full rounded-none border-0' : undefined}
                 actions={fullScreen && (
@@ -541,11 +549,32 @@ function SearchTopicActions({ topic, className }: { topic: EvolutionTopic; class
   )
 }
 
-function Legend() {
+interface LegendProps {
+  mainPath: boolean
+  onMainPath: (on: boolean) => void
+  strict: boolean
+  onStrict: (on: boolean) => void
+  loose: boolean
+  onLoose: (on: boolean) => void
+  looseCount: number
+}
+
+/** What the marks mean; each kind of line has a checkbox to show or hide it. */
+function Legend({ mainPath, onMainPath, strict, onStrict, loose, onLoose, looseCount }: LegendProps) {
   const entry = (mark: ReactNode, label: string, meaning: string) => (
     <span className="flex items-center gap-1.5">
       {mark}
       <span>{label}<InfoTip label={label} text={meaning} /></span>
+    </span>
+  )
+  const toggle = (id: string, on: boolean, onChange: (on: boolean) => void, mark: ReactNode, label: string, meaning: string, count?: number) => (
+    <span className="flex items-center gap-1.5">
+      <label className="flex cursor-pointer items-center gap-1.5">
+        <input id={id} type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked)} className="accent-[var(--accent)]" />
+        {mark}
+        {label}{count !== undefined && ` (${count})`}
+      </label>
+      <InfoTip label={label} text={meaning} />
     </span>
   )
   const dot = (style: CSSProperties) => <span className="inline-block h-2.5 w-2.5 rounded-full" style={style} />
@@ -554,14 +583,14 @@ function Legend() {
     <span className="flex flex-wrap items-center gap-3 text-fg-3">
       {entry(dot({ background: 'var(--accent)' }), 'Milestone',
         'A key method paper of the topic, picked era by era for how much later work cites and builds on it.')}
-      {entry(dot({ boxShadow: 'inset 0 0 0 2px var(--fg-2)' }), 'On the main path',
-        'Part of the citation chain that carries the most of the field, from its oldest papers to its newest.')}
       {entry(dot({ boxShadow: 'inset 0 0 0 2px var(--warn)' }), 'Seed paper',
         'One of the papers the map was built from; the rest were found through their references and citers.')}
-      {entry(line('bg-bad'), 'Takes on a stated limitation',
+      {toggle('evolution-main-path', mainPath, onMainPath, line('bg-fg-2'), 'On the main path',
+        'The citation chain that carries the most of the field, from its oldest papers to its newest. Its papers keep their grey ring when the lines are hidden.')}
+      {toggle('evolution-strict', strict, onStrict, line('bg-bad'), 'Takes on a stated limitation',
         'A later paper that cites an earlier one in a sentence addressing or criticising a limitation of it.')}
-      {entry(line('bg-warn'), 'Loose link',
-        "A later paper whose text matches a gap an earlier paper stated, though it doesn't cite it.")}
+      {toggle('evolution-loose', loose, onLoose, line('bg-warn'), 'Loose link',
+        "A later paper whose text matches a gap an earlier paper stated, though it doesn't cite it.", looseCount)}
     </span>
   )
 }

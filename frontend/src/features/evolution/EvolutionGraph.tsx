@@ -15,6 +15,9 @@ interface EvolutionGraphProps {
   selectedId: string | null
   onSelect: (id: string | null) => void
   showCitations: boolean
+  /** Draw the main path's and the stated-limitation lines (both on by default); hidden, they are plain citations. */
+  showMainPath?: boolean
+  showStrict?: boolean
   /** Receives an exporter while the map is drawn, and null when it is taken down. */
   onExporter?: (exporter: GraphExporter | null) => void
   /** Overrides the box's fixed height, e.g. to fill the screen. */
@@ -112,13 +115,22 @@ function themeColors() {
   }
 }
 
+interface Lines {
+  citations: boolean
+  mainPath: boolean
+  strict: boolean
+}
+
 /**
  * Papers are stars: milestones shine in the accent and carry labels, the rest are faint points.
  * Selecting one draws its thread: the citations into and out of it light up in the accent.
+ * A line type switched off loses its rule, so its edges fall back to the plain citation style.
  */
-function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
+function graphStyle({ citations: showCitations, mainPath, strict }: Lines): cytoscape.StylesheetJson {
   const c = themeColors()
-  return [
+  // Loose edges are only in the graph while shown.
+  const kept = ['loose', mainPath && 'main-path', strict && 'strict'].filter(Boolean)
+  const rules: (cytoscape.StylesheetJsonBlock | false)[] = [
     {
       selector: 'node',
       style: {
@@ -165,7 +177,7 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
         opacity: showCitations ? 0.5 : 0,
       },
     },
-    {
+    mainPath && {
       selector: 'edge.main-path',
       style: {
         'curve-style': 'straight',
@@ -177,7 +189,7 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
         opacity: 0.55,
       },
     },
-    {
+    strict && {
       // Strict gap -> resolution link: shown whether or not all citations are.
       selector: 'edge.strict',
       style: {
@@ -219,11 +231,12 @@ function graphStyle(showCitations: boolean): cytoscape.StylesheetJson {
         opacity: 0.95,
       },
     },
-    { selector: 'edge.strict.thread', style: { 'line-color': c.strict, 'target-arrow-color': c.strict, width: 2.4 } },
+    strict && { selector: 'edge.strict.thread', style: { 'line-color': c.strict, 'target-arrow-color': c.strict, width: 2.4 } },
     // Fading must not bring back citations that are switched off: thousands of faint lines read as haze.
     { selector: 'edge.faded', style: { opacity: showCitations ? 0.03 : 0 } },
-    { selector: 'edge.main-path.faded, edge.strict.faded, edge.loose.faded', style: { opacity: 0.03 } },
+    { selector: kept.map((k) => `edge.${k}.faded`).join(', '), style: { opacity: 0.03 } },
   ]
+  return rules.filter((r): r is cytoscape.StylesheetJsonBlock => !!r)
 }
 
 /**
@@ -253,7 +266,7 @@ function authorLine(paper: EvolutionNode) {
   return paper.author_count > paper.authors.length ? `${names} et al.` : names
 }
 
-export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations, onExporter, className, actions }: EvolutionGraphProps) {
+export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect, showCitations, showMainPath = true, showStrict = true, onExporter, className, actions }: EvolutionGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const cyRef = useRef<cytoscape.Core | null>(null)
   const onSelectRef = useRef(onSelect)
@@ -308,7 +321,7 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
       container: containerRef.current,
       elements,
       layout: { name: 'preset' },
-      style: graphStyle(showCitations),
+      style: graphStyle({ citations: showCitations, mainPath: showMainPath, strict: showStrict }),
       minZoom: 0.15,
       maxZoom: 3,
       autoungrabify: true,
@@ -431,10 +444,10 @@ export function EvolutionGraph({ nodes, edges, looseEdges, selectedId, onSelect,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, looseEdges, firstYear, lastYear])
 
-  // Re-colour when the look changes or citations are toggled.
+  // Re-colour when the look changes or a kind of line is toggled.
   useEffect(() => {
-    cyRef.current?.style(graphStyle(showCitations))
-  }, [accent, showCitations, nodes])
+    cyRef.current?.style(graphStyle({ citations: showCitations, mainPath: showMainPath, strict: showStrict }))
+  }, [accent, showCitations, showMainPath, showStrict, nodes])
 
   // Draw the selected paper's thread: its citations in and out light up, oldest first; the rest fades.
   useEffect(() => {
