@@ -83,6 +83,19 @@ export interface FeatureToday {
   seconds: number
 }
 
+export interface PauseState {
+  by: string | null
+  since: number
+}
+
+/** Background work a pause holds as one: the feed's summaries, labels and embeddings, or the maps' model work */
+export interface PauseGroup {
+  key: 'feed' | 'maps'
+  label: string
+  covers: string
+  paused: PauseState | null
+}
+
 export interface Activity {
   servers: ActivityServer[]
   gpu: GpuInfo | null
@@ -90,10 +103,13 @@ export interface Activity {
   lane: {
     /** "chat", "benchmark", or a preset being loaded for a chat */
     holder: string | null
-    paused: { by: string | null; since: number } | null
+    /** Set only while every group is paused */
+    paused: PauseState | null
+    /** What a pause can hold, one group at a time */
+    groups: PauseGroup[]
     waiting: { who: string; label: string; reason: 'chat' | 'paused'; since: number }[]
   }
-  queues: { label: string; count: number }[]
+  queues: { label: string; count: number; group: PauseGroup['key'] }[]
   recent: ModelCall[]
   swaps: Swap[]
   today: FeatureToday[]
@@ -114,7 +130,9 @@ export const useModelActivity = () =>
 export function usePauseBackground() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async (pause: boolean) => (await apiClient.post(`/models/activity/${pause ? 'pause' : 'resume'}`)).data,
+    /** ``group`` left out: every group */
+    mutationFn: async ({ pause, group }: { pause: boolean; group?: PauseGroup['key'] }) =>
+      (await apiClient.post(`/models/activity/${pause ? 'pause' : 'resume'}`, group ? { group } : undefined)).data,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: KEY })
       void qc.invalidateQueries({ queryKey: ['model-registry'] })

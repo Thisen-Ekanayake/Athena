@@ -162,6 +162,21 @@ class TestClient:
         client = SemanticScholarClient(api_key="k", cache_dir="", http=http, min_interval=0)
         assert client.search("lora", limit=3) == [{"paperId": "p1", "title": "LoRA"}]
 
+    def test_bulk_search_for_one_year_is_cached_apart(self, tmp_path):
+        seen = []
+
+        def handler(request):
+            seen.append(request)
+            year = request.url.params.get("year")
+            return httpx.Response(200, json={"data": [{"paperId": f"p{year}", "title": "Sinhala NER"}]})
+
+        http = httpx.Client(base_url="https://api.semanticscholar.org/graph/v1", transport=httpx.MockTransport(handler))
+        client = SemanticScholarClient(api_key="k", cache_dir=str(tmp_path), http=http, min_interval=0)
+        assert [p.paper_id for p in client.search_bulk("sinhala", 10)] == ["pNone"]
+        assert [p.paper_id for p in client.search_bulk("sinhala", 10, year=2026)] == ["p2026"]
+        assert [p.paper_id for p in client.search_bulk("sinhala", 10, year=2026)] == ["p2026"]
+        assert [r.url.params.get("year") for r in seen] == [None, "2026"]
+
     def test_requests_take_turns_through_redis(self, monkeypatch):
         calls, slept = [], []
 
@@ -248,6 +263,16 @@ class TestAugment:
         candidates = {w.openalex_id: w for w in (self.c1, self.c2, self.c3)}
         stats = augment_with_s2(s2, self.oa, seed_works, candidates, self.seeds, self.config)
         return seed_works, candidates, stats
+
+    def test_a_merged_openalex_record_is_found_by_title(self):
+        # OpenAlex merged QLoRA's arXiv record into the NeurIPS one, which answers the arXiv DOI with its own.
+        self.oa = oa_client({"10.48550/arxiv.2305.14314": {
+            "id": "https://openalex.org/W30", "doi": "https://doi.org/10.52202/075280-0441",
+            "display_name": "QLoRA: Efficient Finetuning of Quantized LLMs", "publication_year": 2023,
+            "cited_by_count": 500, "referenced_works": [],
+            "primary_topic": {"field": {"display_name": "Computer Science"}}}})
+        _, candidates, _ = self.run()
+        assert "W30" in candidates
 
     def test_fills_missing_reference_lists(self):
         _, candidates, stats = self.run()

@@ -273,6 +273,24 @@ def _safe_load(t: dict) -> None:
         logger.warning(f"Warming {t['preset']} failed: {exc}")
 
 
+def load_soon(t: dict) -> None:
+    """An admin's Load (Settings → Models and keys): load ``t`` in a thread, without holding background work back
+    as a chat's warm-up does. The page follows it through the registry's load status."""
+    def go():
+        try:
+            if reason := load(t, for_chat=False, cause="admin_load"):
+                logger.info(f"Loading {t['preset']}: {reason}")
+        except Exception as exc:
+            logger.warning(f"Loading {t['preset']} failed: {exc}")
+
+    with _guard:
+        running = _threads.get(t["preset"])
+        if not (running and running.is_alive()):
+            thread = threading.Thread(target=go, daemon=True, name=f"load-{t['preset']}")
+            _threads[t["preset"]] = thread
+            thread.start()
+
+
 def _label(preset: str | None) -> str | None:
     """A preset as people read it: "qwen3.5-9b at 20k", "qwen3.5-9b at 8k with images"; the name otherwise."""
     from athena.model_server import presets, registry

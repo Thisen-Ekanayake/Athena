@@ -1,6 +1,7 @@
 """
 The benchmark a model gets when it is added: at each of its contexts, load it (timing the load), read a prompt of
-about a thousand tokens and write 128 tokens, and keep llama.cpp's own timings. Results are kept per file, device and
+about a thousand tokens and write 128 tokens, and keep llama.cpp's own timings. An embedding model embeds a batch of
+passages instead, and keeps the tokens it reads a second. Results are kept per file, device and
 context (llm_benchmarks), so a model is measured again only when its file or the GPU changes, or an admin asks.
 
 A run gives way to chats between contexts (athena.model_server.lane), runs one at a time, and leaves the router as
@@ -12,6 +13,7 @@ import contextvars
 import json
 import threading
 import time
+import uuid
 
 import httpx
 from loguru import logger
@@ -30,6 +32,8 @@ PARAGRAPH = ("Research on language models moves quickly: new architectures, trai
              "appear every week, and a careful reader keeps track of which results replicate, which baselines were "
              "tuned fairly and which claims rest on a single benchmark. ")
 PROMPT = PARAGRAPH * 24 + "\n\nWrite a short essay on how to read machine learning papers critically."
+EMBED_BATCH = 16          # passages of about 400 tokens, as the feed and the maps send them
+PASSAGE = PARAGRAPH * 9
 
 
 def _redis():
@@ -65,10 +69,11 @@ def status() -> dict | None:
         return None
 
 
-def measured(model_id: str) -> set[int]:
+def measured(model_id: str, role: str = "chat") -> set[int]:
     """Contexts this file already has a benchmark for on this machine."""
+    speed = "prompt_tps" if role == "embed" else "gen_tps"
     return {b["context"] for b in stats.benches()
-            if b["model_id"] == model_id and b["source"] == "benchmark" and b.get("gen_tps")
+            if b["model_id"] == model_id and b["source"] == "benchmark" and b.get(speed)
             and b["device"] == stats.device_of(_plan(model_id, b["context"]))}
 
 
@@ -97,8 +102,24 @@ def one(t: dict) -> dict:
     return {"gen_tps": timings.get("predicted_per_second"), "prompt_tps": timings.get("prompt_per_second")}
 
 
+def one_embed(t: dict) -> dict:
+    """Load an embedding model's preset and time a batch of passages; {gen_tps: None, prompt_tps}."""
+    if reason := loading.load(t, for_chat=False):
+        raise LoadFailed(reason)
+    url = f"{t['url']}/embeddings"
+    httpx.post(url, json={"model": t["preset"], "input": ["warm-up"]}, timeout=120.0).raise_for_status()
+    with activity.track("benchmark", t["preset"], kind="embed") as call:
+        started = time.perf_counter()
+        resp = httpx.post(url, json={"model": t["preset"], "input": [PASSAGE] * EMBED_BATCH}, timeout=600.0)
+        seconds = time.perf_counter() - started
+        resp.raise_for_status()
+        tokens = (resp.json().get("usage") or {}).get("prompt_tokens") or 0
+        call.tokens(tokens, 0)
+    return {"gen_tps": None, "prompt_tps": tokens / seconds if tokens and seconds > 0 else None}
+
+
 def run(model_id: str, force: bool = False) -> dict:
-    """Benchmark every context of a chat model that has none yet (all of them with ``force``)."""
+    """Benchmark every context of a model that has none yet (all of them with ``force``)."""
     from athena.database import model_registry as db
     from athena.database.db import SessionLocal
     r = _redis()
@@ -108,23 +129,23 @@ def run(model_id: str, force: bool = False) -> dict:
     try:
         registry.invalidate()
         row = next((x for x in registry.snapshot() if x["id"] == model_id), None)
-        if row is None or row["role"] != "chat" or not row["enabled"]:
-            return {"skipped": "not a chat model"}
+        if row is None or not row["enabled"]:
+            return {"skipped": "not a model that is on"}
         if not row["complete"]:
             _status(model=row["name"], model_id=model_id, state="failed",
                     error="The file is incomplete (a download cut short?), so llama.cpp cannot load it.")
             return {"skipped": "incomplete file"}
-        have = set() if force else measured(model_id)
+        have = set() if force else measured(model_id, row["role"])
         todo = [c["context"] for c in row["contexts"] if c["context"] not in have]
         before = [m.get("id") for m in loading.router_models(loading.target(row["name"], None)["url"])
                   if (m.get("status") or {}).get("value") == "loaded"]
         for i, context in enumerate(todo):
             _status(model=row["name"], model_id=model_id, context=context, step=i + 1, of=len(todo), state="running")
-            lane.yield_to_chat(me=BENCH, who="benchmark", pausable=False)
+            lane.yield_to_chat(me=BENCH, who="benchmark", pausable=False, max_wait=lane.ASKED_WAIT)
             lane.hold(LANE_SECONDS, what=BENCH)  # background work waits, so it does not swap the model out
             t = loading.target(row["name"], context)
             try:
-                result = one(t)
+                result = one_embed(t) if row["role"] == "embed" else one(t)
             except LoadFailed as exc:  # smallest contexts go first: the rest would not load either
                 logger.warning(f"Benchmark {t['preset']}: {exc}")
                 done[context] = {"error": str(exc)[:300]}
@@ -134,7 +155,7 @@ def run(model_id: str, force: bool = False) -> dict:
                 done[context] = {"error": str(exc)[:300]}
                 continue
             with SessionLocal() as session:
-                m = db.get_model(session, model_id)
+                m = db.get_model(session, uuid.UUID(model_id))
                 db.record_speed(session, m, stats.device_of(t["plan"]), context, gen_tps=result["gen_tps"],
                                 prompt_tps=result["prompt_tps"], gpu_layers=t["plan"]["gpu_layers"],
                                 source="benchmark", replace=True)

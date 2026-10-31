@@ -42,11 +42,12 @@ def model_registry(monkeypatch):
     """No model registry and no chat lane in Redis unless a test sets them: the real ones read the database and
     Redis of whatever machine runs the tests. Returns the list ``registry.snapshot()`` serves."""
     from athena.model_server import activity, bench, lane, loading, registry
+    from athena.pipeline import reembed
     from tests.fakes import FakeRedis
     rows: list[dict] = []
     fake = FakeRedis()
     monkeypatch.setattr(registry, "snapshot", lambda: rows)
-    for module in (lane, bench, loading, activity):
+    for module in (lane, bench, loading, activity, reembed):
         monkeypatch.setattr(module, "_redis", lambda: fake)
     return rows
 

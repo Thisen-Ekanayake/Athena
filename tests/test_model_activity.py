@@ -82,6 +82,35 @@ def test_a_pause_holds_background_work_but_not_what_people_asked_for(monkeypatch
     assert lane.paused() is None and lane.yield_to_chat(who="summary") == 0
 
 
+def test_each_group_pauses_on_its_own(monkeypatch):
+    from athena.pipeline import embedding_worker
+    monkeypatch.setattr(lane, "POLL", 0.01)
+    monkeypatch.setattr(lane, "PAUSE_HOLD", 0.05)
+    lane.pause("maps", by="Admin")
+    assert lane.pauses()["maps"]["by"] == "Admin" and lane.pauses()["feed"] is None
+    assert lane.paused() is None  # not everything
+    assert lane.yield_to_chat(who="summary") == 0 and lane.yield_to_chat(who="cluster_label") == 0
+    with pytest.raises(lane.Paused):
+        lane.yield_to_chat(who="map_embed")
+    ran = []
+    monkeypatch.setattr(embedding_worker, "init_qdrant", lambda: ran.append(1) or (_ for _ in ()).throw(RuntimeError))
+    with pytest.raises(RuntimeError):
+        embedding_worker.process_embedding_queue()  # the feed's embeddings still run
+    lane.pause("feed")
+    embedding_worker.process_embedding_queue()
+    assert ran == [1] and lane.paused()["by"] == "Admin"  # both groups now: everything is paused
+    lane.resume("maps")
+    assert lane.pauses() == {"feed": lane.pauses()["feed"], "maps": None} and lane.yield_to_chat(who="map_build") == 0
+
+
+def test_a_pause_from_before_groups_holds_both():
+    lane._redis().set(lane.PAUSE_KEY, '{"by": "Admin", "since": 1}')
+    assert lane.pauses() == {"feed": {"by": "Admin", "since": 1}, "maps": {"by": "Admin", "since": 1}}
+    assert lane._redis().get(lane.PAUSE_KEY) is None
+    lane.resume()
+    assert lane.pauses() == {"feed": None, "maps": None}
+
+
 def test_waiters_are_listed_while_they_wait(monkeypatch):
     monkeypatch.setattr(lane, "POLL", 0.01)
     lane.hold()
@@ -150,7 +179,7 @@ def test_the_page_shows_calls_lane_queues_and_totals(client, gpu_presets):
     (live,) = body["calls"]
     assert live["label"] == "Summaries" and live["background"] and live["user"] is None
     assert body["lane"]["holder"] == "chat" and body["lane"]["paused"] is None
-    assert {"label": "Feed summaries", "count": 2} in body["queues"]
+    assert {"label": "Feed summaries", "count": 2, "group": "feed"} in body["queues"]
     assert body["swaps"][0]["cause_label"] == "Summaries"
     activity.finish(call)
     body = client.get("/api/v1/models/activity").json()
@@ -160,8 +189,19 @@ def test_the_page_shows_calls_lane_queues_and_totals(client, gpu_presets):
 def test_pause_and_resume(client):
     assert client.post("/api/v1/models/activity/pause").json()["paused"]["since"] > 0
     assert client.get("/api/v1/models/activity").json()["lane"]["paused"]
-    assert client.post("/api/v1/models/activity/resume").json() == {"paused": None}
+    resumed = client.post("/api/v1/models/activity/resume").json()
+    assert resumed["paused"] is None and all(g["paused"] is None for g in resumed["groups"])
     assert lane.paused() is None
+
+
+def test_one_group_is_paused_and_resumed(client):
+    body = client.post("/api/v1/models/activity/pause", json={"group": "maps"}).json()
+    assert body["paused"] is None
+    assert {g["key"]: bool(g["paused"]) for g in body["groups"]} == {"feed": False, "maps": True}
+    groups = client.get("/api/v1/models/activity").json()["lane"]["groups"]
+    assert [(g["key"], g["label"]) for g in groups] == [("feed", "Feed"), ("maps", "Maps")]
+    assert client.post("/api/v1/models/activity/pause", json={"group": "trending"}).status_code == 422
+    assert client.post("/api/v1/models/activity/resume", json={"group": "maps"}).json()["groups"][1]["paused"] is None
 
 
 def test_unload_says_which_background_work_will_load_the_model_again(gpu_presets):
@@ -172,7 +212,9 @@ def test_unload_says_which_background_work_will_load_the_model_again(gpu_presets
         pass
     assert model_activity.reloads({"qwen3.5-9b"}) == ["Summaries"]
     assert model_activity.reloads({"qwen3-embedding-8b"}) == []
-    lane.pause()
+    lane.pause("maps")
+    assert model_activity.reloads({"qwen3.5-9b"}) == ["Summaries"]  # another group's pause does not hold it
+    lane.pause("feed")
     assert model_activity.reloads({"qwen3.5-9b"}) == []  # paused: it stays out
 
 

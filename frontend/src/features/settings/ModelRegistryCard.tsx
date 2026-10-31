@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { Brain, Check, ChevronDown, CircleStop, Eye, Gauge, Pause, Plus, Power, RefreshCw, Star, Trash2, Type, Wrench } from 'lucide-react'
+import { Brain, Check, ChevronDown, CircleStop, Eye, Gauge, Pause, Play, Plus, Power, RefreshCw, Star, Trash2, Type, Wrench } from 'lucide-react'
 import { apiErrorMessage } from '../../api/error'
 import { usePauseBackground } from '../../api/queries/modelActivity'
 import {
-  useBenchmark, useMakeDefault, useRegistry, useRemoveModel, useUnloadModel, useUpdateModel, type GpuInfo, type Registry,
-  type RegistryModel,
+  useBenchmark, useLoadModel, useMakeDefault, useRegistry, useRemoveModel, useUnloadModel, useUpdateModel, type GpuInfo, type Registry,
+  type Reembed, type RegistryModel,
 } from '../../api/queries/modelRegistry'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
@@ -177,9 +177,25 @@ function ReloadWarning({ name, by }: { name: string; by: string[] }) {
       <div className="grid justify-items-start gap-2">
         <p>{name} was unloaded, but {by.length > 1 ? 'they' : 'it'} used it in the last two minutes and the router loads it back for the next request. Pause background work to keep it out of memory; resume it under Model activity.</p>
         {pause.isSuccess ? <p className="text-good">Background work is paused.</p> : (
-          <Button variant="secondary" size="sm" disabled={pause.isPending} onClick={() => pause.mutate(true)}><Pause />Pause background work</Button>
+          <Button variant="secondary" size="sm" disabled={pause.isPending} onClick={() => pause.mutate({ pause: true })}><Pause />Pause background work</Button>
         )}
       </div>
+    </Notice>
+  )
+}
+
+/** After a switch of embedding model: what is still to be embedded again. */
+function ReembedNotice({ r }: { r: Reembed }) {
+  const left = [
+    r.feed_left && `${r.feed_left.toLocaleString()} feed ${r.feed_left === 1 ? 'item' : 'items'}`,
+    r.maps_left && `${r.maps_left.toLocaleString()} map passages and abstracts`,
+    r.projects_left && `${r.projects_left.toLocaleString()} project ${r.projects_left === 1 ? 'file' : 'files'}`,
+  ].filter(Boolean).join(', ')
+  return (
+    <Notice tone="info" title={`Embedding everything again with ${r.model}`}>
+      {r.previous ? `Switched from ${r.previous}` : 'Switched'}{r.by ? ` by ${r.by}` : ''} on {new Date(r.since * 1000).toLocaleString()}.
+      {' '}Left: {left}. Search, related papers and project chats find what is embedded so far; background work does
+      this between chats, and a pause holds it.
     </Notice>
   )
 }
@@ -190,16 +206,26 @@ function ModelDetail({ m, benchmarking }: { m: RegistryModel; benchmarking: Regi
   const bench = useBenchmark()
   const makeDefault = useMakeDefault()
   const unload = useUnloadModel()
+  const load = useLoadModel()
   const [editing, setEditing] = useState(false)
   const running = benchmarking?.state === 'running' && benchmarking.model_id === m.id
-  const error = update.error ?? remove.error ?? bench.error ?? makeDefault.error ?? unload.error
+  const error = update.error ?? remove.error ?? bench.error ?? makeDefault.error ?? unload.error ?? load.error
+  const embedder = m.role === 'embed'
+  const defaultLabel = embedder ? 'default embedding model' : 'default chat model'
   const info = m.info
   const lastFailed = m.last_benchmark && m.last_benchmark.state !== 'running' && m.last_benchmark.error
   const usable = m.complete && m.exists
   const turnOff = () => {
-    const note = m.is_default ? `${m.name} is the default chat model. Turning it off unloads it and makes another chat model the default.`
+    const note = m.is_default ? `${m.name} is the ${defaultLabel}. Turning it off unloads it and makes another chat model the default.`
       : `Turn ${m.name} off? It is unloaded now and chats stop offering it.`
     if (window.confirm(note)) update.mutate({ id: m.id, enabled: false })
+  }
+  const makeDefaultNow = () => {
+    // Vectors from two models cannot be compared, so a new embedder means embedding everything again.
+    if (embedder && !window.confirm(`Make ${m.name} the embedding model? Every stored vector is thrown away and made again `
+      + 'with it: the feed, the maps and project files. That takes hours on the GPU; until it is done, search, related '
+      + 'papers and project chats only find what has been embedded again.')) return
+    makeDefault.mutate(m.id)
   }
   return (
     <div className="grid gap-3">
@@ -207,11 +233,11 @@ function ModelDetail({ m, benchmarking }: { m: RegistryModel; benchmarking: Regi
         <div className="grid min-w-0 flex-1 gap-1">
           <p className="flex flex-wrap items-center gap-1.5">
             <Chip>{m.role === 'chat' ? 'Chat' : 'Embeddings'}</Chip>
-            {m.is_default && <Chip tone="accent">default chat model</Chip>}
+            {m.is_default && <Chip tone="accent">{defaultLabel}</Chip>}
             {m.role === 'chat' && (m.vision ? <Chip tone="accent"><Eye />images</Chip> : <Chip><Type />text only</Chip>)}
             {m.reasoning && <Chip><Brain />thinks</Chip>}
             {m.role === 'chat' && m.tools && <Chip><Wrench />tools</Chip>}
-            {m.used_for.filter((u) => u !== 'default chat model').map((u) => <Chip key={u} tone="good">{u}</Chip>)}
+            {m.used_for.filter((u) => u !== 'default chat model' && !(embedder && u === 'embeddings')).map((u) => <Chip key={u} tone="good">{u}</Chip>)}
             {m.loaded && <Chip tone="good">loaded</Chip>}
             {!m.enabled && <Chip tone="warn">off</Chip>}
             {!m.exists && <Chip tone="bad">file missing</Chip>}
@@ -224,25 +250,31 @@ function ModelDetail({ m, benchmarking }: { m: RegistryModel; benchmarking: Regi
           <p className="truncate font-mono text-[11px] text-fg-3/80" title={m.path}>{m.path}</p>
         </div>
         <div className="flex flex-wrap items-center gap-1">
-          {m.role === 'chat' && !m.is_default && usable && (
-            <Button variant="secondary" size="sm" disabled={makeDefault.isPending} onClick={() => makeDefault.mutate(m.id)}
-              title="New chats start with it; summaries and Q&A use it">
-              <Star />Make default
+          {!m.is_default && usable && (
+            <Button variant="secondary" size="sm" disabled={makeDefault.isPending} onClick={makeDefaultNow}
+              title={embedder ? 'Every vector comes from it: switching embeds everything again' : 'New chats start with it; summaries and Q&A use it'}>
+              <Star />{makeDefault.isPending && embedder ? 'Checking it answers…' : 'Make default'}
             </Button>
           )}
-          {m.loaded && (
+          {m.loaded ? (
             <Button variant="ghost" size="sm" disabled={unload.isPending} onClick={() => unload.mutate(m.id)} title="Free its GPU or CPU memory now; it loads again when needed">
               <CircleStop />Unload
             </Button>
-          )}
-          {m.role === 'chat' && (
-            <Button variant="ghost" size="sm" disabled={running || bench.isPending || !m.enabled || !usable} onClick={() => bench.mutate({ id: m.id, force: m.benchmarked })}
-              title={!usable ? 'The file cannot be loaded' : m.benchmarked ? 'Measure every context again' : 'Measure the contexts not measured yet'}>
-              <Gauge className={cn(running && 'animate-pulse')} />{running ? `Benchmarking ${benchmarking?.step}/${benchmarking?.of}` : m.benchmarked ? 'Re-benchmark' : 'Benchmark'}
+          ) : m.enabled && usable && (
+            <Button variant="ghost" size="sm" disabled={load.isPending} onClick={() => load.mutate(m.id)}
+              title={`Load it${embedder ? '' : ` at ${tokens(m.default_context)}`} now; the router swaps out the model it holds`}>
+              <Play />Load
             </Button>
           )}
-          <Button variant="ghost" size="sm" disabled={update.isPending} onClick={() => (m.enabled ? turnOff() : update.mutate({ id: m.id, enabled: true }))}
-            title={m.enabled ? 'Turn off: unloads it, and chats stop offering it' : 'Turn on'}>
+          <Button variant="ghost" size="sm" disabled={running || bench.isPending || !m.enabled || !usable} onClick={() => bench.mutate({ id: m.id, force: m.benchmarked })}
+            title={!usable ? 'The file cannot be loaded' : embedder ? 'Time a batch of passages: how many tokens a second it reads'
+              : m.benchmarked ? 'Measure every context again' : 'Measure the contexts not measured yet'}>
+            <Gauge className={cn(running && 'animate-pulse')} />{running ? `Benchmarking ${benchmarking?.step}/${benchmarking?.of}` : m.benchmarked ? 'Re-benchmark' : 'Benchmark'}
+          </Button>
+          <Button variant="ghost" size="sm" disabled={update.isPending || (embedder && m.is_default && m.enabled)}
+            onClick={() => (m.enabled ? turnOff() : update.mutate({ id: m.id, enabled: true }))}
+            title={embedder && m.is_default && m.enabled ? 'Every vector comes from it; make another embedding model the default first'
+              : m.enabled ? 'Turn off: unloads it, and chats stop offering it' : 'Turn on'}>
             <Power />{m.enabled ? 'Turn off' : 'Turn on'}
           </Button>
           <Button variant="ghost" size="icon-sm" disabled={remove.isPending} aria-label={`Remove ${m.name}`} title="Remove from the registry (the file stays)"
@@ -287,7 +319,13 @@ function ModelDetail({ m, benchmarking }: { m: RegistryModel; benchmarking: Regi
                 </td>
                 <td className="py-1 pr-3">{c.vram_mb ? megabytes(c.vram_mb) : '—'}</td>
                 <td className="py-1 pr-3">{c.ram_mb ? megabytes(c.ram_mb) : '—'}</td>
-                <td className="py-1 pr-3" title={c.speed_source === 'measured' ? `Measured (${c.samples} runs)` : 'Estimated'}>{m.role === 'chat' ? speedText(c) : '—'}</td>
+                {embedder ? (
+                  <td className="py-1 pr-3" title={c.prompt_tps ? 'Tokens read a second, from a benchmark' : 'Not measured yet: benchmark it'}>
+                    {c.prompt_tps ? `${Math.round(c.prompt_tps).toLocaleString()} tok/s read` : '—'}
+                  </td>
+                ) : (
+                  <td className="py-1 pr-3" title={c.speed_source === 'measured' ? `Measured (${c.samples} runs)` : 'Estimated'}>{speedText(c)}</td>
+                )}
                 <td className="py-1 pr-3">{c.load_seconds ? seconds(c.load_seconds) : '—'}</td>
                 <td className="py-1 font-sans text-[11.5px]">
                   {c.status === 'loaded' ? <span className="text-good">loaded</span> : c.status === 'loading' ? <span className="text-accent">loading</span>
@@ -317,7 +355,7 @@ export function ModelRegistryCard() {
   if (registry.isLoading) return <Card className="p-4"><Spinner label="Reading the model registry…" /></Card>
   if (!data) return <Notice tone="error" title="The registry could not be read">{apiErrorMessage(registry.error, 'Try again in a moment.')}</Notice>
   const bench = data.benchmark
-  const selected = data.models.find((m) => m.id === picked) ?? data.models.find((m) => m.is_default) ?? data.models[0]
+  const selected = data.models.find((m) => m.id === picked) ?? data.models.find((m) => m.is_default && m.role === 'chat') ?? data.models[0]
   return (
     <Card className="grid gap-0 overflow-hidden">
       <div className="grid gap-4 border-b border-line p-4">
@@ -333,6 +371,7 @@ export function ModelRegistryCard() {
             Benchmarking <span className="font-mono">{bench.model}</span> at {tokens(bench.context ?? 0)} ({bench.step} of {bench.of}); chats go first and pause it.
           </p>
         )}
+        {data.reembed && !data.reembed.done && <ReembedNotice r={data.reembed} />}
       </div>
       <div className="grid gap-4 p-4">
         <div className="flex flex-wrap items-center gap-2">

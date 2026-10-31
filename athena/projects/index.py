@@ -216,7 +216,8 @@ def caption(file, model: str | None = None, feature: str = "project_index", wait
     from athena.model_server import activity, lane
     model = model or llm.vision_model()
     if wait:
-        lane.yield_to_chat(who=feature, pausable=False)  # someone's upload: never held by a pause
+        # Someone's upload: never held by a pause, and it waits for a chat only so long.
+        lane.yield_to_chat(who=feature, pausable=False, max_wait=lane.ASKED_WAIT)
     with activity.track(feature, model, user_id=file.user_id) as call:
         resp = llm.chat_client(timeout=300, model=model).chat.completions.create(
             model=model, max_tokens=400, temperature=0.2, extra_body=llm.effort_extra(model, "off")[0],
@@ -241,7 +242,7 @@ def _upsert(source: str, project_id: UUID, user_id: UUID, kind: str, title: str,
     passages = [p for p in passages if p.strip()][:MAX_CHUNKS]
     for start in range(0, len(passages), EMBED_BATCH):
         batch = passages[start:start + EMBED_BATCH]
-        lane.yield_to_chat(who="project_index", pausable=False)
+        lane.yield_to_chat(who="project_index", pausable=False, max_wait=lane.ASKED_WAIT)
         vectors = llm.embed(batch, feature="project_index", user_id=user_id)
         qdrant.upsert(COLLECTION, points=[qm.PointStruct(
             id=str(uuid.uuid5(_NAMESPACE, f"{source}:{start + i}")), vector=vec.tolist(),

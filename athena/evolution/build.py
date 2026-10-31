@@ -13,7 +13,7 @@ from loguru import logger
 from athena.database import evolution as db
 from athena.database.db import SessionLocal
 from athena.evolution.config import TopicConfig
-from athena.evolution.corpus import Seed, build_corpus
+from athena.evolution.corpus import Seed, build_corpus, search_terms as topic_search_terms
 from athena.evolution.membership import Membership, abstract_vectors, keyword_only, semantic_membership
 from athena.evolution.milestones import score_topic
 from athena.core.openalex import OpenAlexClient
@@ -42,7 +42,7 @@ def build_topic(slug: str, client: OpenAlexClient | None = None, s2: SemanticSch
             raise ValueError(f"Unknown topic {slug!r}; seed it with scripts/seed_evolution_topics.py")
         config = TopicConfig.from_dict(topic.config)
         seeds = [Seed(**s) for s in (topic.seeds or [])]
-        search_terms = [topic.name, *(topic.aliases or [])]
+        search_terms = topic_search_terms(topic.name, topic.aliases or [], config.keywords)
 
     def stage(text: str) -> None:
         db.set_topic_status(slug, stage_status, text)

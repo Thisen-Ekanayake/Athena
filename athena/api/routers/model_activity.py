@@ -11,10 +11,12 @@ POST   /api/v1/models/activity/resume
 from __future__ import annotations
 
 import time
+from typing import Literal
 from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -27,11 +29,11 @@ from athena.model_server import activity, gpu, lane, loading, registry
 router = APIRouter(prefix="/api/v1/models/activity", tags=["Model registry"])
 
 # Work that waits in a queue for the model: (label, queues).
-QUEUES = [
-    ("Feed summaries", ["summary_urgent", "summary_standard", "summary_lazy"]),
-    ("Cluster labels", ["summary_cluster"]),
-    ("Feed items to embed", ["athena:embedding_queue"]),
-    ("Map jobs", ["evolution"]),
+QUEUES = [  # (label, Redis lists, the pause group that holds them)
+    ("Feed summaries", ["summary_urgent", "summary_standard", "summary_lazy"], "feed"),
+    ("Cluster labels", ["summary_cluster"], "feed"),
+    ("Feed items to embed", ["athena:embedding_queue"], "feed"),
+    ("Map jobs", ["evolution"], "maps"),
 ]
 # What the summary worker, the minute runs and the maps' lane count as: what a pause holds.
 BACKGROUND = {"summary", "cluster_label", "feed_embed", "map_build", "map_embed"}
@@ -92,7 +94,8 @@ def _servers() -> list[dict]:
 def _queues() -> list[dict]:
     try:
         r = activity._redis()
-        return [{"label": label, "count": sum(int(r.llen(k) or 0) for k in keys)} for label, keys in QUEUES]
+        return [{"label": label, "count": sum(int(r.llen(k) or 0) for k in keys), "group": group}
+                for label, keys, group in QUEUES]
     except Exception:
         return []
 
@@ -111,13 +114,13 @@ def _named(rows: list[dict], names: dict[str, str]) -> list[dict]:
 
 
 def reloads(presets: set[str]) -> list[str]:
-    """Background work that used one of ``presets`` in the last two minutes, and so will load it again unless
-    background work is paused: its features' names."""
-    if lane.paused():
-        return []
+    """Background work that used one of ``presets`` in the last two minutes, and so will load it again unless its
+    group is paused: its features' names."""
     since = time.time() - RECENT_SECONDS
+    held = {g for g, state in lane.pauses().items() if state}
     features = {r["feature"] for r in activity.recent() + activity.live()
-                if r.get("model") in presets and r.get("feature") in BACKGROUND and r.get("started", 0) >= since}
+                if r.get("model") in presets and r.get("feature") in BACKGROUND and r.get("started", 0) >= since
+                and lane.group_of(r["feature"]) not in held}
     return sorted(activity.label(f) for f in features)
 
 
@@ -127,7 +130,7 @@ def model_activity(session: Session = Depends(get_db), user: User = Depends(auth
     names = _names(session, live + recent)
     holder = lane.holder()
     return {"servers": _servers(), "gpu": gpu.gpu(), "calls": _named(live, names),
-            "lane": {"holder": holder, "paused": lane.paused(),
+            "lane": {"holder": holder, "paused": lane.paused(), "groups": _groups(),
                      "waiting": [w | {"label": activity.label(w.get("who") or "background")} for w in lane.waiting()]},
             "queues": _queues(), "recent": _named(recent, names),
             "swaps": [s | {"cause_label": "Unloaded by an admin" if s["cause"] == "unload"
@@ -135,12 +138,24 @@ def model_activity(session: Session = Depends(get_db), user: User = Depends(auth
             "today": activity.today(), "now": time.time()}
 
 
+def _groups() -> list[dict]:
+    """Each group a pause can hold: {key, label, covers, paused}, with what it has queued."""
+    states = lane.pauses()
+    return [{"key": g, "label": spec["label"], "covers": spec["covers"], "paused": states.get(g)}
+            for g, spec in lane.GROUPS.items()]
+
+
+class PauseBody(BaseModel):
+    group: Literal["feed", "maps"] | None = None  # None: every group
+
+
 @router.post("/pause")
-def pause(user: User = Depends(auth.require_admin)):
-    return {"paused": lane.pause(by=user.display_name)}
+def pause(body: PauseBody | None = None, user: User = Depends(auth.require_admin)):
+    lane.pause((body or PauseBody()).group, by=user.display_name)
+    return {"paused": lane.paused(), "groups": _groups()}
 
 
 @router.post("/resume")
-def resume(user: User = Depends(auth.require_admin)):
-    lane.resume()
-    return {"paused": None}
+def resume(body: PauseBody | None = None, user: User = Depends(auth.require_admin)):
+    lane.resume((body or PauseBody()).group)
+    return {"paused": lane.paused(), "groups": _groups()}

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from athena.evolution.config import TopicConfig
-from athena.evolution.corpus import Seed, _citer_bound, select_corpus
+from athena.evolution.corpus import Seed, _citer_bound, search_terms, select_corpus
 from athena.core.openalex import Work
 
 
@@ -56,6 +56,30 @@ class TestAcceptance:
         corpus = build([s1, s2], [x, work("S1-preprint")], seeds=seeds)
         assert ("X", "S1") in corpus.edges
         assert "S1-preprint" not in corpus.papers
+
+
+class TestCap:
+    def test_papers_are_ranked_against_their_own_year(self):
+        # Four 2018 papers link to each other; two 2026 papers have had time only to cite the seeds.
+        seeds = [work("S1", year=2015), work("S2", year=2016)]
+        old = []
+        for i in range(4):
+            old.append(work(f"O{i}", ["S1", "S2", *(o.openalex_id for o in old)], year=2018))
+        new = [work("N0", ["S1", "S2"], year=2026), work("N1", ["S1", "S2"], year=2026)]
+        corpus = build(seeds, old + new, max_papers=5)
+        assert len(corpus.papers) == 5
+        assert "N0" in corpus.papers or "N1" in corpus.papers
+
+
+class TestSearchTerms:
+    def test_keywords_that_are_words_of_the_name_are_searched(self):
+        terms = search_terms("Sinhala Natural Language Processing", ["Sinhala NLP", "sinhala nlp"],
+                             ["sinhala nlp", "sinhala", "speech recognition", '"ner"'])
+        assert terms == ["Sinhala Natural Language Processing", "Sinhala NLP", "sinhala nlp", "sinhala"]
+
+    def test_only_whole_words_count(self):
+        assert search_terms("Object detection", ["object detector"], ["detect", "yolo"]) == \
+            ["Object detection", "object detector"]
 
 
 class TestDuplicatesAndYears:
@@ -130,10 +154,12 @@ class TestStoredYearMerge:
 class FakeOpenAlex:
     """Seeds by ID, no citers, and fixed search hits."""
 
-    def __init__(self, seeds: list[Work], hits: list[Work]):
+    def __init__(self, seeds: list[Work], hits: list[Work], citers: dict[str, list[Work]] | None = None):
         self.seeds = {w.openalex_id: w for w in seeds}
         self.hits = hits
+        self.citers = citers or {}
         self.searches: list[tuple] = []
+        self.citer_calls: list[tuple] = []
         self.requests = self.cache_hits = 0
         self.spent_usd = 0.0
 
@@ -143,12 +169,13 @@ class FakeOpenAlex:
     def get_works(self, ids):
         return []
 
-    def citing_works(self, wid, limit):
-        return []
+    def citing_works(self, wid, limit, year=None):
+        self.citer_calls.append((wid, limit, year))
+        return [w for w in self.citers.get(wid, []) if year is None or w.year == year][:limit]
 
-    def search_works(self, terms, limit, fields=None, in_title=False):
-        self.searches.append((tuple(terms), limit, tuple(fields or ())))
-        return self.hits[:limit]
+    def search_works(self, terms, limit, fields=None, in_title=False, year=None):
+        self.searches.append((tuple(terms), limit, tuple(fields or ()), year))
+        return [w for w in self.hits if year is None or w.year == year][:limit]
 
 
 class TestOpenAlexSearchAndSkippedS2:
@@ -168,7 +195,7 @@ class TestOpenAlexSearchAndSkippedS2:
     def test_search_hits_join_only_through_links(self):
         corpus, oa = self.run(s2=False, openalex_search_max=1000, fields=["Computer Science"])
         assert set(corpus.papers) == {"S1", "S2", "H1"}
-        assert oa.searches == [(("object tracking",), 1000, ("Computer Science",))]
+        assert oa.searches == [(("object tracking",), 1000, ("Computer Science",), None)]
         assert corpus.stats["openalex_search_hits"] == 2 and corpus.stats["s2"] == "off"
 
     def test_no_search_by_default(self):
@@ -180,3 +207,43 @@ class TestOpenAlexSearchAndSkippedS2:
         corpus, _ = self.run(s2=True, s2_keyless=False)
         assert corpus.stats["s2"].startswith("skipped")
         assert set(corpus.papers) == {"S1", "S2"}
+
+
+class TestRecentYears:
+    """Lists cut short at their most cited also fetch each recent year's most cited."""
+
+    def setup_method(self, method):
+        from athena.evolution import corpus as c
+        self.c = c
+        self.s1, self.s2 = work("S1", year=2015), work("S2", year=2016)
+        self.old = [work(f"O{i}", ["S1", "S2"], year=2019, cited_by=500) for i in range(3)]
+        self.new = work("N", ["S1", "S2"], year=2026, cited_by=1)
+
+    def run(self, monkeypatch, **config):
+        class Today:
+            @staticmethod
+            def today():
+                from datetime import date
+                return date(2026, 10, 31)
+
+        monkeypatch.setattr(self.c, "date", Today)
+        oa = FakeOpenAlex([self.s1, self.s2], self.old + [self.new], citers={"S1": self.old + [self.new]})
+        seeds = [Seed(openalex_id="S1"), Seed(openalex_id="S2")]
+        corpus = self.c.build_corpus(oa, seeds, TopicConfig(s2=False, **config), search_terms=["object tracking"])
+        return corpus, oa
+
+    def test_full_citer_lists_get_each_recent_year(self, monkeypatch):
+        corpus, oa = self.run(monkeypatch, citers_per_seed=3, recent_years=2, recent_per_year=50)
+        assert ("S1", 50, 2025) in oa.citer_calls and ("S1", 50, 2026) in oa.citer_calls
+        assert ("S2", 3, None) in oa.citer_calls and ("S2", 50, 2026) not in oa.citer_calls  # S2's list was short
+        assert "N" in corpus.papers
+
+    def test_full_search_gets_each_recent_year(self, monkeypatch):
+        corpus, oa = self.run(monkeypatch, citers_per_seed=10, openalex_search_max=3, recent_years=1)
+        assert [s[3] for s in oa.searches] == [None, 2026]
+        assert corpus.stats["openalex_search_hits"] == 4
+
+    def test_off(self, monkeypatch):
+        corpus, oa = self.run(monkeypatch, citers_per_seed=3, recent_per_year=0)
+        assert all(year is None for _, _, year in oa.citer_calls)
+        assert "N" not in corpus.papers

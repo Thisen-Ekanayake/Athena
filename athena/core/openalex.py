@@ -113,6 +113,10 @@ def _field_filter(fields: list[str] | None) -> str:
     return f",primary_topic.field.id:{'|'.join(ids)}" if ids else ""
 
 
+def _year_filter(year: int | None) -> str:
+    return f",publication_year:{year}" if year else ""
+
+
 def arxiv_year(arxiv_id: str | None) -> int | None:
     """Submission year encoded in an arXiv ID: '2106.09685' -> 2021, 'cs/0102001' -> 2001."""
     if not arxiv_id:
@@ -271,14 +275,15 @@ class OpenAlexClient:
                                     "per-page": limit, "select": WORK_FIELDS})
         return [Work.from_api(raw) for raw in data.get("results", [])]
 
-    def citing_works(self, work_id: str, limit: int) -> list[Work]:
-        """The ``limit`` most-cited works that cite ``work_id``."""
+    def citing_works(self, work_id: str, limit: int, year: int | None = None) -> list[Work]:
+        """The ``limit`` most-cited works that cite ``work_id`` (published in ``year``, if given)."""
         works: list[Work] = []
         page = 1
         while len(works) < limit:
             per_page = min(PER_PAGE, limit - len(works))
-            data = self._get("/works", {"filter": f"cites:{work_id}", "sort": "cited_by_count:desc",
-                                        "per-page": per_page, "page": page, "select": WORK_FIELDS})
+            data = self._get("/works", {"filter": f"cites:{work_id}{_year_filter(year)}",
+                                        "sort": "cited_by_count:desc", "per-page": per_page, "page": page,
+                                        "select": WORK_FIELDS})
             batch = [Work.from_api(raw) for raw in data.get("results", [])]
             works += batch
             if len(batch) < per_page:
@@ -287,10 +292,11 @@ class OpenAlexClient:
         return works
 
     def search_works(self, terms: list[str], limit: int, fields: list[str] | None = None,
-                     in_title: bool = False) -> list[Work]:
+                     in_title: bool = False, year: int | None = None) -> list[Work]:
         """The ``limit`` most-cited works whose title and abstract (or only title) match any of ``terms``.
 
         Each page of 200 is one search call ($0.001). ``fields`` are OpenAlex field names; empty means any.
+        ``year`` keeps only works published that year.
         """
         expression = search_expression(terms)
         if not expression or limit <= 0:
@@ -300,9 +306,9 @@ class OpenAlexClient:
         page = 1
         while len(works) < limit:
             per_page = min(PER_PAGE, limit - len(works))
-            data = self._get("/works", {"filter": f"{kind}:{expression}{_field_filter(fields)}",
-                                        "sort": "cited_by_count:desc", "per-page": per_page, "page": page,
-                                        "select": WORK_FIELDS})
+            query_filter = f"{kind}:{expression}{_field_filter(fields)}{_year_filter(year)}"
+            data = self._get("/works", {"filter": query_filter, "sort": "cited_by_count:desc",
+                                        "per-page": per_page, "page": page, "select": WORK_FIELDS})
             batch = [Work.from_api(raw) for raw in data.get("results", [])]
             works += batch
             if len(batch) < per_page:

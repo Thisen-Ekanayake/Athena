@@ -25,6 +25,7 @@ import re
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 from functools import lru_cache
 
 from loguru import logger
@@ -117,6 +118,28 @@ def relevance(title: str, abstract: str | None, keywords: list[str]) -> float:
     return 0.0
 
 
+def search_terms(name: str, aliases: list[str], keywords: list[str]) -> list[str]:
+    """What the topic's searches look for: its name and aliases, plus keywords that are words of them.
+
+    A search-built topic's aliases can be phrases papers never write ("Sinhala NLP" found 18 papers in
+    OpenAlex); its keyword "sinhala", a word of its name, finds the ones they do write (800).
+    """
+    names = [name, *aliases]
+    lowered = {n.lower() for n in names}
+    text = " | ".join(lowered)
+    words = [k for k in (k.strip('"') for k in keywords) if k and k.lower() not in lowered
+             and re.search(r"(?<![a-z0-9])" + re.escape(k.lower()) + r"(?![a-z0-9])", text)]
+    return list(dict.fromkeys([*names, *words]))
+
+
+def recent_years(config: TopicConfig) -> list[int]:
+    """The years that get their own share of each most-cited-first list (``TopicConfig.recent_years``)."""
+    if config.recent_per_year <= 0:
+        return []
+    this_year = date.today().year
+    return list(range(this_year - config.recent_years + 1, this_year + 1))
+
+
 def all_refs(work: Work) -> list[str]:
     """References from both sources."""
     return list(dict.fromkeys([*work.referenced_works, *work.s2_refs]))
@@ -144,7 +167,11 @@ def fetch_candidates(client: OpenAlexClient, seeds: list[Seed],
     candidates = {w.openalex_id: w for w in client.get_works(sorted(references))}
     record_ids = list(seed_works) + [alt for s in seeds if s.openalex_id in seed_works for alt in s.alt_ids]
     for record_id in record_ids:
-        for work in client.citing_works(record_id, config.citers_per_seed):
+        citers = client.citing_works(record_id, config.citers_per_seed)
+        if len(citers) >= config.citers_per_seed:  # cut short: the newest citers are missing
+            for year in recent_years(config):
+                citers += client.citing_works(record_id, config.recent_per_year, year=year)
+        for work in citers:
             candidates.setdefault(work.openalex_id, work)
     for seed_id in seed_works:
         candidates.pop(seed_id, None)
@@ -165,6 +192,10 @@ def add_openalex_hits(client: OpenAlexClient, seed_works: dict[str, Work], candi
     if not (config.openalex_search_max and terms):
         return {}
     hits = client.search_works(terms, config.openalex_search_max, config.fields)
+    if len(hits) >= config.openalex_search_max:
+        for year in recent_years(config):
+            hits += client.search_works(terms, config.recent_per_year, config.fields, year=year)
+    hits = list({w.openalex_id: w for w in hits}.values())
     added = 0
     for work in hits:
         if work.openalex_id not in seed_works and work.openalex_id not in candidates:
@@ -245,8 +276,11 @@ def _to_openalex(oa: OpenAlexClient, papers: list[S2Paper]) -> dict[str, Work]:
         elif p.mag_id:
             mags[f"W{p.mag_id}"] = p
     found: dict[str, Work] = {}
+    # A record OpenAlex merged answers under its new DOI (QLoRA's arXiv DOI returns the NeurIPS record), so
+    # a DOI that is not one asked for is matched by title.
+    by_title = {title_key(p.title): p for p in dois.values() if p.title}
     for work in oa.get_works_by_doi(list(dois)):
-        p = dois.get((work.doi or "").lower())
+        p = dois.get((work.doi or "").lower()) or by_title.get(title_key(work.title or ""))
         if p is not None and same_title(work.title, p.title):
             found[p.paper_id] = work
     for work in oa.get_works(list(mags)):
@@ -266,7 +300,12 @@ def search_query(terms: list[str]) -> str:
 
 def _add_search_hits(s2: SemanticScholarClient, oa: OpenAlexClient, pool: dict[str, Work],
                      candidates: dict[str, Work], terms: list[str], config: TopicConfig) -> tuple[int, int]:
-    hits = s2.search_bulk(search_query(terms), config.s2_search_max)
+    query = search_query(terms)
+    hits = s2.search_bulk(query, config.s2_search_max)
+    if len(hits) >= config.s2_search_max:
+        for year in recent_years(config):
+            hits += s2.search_bulk(query, config.recent_per_year, year=year)
+    hits = list({p.paper_id: p for p in hits}.values())
     known = _PoolIndex()
     for wid, work in pool.items():
         known.add(wid, work)
@@ -487,7 +526,16 @@ def select_corpus(seed_works: dict[str, Work], candidates: dict[str, Work], seed
         for citing, cited in edges:
             degree[citing] += 1
             degree[cited] += 1
-        ranked = sorted(keep - seed_ids, key=lambda w: degree[w], reverse=True)
+        # Ranked against papers of the same year: last year's papers have few citers yet, and ranking
+        # all years together cut most of them. Each year keeps about its share of the corpus.
+        by_year: dict[int | None, list[str]] = defaultdict(list)
+        for wid in keep - seed_ids:
+            by_year[_first_seen(works[wid])].append(wid)
+        place: dict[str, float] = {}
+        for members in by_year.values():
+            members.sort(key=lambda w: (-degree[w], w))
+            place |= {w: i / len(members) for i, w in enumerate(members)}
+        ranked = sorted(place, key=lambda w: (place[w], -degree[w], w))
         keep = seed_ids | set(ranked[:config.max_papers - len(seed_ids & keep)])
         edges = {(a, b) for a, b in edges if a in keep and b in keep}
 

@@ -3,6 +3,7 @@ estimates, the chat's choice of preset, load progress, chats going first, and th
 from __future__ import annotations
 
 import struct
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,7 +16,7 @@ from athena.api.main import app
 from athena.core import llm
 from athena.core.models import AppSetting, LlmBenchmark, LlmModel
 from athena.database import model_registry as db
-from athena.model_server import files, gguf, gpu, lane, loading, presets, registry, speed, stats
+from athena.model_server import bench, files, gguf, gpu, lane, loading, presets, registry, speed, stats
 
 REAL_SNAPSHOT = registry.snapshot
 
@@ -305,6 +306,17 @@ def test_background_work_waits_while_a_chat_holds_the_model(monkeypatch):
     assert lane.yield_to_chat(me="benchmark") == 0 and lane.yield_to_chat(max_wait=0.03) >= 0.03
 
 
+def test_background_work_waits_out_a_chat_then_queues_itself_again(monkeypatch):
+    monkeypatch.setattr(lane, "POLL", 0.01)
+    monkeypatch.setattr(lane, "PAUSE_HOLD", 0.05)
+    lane.hold()
+    with pytest.raises(lane.Paused):  # no time limit, but not past the broker's redelivery either
+        lane.yield_to_chat(who="summary")
+    assert lane.yield_to_chat(pausable=False, max_wait=0.03) >= 0.03  # someone's upload runs beside it in the end
+    lane.release()
+    assert lane.yield_to_chat(who="summary") == 0
+
+
 def test_minute_embedding_runs_skip_while_someone_chats(monkeypatch):
     from athena.pipeline import embedding_worker
     lane.hold()
@@ -413,9 +425,65 @@ def test_the_default_moves_when_it_is_turned_off_and_turned_off_models_unload(ap
     back = api.post(f"/api/v1/models/{qwen['id']}/default").json()  # turns it on again too
     assert back["enabled"] and back["is_default"] and settings["LLM_CHAT_MODEL"] == "qwen3.5-9b"
     emb = next(m for m in api.get("/api/v1/models").json()["models"] if m["role"] == "embed")
-    assert api.post(f"/api/v1/models/{emb['id']}/default").status_code == 422
+    assert emb["is_default"] and api.post(f"/api/v1/models/{emb['id']}/default").json()["is_default"]  # no change
     assert api.patch(f"/api/v1/models/{emb['id']}", json={"enabled": False}).status_code == 409
     assert api.post(f"/api/v1/models/{small['id']}/unload").json() == {"unloaded": [], "reloaded_by": []}
+
+
+def test_a_model_is_loaded_when_the_admin_asks(api, monkeypatch):
+    started = []
+    monkeypatch.setattr(loading, "load_soon", lambda t: started.append(t["preset"]))
+    models = {m["name"]: m for m in api.get("/api/v1/models").json()["models"]}
+    loaded = api.post(f"/api/v1/models/{models['qwen3.5-9b']['id']}/load")
+    assert loaded.status_code == 202 and loaded.json() == {"started": True, "preset": "qwen3.5-9b"}
+    assert api.post(f"/api/v1/models/{models['qwen3-embedding-8b']['id']}/load").status_code == 202
+    assert started == ["qwen3.5-9b", "qwen3-embedding-8b"]
+
+
+def test_an_embedder_is_benchmarked_by_how_fast_it_reads(store, monkeypatch):
+    registry.write_presets()
+    monkeypatch.setattr(loading, "router_models", lambda url: [])
+    monkeypatch.setattr(bench, "restore", lambda before: None)
+    monkeypatch.setattr(bench, "one", lambda t: pytest.fail("a chat benchmark for an embedder"))
+    monkeypatch.setattr(bench, "one_embed", lambda t: {"gen_tps": None, "prompt_tps": 2500.0})
+    emb = next(r for r in registry.snapshot() if r["role"] == "embed")
+    assert bench.run(emb["id"])["results"][2048]["prompt_tps"] == 2500.0
+    est = stats.estimates()["qwen3-embedding-8b"][2048]
+    assert est["source"] == "measured" and est["prompt_tps"] == 2500.0 and est["tps"] is None
+    assert bench.measured(emb["id"], "embed") == {2048}
+
+
+def test_another_embedder_becomes_the_default_and_everything_is_embedded_again(api, tmp_path, monkeypatch):
+    settings = {}
+    import athena.core.config_store as config_store
+    from athena.pipeline import reembed
+    monkeypatch.setattr(config_store, "set_setting", lambda k, v: settings.__setitem__(k, v))
+    monkeypatch.setattr(llm, "get_setting", lambda key, default="": settings.get(key, default))
+    started = []
+    monkeypatch.setattr(reembed, "start", lambda model, previous, by: started.append((model, previous)))
+    dims = {"n": 512}
+
+    class Client:  # the OpenAI client, answering with ``dims`` dimensions
+        def __init__(self, **kwargs):
+            self.embeddings = self
+
+        def create(self, input, model):
+            return SimpleNamespace(data=[SimpleNamespace(embedding=[0.1] * dims["n"])])
+
+    monkeypatch.setattr("openai.OpenAI", Client)
+    path = write_gguf(tmp_path / "models" / "emb2.gguf", {"general.architecture": "qwen3", "qwen3.block_count": 28,
+                                                          "qwen3.pooling_type": 3})
+    new = api.post("/api/v1/models", json={"path": str(path), "name": "emb-small"}).json()
+    assert new["role"] == "embed" and not new["is_default"]
+    short = api.post(f"/api/v1/models/{new['id']}/default")
+    assert short.status_code == 422 and "512 dimensions" in short.json()["detail"] and not started
+    dims["n"] = 4096
+    made = api.post(f"/api/v1/models/{new['id']}/default").json()
+    assert made["is_default"] and settings["EMBED_MODEL"] == "emb-small"
+    assert started == [("emb-small", "qwen3-embedding-8b")]
+    old = next(m for m in api.get("/api/v1/models").json()["models"] if m["name"] == "qwen3-embedding-8b")
+    assert not old["is_default"]
+    assert api.patch(f"/api/v1/models/{old['id']}", json={"enabled": False}).status_code == 200  # no longer in use
 
 
 def test_incomplete_files_are_refused(api, tmp_path):
