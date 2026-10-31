@@ -43,6 +43,7 @@ import {
   type TopicProposal,
   type TopicSearchResult,
   type TopicStatus,
+  type YearSpan,
 } from './api'
 import { AddToProjectMenu } from '../projects/AddToProjectMenu'
 
@@ -297,6 +298,7 @@ export function TopicView({ slug }: { slug: string }) {
   const setTab = (t: Tab) => navigateTo(t, selectedId)
   const setSelectedId = (id: string | null) => navigateTo(tab, id)
   const [limit, setLimit] = useState(250)
+  const [years, setYears] = useState<YearSpan>(null)
   const [showCitations, setShowCitations] = useState(false)
   const [showMainPath, setShowMainPath] = useState(true)
   const [showStrict, setShowStrict] = useState(true)
@@ -305,7 +307,7 @@ export function TopicView({ slug }: { slug: string }) {
   const current = status.data
   const readable = !!current && !isBuilding(current.status) && current.status !== 'failed'
   const version = current ? `${current.status}:${current.built_at ?? ''}` : ''
-  const graph = useTopicGraph(slug, limit, version, readable)
+  const graph = useTopicGraph(slug, limit, version, readable, years)
   const timeline = useTopicTimeline(slug, version, readable)
   const selectInMap = (id: string) => navigateTo('map', id)
   const exporter = useRef<GraphExporter | null>(null)
@@ -331,7 +333,7 @@ export function TopicView({ slug }: { slug: string }) {
   if (graph.error || !graph.data || !timeline.data) {
     return <>{back}<Notice tone="error" title="This topic could not be loaded">It may not exist, or the API is not running.</Notice></>
   }
-  const { topic, nodes, edges, loose_edges, total_papers } = graph.data
+  const { topic, nodes, edges, loose_edges, total_papers, in_range } = graph.data
   if (nodes.length === 0) {
     return (
       <>
@@ -346,7 +348,8 @@ export function TopicView({ slug }: { slug: string }) {
       </>
     )
   }
-  const milestones = nodes.filter((n) => n.is_milestone).length
+  // From the timeline, which is the whole map's: the graph may hold only some years.
+  const milestones = timeline.data.years.reduce((sum, y) => sum + y.papers.length, 0)
   const s2Skipped = String(current.build_stats?.s2 ?? '').startsWith('skipped')
 
   return (
@@ -411,6 +414,7 @@ export function TopicView({ slug }: { slug: string }) {
                 Papers
                 <Segmented label="Papers shown" value={String(limit)} options={LIMITS} onChange={(v) => setLimit(Number(v))} />
               </span>
+              <YearPicker years={graph.data.years} value={years} onChange={setYears} papers={in_range} />
               <label className="flex items-center gap-2">
                 <input id="evolution-citations" type="checkbox" checked={showCitations} onChange={(e) => setShowCitations(e.target.checked)} className="accent-[var(--accent)]" />
                 Every citation
@@ -544,6 +548,36 @@ function SearchTopicActions({ topic, className }: { topic: EvolutionTopic; class
       </Button>
       {(rebuild.error || remove.error) && (
         <span className="text-[12px] text-bad">{apiErrorMessage(rebuild.error ?? remove.error, 'That did not work')}</span>
+      )}
+    </span>
+  )
+}
+
+const yearSelect = 'h-7 rounded-md border border-line bg-surface-2 px-1.5 text-[12.5px] text-fg tabular-nums focus:border-accent-line focus:outline-none'
+
+/** Which years the map draws: all of them, one, or a span. The first menu picks All or the first year (one year
+ *  on its own); the second, there once a year is picked, stretches it to a later one. */
+function YearPicker({ years, value, onChange, papers }: { years: number[]; value: YearSpan; onChange: (span: YearSpan) => void; papers: number }) {
+  const onFrom = (picked: string) => {
+    if (picked === 'all') return onChange(null)
+    const from = Number(picked)
+    onChange([from, value && value[1] >= from ? value[1] : from])
+  }
+  return (
+    <span className="flex items-center gap-2">
+      Years
+      <select id="evolution-year-from" aria-label="From year" value={value ? String(value[0]) : 'all'} onChange={(e) => onFrom(e.target.value)} className={yearSelect}>
+        <option value="all">All years</option>
+        {years.map((y) => <option key={y} value={y}>{y}</option>)}
+      </select>
+      {value && (
+        <>
+          to
+          <select id="evolution-year-to" aria-label="To year" value={String(value[1])} onChange={(e) => onChange([value[0], Number(e.target.value)])} className={yearSelect}>
+            {years.filter((y) => y >= value[0]).map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <span className="font-mono text-[12px] text-fg-3 tabular-nums">{papers} {papers === 1 ? 'paper' : 'papers'}</span>
+        </>
       )}
     </span>
   )
