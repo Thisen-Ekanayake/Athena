@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from athena.evolution.config import TopicConfig
-from athena.evolution.corpus import Seed, _citer_bound, select_corpus
+from athena.evolution.corpus import Seed, _citer_bound, search_terms, select_corpus
 from athena.core.openalex import Work
 
 
@@ -69,6 +69,17 @@ class TestCap:
         corpus = build(seeds, old + new, max_papers=5)
         assert len(corpus.papers) == 5
         assert "N0" in corpus.papers or "N1" in corpus.papers
+
+
+class TestSearchTerms:
+    def test_keywords_that_are_words_of_the_name_are_searched(self):
+        terms = search_terms("Sinhala Natural Language Processing", ["Sinhala NLP", "sinhala nlp"],
+                             ["sinhala nlp", "sinhala", "speech recognition", '"ner"'])
+        assert terms == ["Sinhala Natural Language Processing", "Sinhala NLP", "sinhala nlp", "sinhala"]
+
+    def test_only_whole_words_count(self):
+        assert search_terms("Object detection", ["object detector"], ["detect", "yolo"]) == \
+            ["Object detection", "object detector"]
 
 
 class TestDuplicatesAndYears:

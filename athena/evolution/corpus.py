@@ -118,6 +118,20 @@ def relevance(title: str, abstract: str | None, keywords: list[str]) -> float:
     return 0.0
 
 
+def search_terms(name: str, aliases: list[str], keywords: list[str]) -> list[str]:
+    """What the topic's searches look for: its name and aliases, plus keywords that are words of them.
+
+    A search-built topic's aliases can be phrases papers never write ("Sinhala NLP" found 18 papers in
+    OpenAlex); its keyword "sinhala", a word of its name, finds the ones they do write (800).
+    """
+    names = [name, *aliases]
+    lowered = {n.lower() for n in names}
+    text = " | ".join(lowered)
+    words = [k for k in (k.strip('"') for k in keywords) if k and k.lower() not in lowered
+             and re.search(r"(?<![a-z0-9])" + re.escape(k.lower()) + r"(?![a-z0-9])", text)]
+    return list(dict.fromkeys([*names, *words]))
+
+
 def recent_years(config: TopicConfig) -> list[int]:
     """The years that get their own share of each most-cited-first list (``TopicConfig.recent_years``)."""
     if config.recent_per_year <= 0:
