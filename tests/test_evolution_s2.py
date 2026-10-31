@@ -249,6 +249,16 @@ class TestAugment:
         stats = augment_with_s2(s2, self.oa, seed_works, candidates, self.seeds, self.config)
         return seed_works, candidates, stats
 
+    def test_a_merged_openalex_record_is_found_by_title(self):
+        # OpenAlex merged QLoRA's arXiv record into the NeurIPS one, which answers the arXiv DOI with its own.
+        self.oa = oa_client({"10.48550/arxiv.2305.14314": {
+            "id": "https://openalex.org/W30", "doi": "https://doi.org/10.52202/075280-0441",
+            "display_name": "QLoRA: Efficient Finetuning of Quantized LLMs", "publication_year": 2023,
+            "cited_by_count": 500, "referenced_works": [],
+            "primary_topic": {"field": {"display_name": "Computer Science"}}}})
+        _, candidates, _ = self.run()
+        assert "W30" in candidates
+
     def test_fills_missing_reference_lists(self):
         _, candidates, stats = self.run()
         assert set(candidates["W12"].s2_refs) >= {"W1", "W2"}

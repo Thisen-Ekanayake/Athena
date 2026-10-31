@@ -245,8 +245,11 @@ def _to_openalex(oa: OpenAlexClient, papers: list[S2Paper]) -> dict[str, Work]:
         elif p.mag_id:
             mags[f"W{p.mag_id}"] = p
     found: dict[str, Work] = {}
+    # A record OpenAlex merged answers under its new DOI (QLoRA's arXiv DOI returns the NeurIPS record), so
+    # a DOI that is not one asked for is matched by title.
+    by_title = {title_key(p.title): p for p in dois.values() if p.title}
     for work in oa.get_works_by_doi(list(dois)):
-        p = dois.get((work.doi or "").lower())
+        p = dois.get((work.doi or "").lower()) or by_title.get(title_key(work.title or ""))
         if p is not None and same_title(work.title, p.title):
             found[p.paper_id] = work
     for work in oa.get_works(list(mags)):
