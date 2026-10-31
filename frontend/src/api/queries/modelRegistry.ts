@@ -73,11 +73,11 @@ export interface RegistryModel {
   /** The file holds all its weights; an incomplete one is never offered or loaded */
   complete: boolean
   needed_bytes: number | null
-  /** The chat model new chats and background work use */
+  /** A chat model: the one new chats and background work use. An embedding model: the one every vector comes from */
   is_default: boolean
   /** In GPU or CPU memory now */
   loaded: boolean
-  last_benchmark: { state: 'running' | 'done' | 'failed'; error?: string | null; results?: Record<string, { gen_tps?: number; error?: string }>; at: number } | null
+  last_benchmark: { state: 'running' | 'done' | 'failed'; error?: string | null; results?: Record<string, { gen_tps?: number | null; prompt_tps?: number | null; error?: string }>; at: number } | null
   /** Context sizes the admin may tick, up to what it was trained for */
   context_steps: number[]
 }
@@ -101,11 +101,24 @@ export interface RouterStatus {
   loaded: string[]
 }
 
+/** Re-embedding after the embedding model was switched, and what is left of it */
+export interface Reembed {
+  model: string
+  previous: string | null
+  by: string | null
+  since: number
+  feed_left: number
+  maps_left: number
+  projects_left: number
+  done: boolean
+}
+
 export interface Registry {
   models: RegistryModel[]
   gpu: GpuInfo | null
   servers: { gpu: RouterStatus; cpu: RouterStatus }
   benchmark: { model?: string; model_id?: string; context?: number; step?: number; of?: number; state: 'running' | 'done' | 'failed'; error?: string; at: number } | null
+  reembed: Reembed | null
   writable: boolean
   read_only_reason: string | null
   fit_tool: boolean
@@ -159,8 +172,14 @@ export const useRegistry = (poll = false) =>
   useQuery({
     queryKey: KEY,
     queryFn: async () => (await apiClient.get<Registry>('/models')).data,
-    // While a benchmark runs (or a model was just added and is being measured), keep the numbers fresh.
-    refetchInterval: (q) => (poll || q.state.data?.benchmark?.state === 'running' ? 2000 : false),
+    // While a benchmark runs, a model loads (or one was just added and is being measured), keep the numbers fresh;
+    // while everything is embedded again, now and then.
+    refetchInterval: (q) => {
+      const data = q.state.data
+      const loading = data?.models.some((m) => m.contexts.some((c) => c.status === 'loading'))
+      if (poll || loading || data?.benchmark?.state === 'running') return 2000
+      return data?.reembed && !data.reembed.done ? 15_000 : false
+    },
   })
 
 /** A folder on the server (null: the first place). The last folder stays shown while the next one loads. */
@@ -201,3 +220,7 @@ export const useMakeDefault = () => useRegistryMutation((id: string) => apiClien
 /** Unload a model now. ``reloaded_by``: background work that used it lately and will load it again unless paused. */
 export const useUnloadModel = () =>
   useRegistryMutation((id: string) => apiClient.post<{ unloaded: string[]; reloaded_by: string[] }>(`/models/${id}/unload`).then((r) => r.data))
+
+/** Load a model at its default context now (the router swaps out the one it holds). */
+export const useLoadModel = () =>
+  useRegistryMutation((id: string) => apiClient.post<{ started: boolean; preset: string }>(`/models/${id}/load`).then((r) => r.data))

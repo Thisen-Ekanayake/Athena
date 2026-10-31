@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
-import type { Inspection, Registry, RegistryContext } from '../../api/queries/modelRegistry'
+import { describe, expect, it, vi } from 'vitest'
+import type { Inspection, Registry, RegistryContext, RegistryModel } from '../../api/queries/modelRegistry'
 import { mockApi, renderWithProviders } from '../../test/utils'
 import { ModelRegistryCard } from './ModelRegistryCard'
 
@@ -25,13 +25,20 @@ const REGISTRY: Registry = {
     vision: false, placement: 'auto', default_context: 16384, enabled: true, layers: 65, contexts: [ctx(16384, 'cpu', 2)], exists: true,
     changed: false, used_for: [], benchmarked: false, complete: false, needed_bytes: 17_457_944_384, is_default: false, loaded: false,
     last_benchmark: null, context_steps: [16384],
+  }, {
+    id: 'm3', name: 'qwen3-embedding-8b', path: '/models/Qwen3-Embedding-8B-Q4_K_M.gguf', mmproj_path: null, size_bytes: 4_680_000_000,
+    mmproj_bytes: null, info: { architecture: 'qwen3', params: '8B', quant: 'Q4_K_M' }, role: 'embed', reasoning: false, tools: false,
+    vision: false, placement: 'auto', default_context: 2048, enabled: true, layers: 37,
+    contexts: [{ ...ctx(2048, 'gpu', 0, 'unloaded'), preset: 'qwen3-embedding-8b', tps: null, prompt_tps: 2410 }], exists: true,
+    changed: false, used_for: ['embeddings'], benchmarked: true, complete: true, needed_bytes: null, is_default: true, loaded: false,
+    last_benchmark: null, context_steps: [2048],
   }],
   gpu: { name: 'NVIDIA GeForce RTX 4060 Laptop GPU', total_mb: 8188, used_mb: 6616, llama_mb: 5788, others_mb: 828, available_mb: 6336 },
   servers: {
     gpu: { url: 'http://127.0.0.1:8080/v1', online: true, serves_registry: false, missing: ['qwen3.5-9b@64k'], loaded: ['qwen3.5-9b'] },
     cpu: { url: 'http://127.0.0.1:8081/v1', online: false, serves_registry: true, missing: [], loaded: [] },
   },
-  benchmark: null, writable: true, read_only_reason: null, fit_tool: true, roots: ['/models'], margin_mb: 1024,
+  benchmark: null, reembed: null, writable: true, read_only_reason: null, fit_tool: true, roots: ['/models'], margin_mb: 1024,
 }
 
 const SEEN: Inspection = {
@@ -81,6 +88,42 @@ describe('the model registry', () => {
     await userEvent.click(screen.getByRole('button', { name: /Pause background work/ }))
     expect(await screen.findByText('Background work is paused.')).toBeInTheDocument()
     expect(calls.map((c) => `${c.method} ${c.url}`)).toContain('POST /models/activity/pause')
+  })
+
+  it('loads an unloaded model, and shows an embedder with its reading speed', async () => {
+    const calls = mockApi({ 'GET /models': { data: REGISTRY }, 'POST /models/m3/load': { status: 202, data: { started: true, preset: 'qwen3-embedding-8b' } } })
+    renderWithProviders(<ModelRegistryCard />)
+    await userEvent.click(await screen.findByTitle('Pick a model to see and change'))
+    await userEvent.click(screen.getByRole('radio', { name: /qwen3-embedding-8b/ }))
+    expect(screen.getByText('default embedding model')).toBeInTheDocument()
+    expect(screen.getAllByRole('row')[1]).toHaveTextContent(/2k.*2,410 tok\/s read/)
+    expect(screen.getByRole('button', { name: /Re-benchmark/ })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /Turn off/ })).toBeDisabled()  // every vector comes from it
+    expect(screen.queryByRole('button', { name: /Make default/ })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /^Load/ }))
+    await waitFor(() => expect(calls.map((c) => `${c.method} ${c.url}`)).toContain('POST /models/m3/load'))
+  })
+
+  it('warns before another embedder becomes the default, and shows the re-embedding', async () => {
+    const other: RegistryModel = { ...REGISTRY.models[2], id: 'm4', name: 'bge-m3', is_default: false, used_for: [] }
+    const reembed = { model: 'bge-m3', previous: 'qwen3-embedding-8b', by: 'Ada', since: 1_793_000_000, feed_left: 1200,
+      maps_left: 30, projects_left: 0, done: false }
+    let registry: Registry = { ...REGISTRY, models: [...REGISTRY.models, other] }
+    const calls = mockApi({
+      'GET /models': () => ({ data: registry }),
+      'POST /models/m4/default': () => { registry = { ...registry, reembed }; return { data: { ...other, is_default: true } } },
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+    renderWithProviders(<ModelRegistryCard />)
+    await userEvent.click(await screen.findByTitle('Pick a model to see and change'))
+    await userEvent.click(screen.getByRole('radio', { name: /bge-m3/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Make default/ }))
+    expect(confirm.mock.calls[0][0]).toMatch(/Every stored vector is thrown away/)
+    expect(calls.some((c) => c.url === '/models/m4/default')).toBe(false)  // said no
+    await userEvent.click(screen.getByRole('button', { name: /Make default/ }))
+    expect(await screen.findByText('Embedding everything again with bge-m3')).toBeInTheDocument()
+    expect(screen.getByText(/Left: 1,200 feed items, 30 map passages and abstracts\./)).toBeInTheDocument()
+    confirm.mockRestore()
   })
 
   it('adds a model picked from a folder, with its projector and context sizes', async () => {

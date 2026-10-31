@@ -169,7 +169,8 @@ def _view() -> dict:
                    | {"contexts": contexts, "exists": exists, "changed": changed, "used_for": _uses(r["name"]),
                       "benchmarked": any(b["source"] == "benchmark" for b in mine),
                       "complete": r["complete"], "needed_bytes": whole.get("needed_bytes"),
-                      "is_default": r["role"] == "chat" and llm.chat_model() == r["name"],
+                      "is_default": llm.chat_model() == r["name"] if r["role"] == "chat"
+                      else llm.embed_model() == r["name"],
                       "loaded": any(c["status"] in ("loaded", "loading") for c in contexts),
                       "last_benchmark": bench.last(r["id"]),
                       "context_steps": sorted({c for c in registry.ALL_STEPS if c <= trained}
@@ -185,7 +186,9 @@ def _view() -> dict:
         loaded = [m.get("id") for m in listed[kind] if (m.get("status") or {}).get("value") == "loaded"]
         servers[kind] = {"url": url, "online": bool(listed[kind]), "serves_registry": wanted[kind] <= ids,
                          "missing": sorted(wanted[kind] - ids)[:5], "loaded": loaded}
+    from athena.pipeline import reembed
     return {"models": out, "gpu": gpu.gpu(), "servers": servers, "benchmark": bench.status(),
+            "reembed": reembed.status(),
             "writable": registry.writable() is None, "read_only_reason": registry.writable(),
             "fit_tool": gpu.fit_binary() is not None, "roots": files.roots(), "margin_mb": gpu.MARGIN_MB}
 
@@ -296,7 +299,7 @@ def update_model(model_id: UUID, body: ModelFields, session: Session = Depends(g
     registry.invalidate()
     registry.write_presets()
     if remeasure or "contexts" in fields:
-        registry.prepare_soon(m.id, benchmark=m.role == "chat" and m.enabled)
+        registry.prepare_soon(m.id, benchmark=m.enabled)
     return next(x for x in _view()["models"] if x["id"] == str(m.id))
 
 
@@ -306,8 +309,8 @@ def _hand_over(session: Session, m) -> None:
     from it."""
     from athena.core.config_store import set_setting
     if llm.embed_model() == m.name:
-        raise HTTPException(status_code=409, detail=f"{m.name} makes the embeddings; switching it means re-embedding "
-                                                    "everything (Embeddings, below)")
+        raise HTTPException(status_code=409, detail=f"{m.name} makes the embeddings; make another embedding model "
+                                                    "the default first, which re-embeds everything")
     if llm.chat_model() == m.name:
         others = [r for r in registry.snapshot() if r["role"] == "chat" and r["enabled"] and r.get("complete", True)
                   and r["name"] != m.name]
@@ -340,8 +343,8 @@ async def benchmark(model_id: UUID, body: BenchBody, session: Session = Depends(
     m = db.get_model(session, model_id)
     if m is None:
         raise HTTPException(status_code=404, detail="Model not found")
-    if m.role != "chat":
-        raise HTTPException(status_code=422, detail="Only chat models are benchmarked")
+    if not m.enabled:
+        raise HTTPException(status_code=409, detail=f"{m.name} is off; turn it on first")
     running = bench.status()
     if running and running.get("state") == "running" and time.time() - running.get("at", 0) < 900:
         raise HTTPException(status_code=409, detail=f"{running.get('model')} is being benchmarked")
@@ -351,14 +354,15 @@ async def benchmark(model_id: UUID, body: BenchBody, session: Session = Depends(
 
 @router.post("/{model_id}/default")
 def make_default(model_id: UUID, session: Session = Depends(get_db), user: User = Depends(auth.require_admin)):
-    """The chat model new chats start with and background work (summaries, Q&A, titles) uses."""
+    """The chat model new chats start with and background work (summaries, Q&A, titles) uses; or the embedding
+    model every vector comes from, which starts re-embedding everything (athena.pipeline.reembed)."""
     from athena.core.config_store import set_setting
     m = db.get_model(session, model_id)
     if m is None:
         raise HTTPException(status_code=404, detail="Model not found")
-    if m.role != "chat":
-        raise HTTPException(status_code=422, detail="Only a chat model can be the default; the embedding model is set "
-                                                    "under Embeddings below")
+    if m.role == "embed":
+        _make_embedder(session, m, user)
+        return next(x for x in _view()["models"] if x["id"] == str(m.id))
     if not m.enabled:
         db.update_model(session, m, enabled=True)
         registry.invalidate()
@@ -366,6 +370,48 @@ def make_default(model_id: UUID, session: Session = Depends(get_db), user: User 
     set_setting("LLM_CHAT_MODEL", m.name)
     registry.invalidate()
     return next(x for x in _view()["models"] if x["id"] == str(m.id))
+
+
+def _make_embedder(session: Session, m, user: User) -> None:
+    """Switch the embedding model to ``m`` and start re-embedding; refused unless it answers with enough dimensions,
+    since the old vectors are thrown away."""
+    from openai import OpenAI
+
+    from athena.core.config_store import set_setting
+    from athena.pipeline import reembed
+    previous = llm.embed_model()
+    if previous == m.name:
+        return
+    row = registry.find(m.name)
+    if not m.enabled or not (row and row.get("complete", True)):
+        raise HTTPException(status_code=409, detail=f"{m.name} is off or its file is incomplete")
+    try:  # loads it, which can take a minute
+        client = OpenAI(base_url=llm.embed_base_url(), api_key=llm.embed_api_key(), timeout=600.0, max_retries=0)
+        dims = len(client.embeddings.create(input=["Does this model answer?"], model=m.name).data[0].embedding)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"{m.name} did not answer at {llm.embed_base_url()}: "
+                                                    f"{str(exc)[:200]}")
+    if dims < llm.EMBED_DIM:
+        raise HTTPException(status_code=422, detail=f"{m.name} returns {dims} dimensions; Athena stores "
+                                                    f"{llm.EMBED_DIM}")
+    set_setting("EMBED_MODEL", m.name)
+    registry.invalidate()
+    reembed.start(m.name, previous, user.display_name)
+
+
+@router.post("/{model_id}/load", status_code=202)
+def load_model(model_id: UUID, session: Session = Depends(get_db), user: User = Depends(auth.require_admin)):
+    """Load the model at its default context now. The router swaps out what it holds; a pause does not stop it."""
+    m = db.get_model(session, model_id)
+    if m is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+    if not m.enabled:
+        raise HTTPException(status_code=409, detail=f"{m.name} is off; turn it on first")
+    t = loading.target(m.name, None)
+    if t is None:
+        raise HTTPException(status_code=409, detail=f"{m.name} has no preset yet")
+    loading.load_soon(t)
+    return {"started": True, "preset": t["preset"]}
 
 
 @router.post("/{model_id}/unload")

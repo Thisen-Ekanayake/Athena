@@ -65,6 +65,7 @@ def load_rate(rows: list[dict], benches: list[dict]) -> float:
 
 def estimates(rows: list[dict], benches: list[dict], device_of) -> dict[str, dict[int, dict]]:
     """{model name: {context: {tps, prompt_tps, load_seconds, source}}}; source is measured | scaled | estimate.
+    An embedding model has only its measured reading speed (``prompt_tps``), or none.
 
     ``benches`` are this file's and this machine's rows ({model_id, context, device, gen_tps, prompt_tps,
     load_seconds, samples, source}); ``device_of(plan)`` names the device a plan runs on, as benchmarks key it."""
@@ -81,6 +82,12 @@ def estimates(rows: list[dict], benches: list[dict], device_of) -> dict[str, dic
             load = (exact or {}).get("load_seconds") or next(
                 (b["load_seconds"] for b in mine if b.get("load_seconds") and b["device"] == device_of(plan)), None)
             load = load or LOAD_OVERHEAD_S + r["size_bytes"] / rate
+            if r["role"] == "embed":  # it writes nothing; only a benchmark's reading speed means anything
+                speed = (exact or {}).get("prompt_tps")
+                per[c["context"]] = {"tps": None, "prompt_tps": speed, "load_seconds": load,
+                                     "source": "measured" if speed else None,
+                                     "samples": (exact or {}).get("samples")}
+                continue
             if exact and exact.get("gen_tps"):
                 per[c["context"]] = {"tps": exact["gen_tps"], "prompt_tps": exact.get("prompt_tps"),
                                      "load_seconds": load, "source": "measured", "samples": exact.get("samples")}

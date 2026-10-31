@@ -37,7 +37,7 @@ acting_user: ContextVar[str | None] = ContextVar("athena_acting_user", default=N
 
 # What each feature is called on the page: the usage page's names, and the calls it does not count.
 EXTRA_LABELS = {"benchmark": "Benchmarks", "connection_test": "Connection tests", "startup": "Start-up",
-                "other": "Other"}
+                "admin_load": "Loaded by an admin", "reembed": "Re-embedding", "other": "Other"}
 
 
 def label(feature: str) -> str:
