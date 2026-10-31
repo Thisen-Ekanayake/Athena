@@ -28,15 +28,19 @@ class MilestoneOverrideRequest(BaseModel):
 def topic_graph(
     slug: str,
     limit: int = Query(250, ge=0, le=2000, description="Papers to draw; 0 draws every paper"),
+    year_from: int | None = Query(None, ge=1000, le=3000, description="Only papers from this year on"),
+    year_to: int | None = Query(None, ge=1000, le=3000, description="Only papers up to this year"),
     session: Session = Depends(get_db),
     r: redis_lib.Redis = Depends(get_redis),
 ):
+    if year_from is not None and year_to is not None and year_from > year_to:
+        raise HTTPException(status_code=422, detail="year_from is after year_to")
     topic = _topic_or_404(session, slug)
-    key = _cache_key(session, topic, "graph", limit)
+    key = _cache_key(session, topic, "graph", limit, year_from or "", year_to or "")
     cached = cache_get(r, key)
     if cached:
         return cached
-    payload = db.topic_graph(session, topic, limit=limit)
+    payload = db.topic_graph(session, topic, limit=limit, year_from=year_from, year_to=year_to)
     cache_set(r, key, payload, settings.CACHE_CLUSTERS_TTL)
     return payload
 
