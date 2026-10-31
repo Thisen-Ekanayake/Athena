@@ -305,6 +305,17 @@ def test_background_work_waits_while_a_chat_holds_the_model(monkeypatch):
     assert lane.yield_to_chat(me="benchmark") == 0 and lane.yield_to_chat(max_wait=0.03) >= 0.03
 
 
+def test_background_work_waits_out_a_chat_then_queues_itself_again(monkeypatch):
+    monkeypatch.setattr(lane, "POLL", 0.01)
+    monkeypatch.setattr(lane, "PAUSE_HOLD", 0.05)
+    lane.hold()
+    with pytest.raises(lane.Paused):  # no time limit, but not past the broker's redelivery either
+        lane.yield_to_chat(who="summary")
+    assert lane.yield_to_chat(pausable=False, max_wait=0.03) >= 0.03  # someone's upload runs beside it in the end
+    lane.release()
+    assert lane.yield_to_chat(who="summary") == 0
+
+
 def test_minute_embedding_runs_skip_while_someone_chats(monkeypatch):
     from athena.pipeline import embedding_worker
     lane.hold()

@@ -31,21 +31,28 @@ const duration = (s: number) => (s < 60 ? seconds(s) : s < 3600 ? `${Math.floor(
 const requester = (c: ModelCall) => c.user ?? (c.user_id ? 'Former user' : c.background ? 'Background task' : 'System')
 
 const HOLDERS: Record<string, string> = {
-  chat: 'A chat has the model: background work waits between batches.',
+  chat: 'A chat has the model: background work waits until it ends.',
   benchmark: 'A benchmark is running: background work waits between batches.',
 }
 
-/** Pause or resume background work, with who paused it and when. */
+/**
+ * Pause or resume background work, with who paused it and when. A chat holds it by itself (the lane's holder) and
+ * lets it go when the chat ends; the button is for the rest of the time.
+ */
 function PauseControl({ data }: { data: Activity }) {
   const toggle = usePauseBackground()
   const paused = data.lane.paused
+  const holder = data.lane.holder
+  const held = !paused && holder
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       <p className="flex min-w-0 flex-1 items-center gap-2 text-[12.5px] text-fg-2">
-        <span className={cn('h-2 w-2 shrink-0 rounded-full', paused ? 'bg-warn' : 'bg-good')} aria-hidden="true" />
+        <span className={cn('h-2 w-2 shrink-0 rounded-full', paused ? 'bg-warn' : held ? 'bg-accent' : 'bg-good')} aria-hidden="true" />
         {paused
           ? <span>Background work is paused{paused.by ? ` by ${paused.by}` : ''}, {ago(data.now, paused.since).replace(' ago', '')} so far. Chats, Q&A, reviews and search still run.</span>
-          : <span>Background work runs: feed summaries, cluster labels, feed embeddings and the maps’ model lane.</span>}
+          : held
+            ? <span>Background work is held {holder === 'benchmark' ? 'for a benchmark' : 'for a chat'} and carries on by itself when it ends.</span>
+            : <span>Background work runs: feed summaries, cluster labels, feed embeddings and the maps’ model lane.</span>}
       </p>
       <Button variant={paused ? 'primary' : 'secondary'} size="sm" disabled={toggle.isPending} onClick={() => toggle.mutate(!paused)}
         title={paused ? 'Let background work use the models again' : 'Hold background work until you resume, so an unloaded model stays out of memory. A call already running finishes.'}>

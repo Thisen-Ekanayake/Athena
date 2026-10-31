@@ -120,7 +120,7 @@ def run(model_id: str, force: bool = False) -> dict:
                   if (m.get("status") or {}).get("value") == "loaded"]
         for i, context in enumerate(todo):
             _status(model=row["name"], model_id=model_id, context=context, step=i + 1, of=len(todo), state="running")
-            lane.yield_to_chat(me=BENCH, who="benchmark", pausable=False)
+            lane.yield_to_chat(me=BENCH, who="benchmark", pausable=False, max_wait=lane.ASKED_WAIT)
             lane.hold(LANE_SECONDS, what=BENCH)  # background work waits, so it does not swap the model out
             t = loading.target(row["name"], context)
             try:

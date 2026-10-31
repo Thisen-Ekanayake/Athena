@@ -4,8 +4,9 @@ Chats go first on the GPU.
 The GPU router holds one model at a time, so a background batch (feed embeddings, a map's labelling, project
 indexing, summaries) that asks for the embedder while someone chats makes the router swap the chat model out and
 back for every batch. While a chat is loading or answering it holds a short-lived Redis flag; background work calls
-``yield_to_chat()`` between batches, which waits while the flag is up (up to ``MAX_WAIT``, so a chat left open never
-stalls the pipeline for good), and the minute runs skip a turn.
+``yield_to_chat()`` between batches, which waits for as long as the flag is up and then carries on by itself, and the
+minute runs skip a turn. The flag lapses ``HOLD_SECONDS`` after the chat's last turn or warm-up, so a chat left open
+holds nothing.
 
 A benchmark holds the same flag as ``benchmark``, so summaries do not swap its model out mid-measurement, and gives
 way itself to a chat (``yield_to_chat(me="benchmark")`` waits only while someone else holds it).
@@ -30,7 +31,7 @@ KEY = "athena:chat_active"
 PAUSE_KEY = "athena:background_paused"
 WAITING = "athena:lane:waiting:"
 HOLD_SECONDS = 90         # a turn refreshes the flag as it streams; a warm-up holds it this long
-MAX_WAIT = 300.0
+ASKED_WAIT = 300.0         # work someone asked for (an upload, a benchmark) waits this long at most, then runs
 PAUSE_HOLD = 45 * 60.0    # under the broker's one-hour visibility timeout
 POLL = 1.0
 REQUEUE_SECONDS = 60
@@ -94,21 +95,23 @@ def paused() -> dict | None:
         return None
 
 
-def yield_to_chat(max_wait: float = MAX_WAIT, me: str | None = None, who: str = "background",
+def yield_to_chat(max_wait: float | None = None, me: str | None = None, who: str = "background",
                   pausable: bool = True) -> float:
     """Wait while a chat (or a benchmark) holds the model server, unless ``me`` holds it, and while background work
     is paused when ``pausable``; returns the seconds waited. ``who`` (a usage feature) names the waiter on the
-    activity page. Raises ``Paused`` after ``PAUSE_HOLD`` seconds of a pause."""
+    activity page. Background work (``pausable``) waits out the whole chat, but raises ``Paused`` after
+    ``PAUSE_HOLD`` seconds of waiting, chat and pause together, so its task can queue itself again. Work someone
+    asked for passes ``max_wait`` (``ASKED_WAIT``) and then runs beside the chat."""
     waited = paused_for = 0.0
     key = None
     try:
         while True:
+            if pausable and waited + paused_for >= PAUSE_HOLD and (paused() or chat_active()):
+                raise Paused(f"{who} waited {int(waited + paused_for)} s for background work to resume")
             if pausable and paused():
                 reason = "paused"
-                if paused_for >= PAUSE_HOLD:
-                    raise Paused(f"{who} waited {int(paused_for)} s for background work to resume")
                 paused_for += POLL
-            elif waited < max_wait and chat_active() and (me is None or holder() != me):
+            elif (max_wait is None or waited < max_wait) and chat_active() and (me is None or holder() != me):
                 reason = "chat"
                 if waited == 0:
                     logger.info("Background model work waits for a chat")

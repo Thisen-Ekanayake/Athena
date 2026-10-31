@@ -47,6 +47,8 @@ describe('model activity', () => {
     expect(running[0]).toHaveTextContent(/Summaries.*qwen3.5-9b.*Background.*6.2 s/)
     expect(running[1]).toHaveTextContent(/Chats.*Ada/)
     expect(screen.getByText(/A chat has the model/)).toBeInTheDocument()
+    expect(screen.getByText('Background work is held for a chat and carries on by itself when it ends.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Pause background work/ })).toBeInTheDocument()  // a pause can still be set
     expect(screen.getByText('Map building')).toBeInTheDocument()
     expect(screen.getByText(/waits for a chat/)).toBeInTheDocument()
     expect(screen.getByText('Feed summaries')).toHaveTextContent('42')
