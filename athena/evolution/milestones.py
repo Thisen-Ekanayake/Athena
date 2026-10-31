@@ -9,6 +9,8 @@ papers that cite DETR, say). Milestones are picked per era, with eras holding
 equal numbers of papers so busy recent years are not crowded out by older,
 more-cited work. The highest-scoring papers overall are always milestones, so a
 crowded era (2015-2016 in object detection) does not lose one to its quota.
+No year has more than ``max_milestones_per_year`` of them, the highest-scoring
+kept, so one busy year does not fill the timeline.
 
 A person's pin or unpin always wins over the automatic pick. That is applied
 when reading (``athena.database.evolution``), so rebuilds never undo it.
@@ -85,7 +87,17 @@ def select_milestones(scores: dict[str, PaperScore], years: dict[str, int | None
     if config.main_path_min_score is not None:
         picked.update(pid for pid, s in eligible.items()
                       if s.on_main_path and s.milestone_score >= config.main_path_min_score)
-    return picked
+    return cap_per_year(picked, {pid: eligible[pid].milestone_score for pid in picked}, years,
+                        config.max_milestones_per_year)
+
+
+def cap_per_year(picked: set[str], score: dict[str, float], years: dict[str, int | None], cap: int) -> set[str]:
+    """The ``cap`` highest-scoring of ``picked`` in each year."""
+    by_year: dict[int | None, list[str]] = {}
+    for pid in picked:
+        by_year.setdefault(years.get(pid), []).append(pid)
+    return {pid for members in by_year.values()
+            for pid in sorted(members, key=lambda pid: (-score[pid], pid))[:cap]}
 
 
 def score_topic(corpus: Corpus, config: TopicConfig, membership: "Membership | None" = None) -> TopicScores:

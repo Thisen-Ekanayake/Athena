@@ -156,9 +156,15 @@ def _score(score: float, kind: str = "method", rel: float = 1.0) -> PaperScore:
 class TestSelectMilestones:
     def test_global_top_survives_a_crowded_era(self):
         scores = {f"p{i}": _score(0.9 - i * 0.01) for i in range(6)}
-        years = {pid: 2015 for pid in scores}
+        years = {pid: 2015 + i % 2 for i, pid in enumerate(scores)}
         config = TopicConfig(eras=1, milestones_per_era=3, global_top=5)
         assert len(select_milestones(scores, years, config)) == 5
+
+    def test_no_year_has_more_than_the_cap(self):
+        scores = {f"p{i}": _score(0.9 - i * 0.01) for i in range(6)}
+        years = {pid: 2021 for pid in scores}
+        config = TopicConfig(eras=1, milestones_per_era=6, global_top=6)
+        assert select_milestones(scores, years, config) == {"p0", "p1", "p2"}
 
     def test_min_score_stops_padding_sparse_eras(self):
         scores = {"weak": _score(0.2), "strong": _score(0.9)}
