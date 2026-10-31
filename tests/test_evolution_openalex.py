@@ -120,6 +120,14 @@ class TestSearch:
             'title_and_abstract.search:"object tracking",primary_topic.field.id:17|13'
         assert seen[0].url.params["sort"] == "cited_by_count:desc"
 
+    def test_year_filters_citers_and_searches(self):
+        client, seen = make_client(lambda r: httpx.Response(200, json={"results": []}))
+        client.citing_works("W1", limit=200, year=2026)
+        client.search_works(["lora"], limit=200, fields=["Computer Science"], year=2025)
+        assert seen[0].url.params["filter"] == "cites:W1,publication_year:2026"
+        assert seen[1].url.params["filter"] == \
+            "title_and_abstract.search:lora,primary_topic.field.id:17,publication_year:2025"
+
     def test_title_search_and_no_fields(self):
         client, seen = make_client(lambda r: httpx.Response(200, json={"results": []}))
         assert client.search_works(["lora"], limit=10, in_title=True) == []

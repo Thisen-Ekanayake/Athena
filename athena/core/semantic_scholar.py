@@ -193,14 +193,16 @@ class SemanticScholarClient:
                 out[pid] = S2Paper.from_api(raw) if raw else None
         return out
 
-    def search_bulk(self, query: str, limit: int, fields_of_study: str = "Computer Science") -> list[S2Paper]:
-        """Papers matching a boolean query ('"low-rank adaptation" | lora'), most cited first.
+    def search_bulk(self, query: str, limit: int, fields_of_study: str = "Computer Science",
+                    year: int | None = None) -> list[S2Paper]:
+        """Papers matching a boolean query ('"low-rank adaptation" | lora'), most cited first; ``year`` keeps one year.
 
         Bulk search returns up to 1,000 papers per request. It is how a topic finds papers its seeds'
         citation lists cannot reach: the citations endpoint lists newest first and stops at 10,000,
         so for LoRA (24,000 citers) it never gets back to 2023.
         """
-        key = json.dumps([query, fields_of_study])
+        # The key without a year is the one searches used before years were asked for, so their cache still hits.
+        key = json.dumps([query, fields_of_study] + ([year] if year else []))
         cached = self._cache_read("search", key, SEARCH_FIELDS)
         rows = cached["data"] if cached is not None else []
         if cached is None or (len(rows) < limit and cached.get("more")):
@@ -209,6 +211,8 @@ class SemanticScholarClient:
                 params = {"query": query, "sort": "citationCount:desc", "fields": SEARCH_FIELDS}
                 if fields_of_study:
                     params["fieldsOfStudy"] = fields_of_study
+                if year:
+                    params["year"] = str(year)
                 if token:
                     params["token"] = token
                 data = self._request("GET", "/paper/search/bulk", params) or {}

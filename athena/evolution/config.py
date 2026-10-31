@@ -44,6 +44,11 @@ class TopicConfig:
     # The most-cited OpenAlex works matching the topic's name or aliases join the candidates, as the
     # Semantic Scholar search does; they still need min_links. Each 200 costs one search ($0.001).
     openalex_search_max: int = 0
+    # Every list above is most cited first, and a paper from last year has had no time to be cited, so maps
+    # stopped about two years back. When a list is cut short, each of the last ``recent_years`` years (this
+    # one included) also gets its own ``recent_per_year`` most cited.
+    recent_years: int = 3
+    recent_per_year: int = 200
     # Relevance: papers whose title (full weight) or abstract (half) mentions one of these are on-topic.
     # A keyword matches at the start of a word ("detect" finds "detector"); in double quotes ('"mot"') it
     # matches the whole word only.

@@ -162,6 +162,21 @@ class TestClient:
         client = SemanticScholarClient(api_key="k", cache_dir="", http=http, min_interval=0)
         assert client.search("lora", limit=3) == [{"paperId": "p1", "title": "LoRA"}]
 
+    def test_bulk_search_for_one_year_is_cached_apart(self, tmp_path):
+        seen = []
+
+        def handler(request):
+            seen.append(request)
+            year = request.url.params.get("year")
+            return httpx.Response(200, json={"data": [{"paperId": f"p{year}", "title": "Sinhala NER"}]})
+
+        http = httpx.Client(base_url="https://api.semanticscholar.org/graph/v1", transport=httpx.MockTransport(handler))
+        client = SemanticScholarClient(api_key="k", cache_dir=str(tmp_path), http=http, min_interval=0)
+        assert [p.paper_id for p in client.search_bulk("sinhala", 10)] == ["pNone"]
+        assert [p.paper_id for p in client.search_bulk("sinhala", 10, year=2026)] == ["p2026"]
+        assert [p.paper_id for p in client.search_bulk("sinhala", 10, year=2026)] == ["p2026"]
+        assert [r.url.params.get("year") for r in seen] == [None, "2026"]
+
     def test_requests_take_turns_through_redis(self, monkeypatch):
         calls, slept = [], []
 
