@@ -177,7 +177,7 @@ function ReloadWarning({ name, by }: { name: string; by: string[] }) {
       <div className="grid justify-items-start gap-2">
         <p>{name} was unloaded, but {by.length > 1 ? 'they' : 'it'} used it in the last two minutes and the router loads it back for the next request. Pause background work to keep it out of memory; resume it under Model activity.</p>
         {pause.isSuccess ? <p className="text-good">Background work is paused.</p> : (
-          <Button variant="secondary" size="sm" disabled={pause.isPending} onClick={() => pause.mutate(true)}><Pause />Pause background work</Button>
+          <Button variant="secondary" size="sm" disabled={pause.isPending} onClick={() => pause.mutate({ pause: true })}><Pause />Pause background work</Button>
         )}
       </div>
     </Notice>

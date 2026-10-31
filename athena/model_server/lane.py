@@ -11,11 +11,12 @@ holds nothing.
 A benchmark holds the same flag as ``benchmark``, so summaries do not swap its model out mid-measurement, and gives
 way itself to a chat (``yield_to_chat(me="benchmark")`` waits only while someone else holds it).
 
-An admin can pause background work (Settings → Models and keys → Activity): feed summaries, cluster labels, feed
-embeddings and the maps' model lane then wait at the same points until it is resumed, so an unloaded model stays out
-of memory. A call already running finishes; what people ask for (chats, Q&A, reviews, search, project indexing) never
-waits. Celery redelivers a task unacknowledged for an hour (``task_acks_late``, the broker's visibility timeout), so a
-pause holds one task at most ``PAUSE_HOLD`` and then raises ``Paused``; the task queues itself again.
+An admin can pause background work (Settings → Models and keys → Activity), all of it or one group (``GROUPS``):
+the feed's summaries, cluster labels and embeddings, or the maps' model work. Paused work waits at the same points
+until it is resumed, so an unloaded model stays out of memory. A call already running finishes; what people ask for
+(chats, Q&A, reviews, search, project indexing) never waits. Celery redelivers a task unacknowledged for an hour
+(``task_acks_late``, the broker's visibility timeout), so a pause holds one task at most ``PAUSE_HOLD`` and then raises
+``Paused``; the task queues itself again.
 
 Whoever waits is listed under ``WAITING`` (one short-lived key each) for the activity page.
 """
@@ -28,7 +29,15 @@ import uuid
 from loguru import logger
 
 KEY = "athena:chat_active"
-PAUSE_KEY = "athena:background_paused"
+PAUSE_KEY = "athena:background_paused"            # before groups: everything; taken over by both groups
+GROUP_KEY = "athena:background_paused:{group}"
+# What a pause can hold, and which background features each group covers.
+GROUPS = {
+    "feed": {"label": "Feed", "covers": "summaries, cluster labels and embeddings of new items",
+             "features": ("summary", "cluster_label", "feed_embed")},
+    "maps": {"label": "Maps", "covers": "embedding and labelling for map builds and refreshes",
+             "features": ("map_build", "map_embed")},
+}
 WAITING = "athena:lane:waiting:"
 HOLD_SECONDS = 90         # a turn refreshes the flag as it streams; a warm-up holds it this long
 ASKED_WAIT = 300.0         # work someone asked for (an upload, a benchmark) waits this long at most, then runs
@@ -75,24 +84,56 @@ def holder() -> str | None:
         return None
 
 
-def pause(by: str | None = None) -> dict:
-    """Hold background model work until ``resume``."""
-    state = {"by": by, "since": time.time()}
-    _redis().set(PAUSE_KEY, json.dumps(state))
-    return state
+def group_of(feature: str | None) -> str | None:
+    """The group (``GROUPS``) a background feature belongs to; None for anything else."""
+    return next((g for g, spec in GROUPS.items() if feature in spec["features"]), None)
 
 
-def resume() -> None:
-    _redis().delete(PAUSE_KEY)
+def _groups(group: str | None) -> list[str]:
+    if group is not None and group not in GROUPS:
+        raise ValueError(f"No background group {group!r}")
+    return [group] if group else list(GROUPS)
 
 
-def paused() -> dict | None:
-    """{by, since} while background work is paused, else None."""
+def pause(group: str | None = None, by: str | None = None) -> dict:
+    """Hold one group's background model work, or all of it, until ``resume``; a group already paused keeps who
+    paused it and since when. Returns every group's state (``pauses``)."""
+    state = json.dumps({"by": by, "since": time.time()})
+    for g in _groups(group):
+        _redis().set(GROUP_KEY.format(group=g), state, nx=True)
+    return pauses()
+
+
+def resume(group: str | None = None) -> None:
+    keys = [GROUP_KEY.format(group=g) for g in _groups(group)]
+    _redis().delete(*keys, PAUSE_KEY)
+
+
+def pauses() -> dict[str, dict | None]:
+    """{group: {by, since} or None}. A pause from before groups pauses every group once, and is then gone."""
     try:
-        raw = _redis().get(PAUSE_KEY)
-        return json.loads(raw) if raw else None
+        r = _redis()
+        if legacy := r.get(PAUSE_KEY):
+            for g in GROUPS:
+                r.set(GROUP_KEY.format(group=g), legacy, nx=True)
+            r.delete(PAUSE_KEY)
+        out = {}
+        for g in GROUPS:
+            raw = r.get(GROUP_KEY.format(group=g))
+            out[g] = json.loads(raw) if raw else None
+        return out
     except Exception:
+        return {g: None for g in GROUPS}
+
+
+def paused(group: str | None = None) -> dict | None:
+    """{by, since} while ``group`` is paused; without a group, only while every group is (the earliest pause)."""
+    states = pauses()
+    if group is not None:
+        return states.get(group)
+    if not all(states.values()):
         return None
+    return min(states.values(), key=lambda s: s.get("since") or 0)
 
 
 def yield_to_chat(max_wait: float | None = None, me: str | None = None, who: str = "background",
@@ -106,9 +147,10 @@ def yield_to_chat(max_wait: float | None = None, me: str | None = None, who: str
     key = None
     try:
         while True:
-            if pausable and waited + paused_for >= PAUSE_HOLD and (paused() or chat_active()):
+            held = pausable and bool(paused(group_of(who)) if group_of(who) else paused())
+            if pausable and waited + paused_for >= PAUSE_HOLD and (held or chat_active()):
                 raise Paused(f"{who} waited {int(waited + paused_for)} s for background work to resume")
-            if pausable and paused():
+            if held:
                 reason = "paused"
                 paused_for += POLL
             elif (max_wait is None or waited < max_wait) and chat_active() and (me is None or holder() != me):

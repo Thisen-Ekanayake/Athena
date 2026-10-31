@@ -36,29 +36,57 @@ const HOLDERS: Record<string, string> = {
 }
 
 /**
- * Pause or resume background work, with who paused it and when. A chat holds it by itself (the lane's holder) and
- * lets it go when the chat ends; the button is for the rest of the time.
+ * Pause or resume background work, a group at a time (the feed's work, the maps' work) or all of it, with who paused
+ * it and when. A chat holds every group by itself (the lane's holder) and lets go when the chat ends; the buttons are
+ * for the rest of the time.
  */
 function PauseControl({ data }: { data: Activity }) {
   const toggle = usePauseBackground()
-  const paused = data.lane.paused
+  const groups = data.lane.groups
   const holder = data.lane.holder
-  const held = !paused && holder
+  const pausedCount = groups.filter((g) => g.paused).length
+  const all = pausedCount === groups.length
+  const held = holder ? (holder === 'benchmark' ? 'for a benchmark' : 'for a chat') : null
+  const summary = all ? 'All background work is paused. Chats, Q&A, reviews and search still run.'
+    : pausedCount ? `${groups.filter((g) => g.paused).map((g) => g.label).join(' and ')} paused; the rest ${held ? `is held ${held}` : 'runs'}.`
+      : held ? `Background work is held ${held} and carries on by itself when it ends.`
+        : 'Background work runs.'
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <p className="flex min-w-0 flex-1 items-center gap-2 text-[12.5px] text-fg-2">
-        <span className={cn('h-2 w-2 shrink-0 rounded-full', paused ? 'bg-warn' : held ? 'bg-accent' : 'bg-good')} aria-hidden="true" />
-        {paused
-          ? <span>Background work is paused{paused.by ? ` by ${paused.by}` : ''}, {ago(data.now, paused.since).replace(' ago', '')} so far. Chats, Q&A, reviews and search still run.</span>
-          : held
-            ? <span>Background work is held {holder === 'benchmark' ? 'for a benchmark' : 'for a chat'} and carries on by itself when it ends.</span>
-            : <span>Background work runs: feed summaries, cluster labels, feed embeddings and the maps’ model lane.</span>}
-      </p>
-      <Button variant={paused ? 'primary' : 'secondary'} size="sm" disabled={toggle.isPending} onClick={() => toggle.mutate(!paused)}
-        title={paused ? 'Let background work use the models again' : 'Hold background work until you resume, so an unloaded model stays out of memory. A call already running finishes.'}>
-        {paused ? <><Play />Resume background work</> : <><Pause />Pause background work</>}
-      </Button>
-      {toggle.isError && <p className="w-full text-[12px] text-bad">{apiErrorMessage(toggle.error, 'That did not work.')}</p>}
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <p className="flex min-w-0 flex-1 items-center gap-2 text-[12.5px] text-fg-2">
+          <span className={cn('h-2 w-2 shrink-0 rounded-full', pausedCount ? 'bg-warn' : held ? 'bg-accent' : 'bg-good')} aria-hidden="true" />
+          <span>{summary}</span>
+        </p>
+        <Button variant={all ? 'primary' : 'secondary'} size="sm" disabled={toggle.isPending} onClick={() => toggle.mutate({ pause: !all })}
+          title={all ? 'Let all background work use the models again' : 'Hold all background work until you resume, so an unloaded model stays out of memory. A call already running finishes.'}>
+          {all ? <><Play />Resume all</> : <><Pause />Pause all</>}
+        </Button>
+      </div>
+      <ul className="grid gap-2" aria-label="Background work">
+        {groups.map((g) => {
+          const queued = data.queues.filter((q) => q.group === g.key).reduce((n, q) => n + q.count, 0)
+          return (
+            <li key={g.key} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-line/70 px-3 py-2">
+              <div className="grid min-w-0 flex-1 gap-0.5">
+                <p className="flex flex-wrap items-baseline gap-x-2 text-[12.5px]">
+                  <span className="font-medium text-fg">{g.label}</span>
+                  <span className={cn('text-[11.5px]', g.paused ? 'text-warn' : held ? 'text-accent' : 'text-good')}>
+                    {g.paused ? `paused${g.paused.by ? ` by ${g.paused.by}` : ''}, ${ago(data.now, g.paused.since).replace(' ago', '')}` : held ? `held ${held}` : 'runs'}
+                  </span>
+                  {queued > 0 && <span className="text-[11.5px] text-fg-3">{count(queued)} queued</span>}
+                </p>
+                <p className="text-[11.5px] text-fg-3">{g.covers[0].toUpperCase() + g.covers.slice(1)}</p>
+              </div>
+              <Button variant={g.paused ? 'primary' : 'ghost'} size="sm" disabled={toggle.isPending} aria-label={`${g.paused ? 'Resume' : 'Pause'} ${g.label}`}
+                onClick={() => toggle.mutate({ pause: !g.paused, group: g.key })}>
+                {g.paused ? <><Play />Resume</> : <><Pause />Pause</>}
+              </Button>
+            </li>
+          )
+        })}
+      </ul>
+      {toggle.isError && <p className="text-[12px] text-bad">{apiErrorMessage(toggle.error, 'That did not work.')}</p>}
     </div>
   )
 }

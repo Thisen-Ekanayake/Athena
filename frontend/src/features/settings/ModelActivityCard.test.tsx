@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { Activity, ModelCall } from '../../api/queries/modelActivity'
@@ -24,8 +24,11 @@ const ACTIVITY: Activity = {
   ],
   gpu: null,
   calls: [call({ elapsed: 6.2 }), call({ id: 'c2', feature: 'chat', label: 'Chats', user: 'Ada', user_id: 'u1', background: false, elapsed: 2 })],
-  lane: { holder: 'chat', paused: null, waiting: [{ who: 'map_build', label: 'Map building', reason: 'chat', since: NOW - 12 }] },
-  queues: [{ label: 'Feed summaries', count: 42 }, { label: 'Cluster labels', count: 0 }],
+  lane: { holder: 'chat', paused: null, groups: [
+    { key: 'feed', label: 'Feed', covers: 'summaries, cluster labels and embeddings of new items', paused: null },
+    { key: 'maps', label: 'Maps', covers: 'embedding and labelling for map builds and refreshes', paused: null },
+  ], waiting: [{ who: 'map_build', label: 'Map building', reason: 'chat', since: NOW - 12 }] },
+  queues: [{ label: 'Feed summaries', count: 42, group: 'feed' }, { label: 'Cluster labels', count: 0, group: 'feed' }],
   recent: [
     call({ id: 'r1', seconds: 8, status: 'done', input_tokens: 1200, output_tokens: 400, swapped: true }),
     call({ id: 'r2', feature: 'feed_embed', label: 'Feed embeddings', model: 'qwen3-embedding-8b', kind: 'embed', seconds: 1,
@@ -43,12 +46,13 @@ describe('model activity', () => {
     expect(await screen.findByText(/Writing · 230 tokens · 37.4 tok\/s/)).toBeInTheDocument()
     expect(screen.getByText('1,238 of 16,384 context tokens in use')).toBeInTheDocument()
     expect(screen.getByText('Nothing loaded')).toBeInTheDocument()  // the CPU router
-    const running = screen.getAllByRole('listitem')
+    const groups = screen.getByRole('list', { name: 'Background work' })
+    const running = screen.getAllByRole('listitem').filter((li) => !groups.contains(li))
     expect(running[0]).toHaveTextContent(/Summaries.*qwen3.5-9b.*Background.*6.2 s/)
     expect(running[1]).toHaveTextContent(/Chats.*Ada/)
     expect(screen.getByText(/A chat has the model/)).toBeInTheDocument()
     expect(screen.getByText('Background work is held for a chat and carries on by itself when it ends.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Pause background work/ })).toBeInTheDocument()  // a pause can still be set
+    expect(screen.getByRole('button', { name: /Pause all/ })).toBeInTheDocument()  // a pause can still be set
     expect(screen.getByText('Map building')).toBeInTheDocument()
     expect(screen.getByText(/waits for a chat/)).toBeInTheDocument()
     expect(screen.getByText('Feed summaries')).toHaveTextContent('42')
@@ -89,18 +93,30 @@ describe('model activity', () => {
     expect(screen.queryByRole('navigation', { name: 'Pages' })).not.toBeInTheDocument()
   })
 
-  it('pauses background work and resumes it', async () => {
-    let paused: Activity['lane']['paused'] = null
+  it('pauses one group of background work, or all of it, and resumes it', async () => {
+    const state: Record<string, Activity['lane']['paused']> = { feed: null, maps: null }
+    const set = (on: boolean) => (call: { body: unknown }) => {
+      const group = (call.body as { group?: string } | undefined)?.group
+      for (const g of group ? [group] : ['feed', 'maps']) state[g] = on ? { by: 'Ada', since: NOW - 120 } : null
+      return { data: {} }
+    }
+    const lane = () => ({ ...ACTIVITY.lane, holder: null, groups: ACTIVITY.lane.groups.map((g) => ({ ...g, paused: state[g.key] })) })
     const calls = mockApi({
-      'GET /models/activity': () => ({ data: { ...ACTIVITY, lane: { ...ACTIVITY.lane, paused } } }),
-      'POST /models/activity/pause': () => { paused = { by: 'Ada', since: NOW - 120 }; return { data: { paused } } },
-      'POST /models/activity/resume': () => { paused = null; return { data: { paused } } },
+      'GET /models/activity': () => ({ data: { ...ACTIVITY, lane: lane() } }),
+      'POST /models/activity/pause': set(true),
+      'POST /models/activity/resume': set(false),
     })
     renderWithProviders(<ModelActivityCard />)
-    await userEvent.click(await screen.findByRole('button', { name: /Pause background work/ }))
-    expect(await screen.findByText(/Background work is paused by Ada, 2 min so far/)).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: /Resume background work/ }))
-    await waitFor(() => expect(screen.getByRole('button', { name: /Pause background work/ })).toBeInTheDocument())
-    expect(calls.filter((c) => c.method === 'POST').map((c) => c.url)).toEqual(['/models/activity/pause', '/models/activity/resume'])
+    const rows = await screen.findByRole('list', { name: 'Background work' })
+    expect(within(rows).getAllByRole('listitem')[0]).toHaveTextContent(/Feed.*runs.*42 queued.*Summaries, cluster labels and embeddings/)
+    await userEvent.click(screen.getByRole('button', { name: 'Pause Maps' }))
+    expect(await screen.findByText('Maps paused; the rest runs.')).toBeInTheDocument()
+    expect(within(rows).getAllByRole('listitem')[1]).toHaveTextContent(/Maps.*paused by Ada, 2 min/)
+    await userEvent.click(screen.getByRole('button', { name: /Pause all/ }))
+    expect(await screen.findByText(/All background work is paused/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /Resume all/ }))
+    expect(await screen.findByText('Background work runs.')).toBeInTheDocument()
+    expect(calls.filter((c) => c.method === 'POST').map((c) => [c.url, c.body])).toEqual([
+      ['/models/activity/pause', { group: 'maps' }], ['/models/activity/pause', undefined], ['/models/activity/resume', undefined]])
   })
 })
