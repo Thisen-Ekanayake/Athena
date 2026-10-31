@@ -73,13 +73,24 @@ def _evidence(ctx: EvoCitationContext) -> dict:
     return {"sentence": ctx.sentence, "section_type": ctx.section_type, "label": ctx.label, "source": ctx.source}
 
 
-def topic_graph(session: Session, topic: EvoTopic, limit: int = 250) -> dict:
-    """Milestones, main-path papers and seeds, then the highest-scoring papers up to ``limit`` (0: every paper)."""
+def topic_graph(session: Session, topic: EvoTopic, limit: int = 250,
+                year_from: int | None = None, year_to: int | None = None) -> dict:
+    """Milestones, main-path papers and seeds, then the highest-scoring papers up to ``limit`` (0: every paper).
+
+    ``year_from`` / ``year_to`` (inclusive) draw only the papers of those years, so the limit applies within them;
+    papers without a year are left out then. ``years`` and ``total_papers`` stay the whole map's; ``in_range`` counts
+    the papers of the chosen years.
+    """
     overrides = _overrides(session, topic.id)
     rows = _topic_rows(session, topic.id)
+    map_years = sorted({p.year for _, p in rows if p.year})
+    total = len(rows)
+    if year_from is not None or year_to is not None:
+        low, high = year_from or 0, year_to or 9999
+        rows = [(tp, p) for tp, p in rows if p.year and low <= p.year <= high]
     names = method_names(session, {p.id: p.title for _, p in rows})
     nodes = [_node(tp, p, overrides.get(p.id), names.get(p.id)) for tp, p in rows]
-    total = len(nodes)
+    in_range = len(nodes)
     nodes.sort(key=lambda n: (n["is_milestone"] or n["on_main_path"] or n["role"] == "seed",
                               n["milestone_score"]), reverse=True)
     if limit > 0:
@@ -116,8 +127,10 @@ def topic_graph(session: Session, topic: EvoTopic, limit: int = 250) -> dict:
         # Later paper -> earlier paper whose stated gap its text matches; no citation needed. Drawn dashed.
         "loose_edges": [{"source": str(a), "target": str(b), "score": round(v, 3)} for (a, b), v in loose.items()],
         "total_papers": total,
+        "in_range": in_range,
         "strict_links": len(strict),
         "year_range": [min(years), max(years)] if years else None,
+        "years": map_years,
     }
 
 

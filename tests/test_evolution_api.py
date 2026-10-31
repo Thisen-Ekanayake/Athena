@@ -109,6 +109,21 @@ def test_graph_limit_zero_draws_every_paper(client):
     assert build.call_args.kwargs["limit"] == 0
 
 
+def test_graph_years_are_passed_on_and_cached_apart(client):
+    c, _ = client
+    payload = {"topic": SUMMARY, "nodes": [], "edges": [], "total_papers": 0, "year_range": None, "years": []}
+    url = "/api/v1/evolution/topics/object-detection/graph"
+    with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), \
+            patch(f"{ROUTER_DB}.labels_version", return_value="0-0"), \
+            patch(f"{ROUTER_DB}.topic_graph", return_value=payload) as build:
+        c.get(url)
+        c.get(url, params={"year_from": 2015, "year_to": 2018})
+        assert build.call_args.kwargs["year_from"] == 2015 and build.call_args.kwargs["year_to"] == 2018
+        c.get(url, params={"year_from": 2015, "year_to": 2018})
+        assert build.call_count == 2
+        assert c.get(url, params={"year_from": 2019, "year_to": 2018}).status_code == 422
+
+
 def test_new_labels_refresh_the_cached_graph(client):
     # Strict links arrive from the GPU lane without a rebuild, so built_at alone would serve stale edges.
     c, _ = client

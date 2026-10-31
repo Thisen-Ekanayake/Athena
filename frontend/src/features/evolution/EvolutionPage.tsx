@@ -43,6 +43,7 @@ import {
   type TopicProposal,
   type TopicSearchResult,
   type TopicStatus,
+  type YearSpan,
 } from './api'
 import { AddToProjectMenu } from '../projects/AddToProjectMenu'
 
@@ -297,13 +298,16 @@ export function TopicView({ slug }: { slug: string }) {
   const setTab = (t: Tab) => navigateTo(t, selectedId)
   const setSelectedId = (id: string | null) => navigateTo(tab, id)
   const [limit, setLimit] = useState(250)
+  const [years, setYears] = useState<YearSpan>(null)
   const [showCitations, setShowCitations] = useState(false)
+  const [showMainPath, setShowMainPath] = useState(true)
+  const [showStrict, setShowStrict] = useState(true)
   const [showLoose, setShowLoose] = useState(false)
   const status = useTopicStatus(slug)
   const current = status.data
   const readable = !!current && !isBuilding(current.status) && current.status !== 'failed'
   const version = current ? `${current.status}:${current.built_at ?? ''}` : ''
-  const graph = useTopicGraph(slug, limit, version, readable)
+  const graph = useTopicGraph(slug, limit, version, readable, years)
   const timeline = useTopicTimeline(slug, version, readable)
   const selectInMap = (id: string) => navigateTo('map', id)
   const exporter = useRef<GraphExporter | null>(null)
@@ -329,7 +333,7 @@ export function TopicView({ slug }: { slug: string }) {
   if (graph.error || !graph.data || !timeline.data) {
     return <>{back}<Notice tone="error" title="This topic could not be loaded">It may not exist, or the API is not running.</Notice></>
   }
-  const { topic, nodes, edges, loose_edges, total_papers } = graph.data
+  const { topic, nodes, edges, loose_edges, total_papers, in_range } = graph.data
   if (nodes.length === 0) {
     return (
       <>
@@ -344,7 +348,8 @@ export function TopicView({ slug }: { slug: string }) {
       </>
     )
   }
-  const milestones = nodes.filter((n) => n.is_milestone).length
+  // From the timeline, which is the whole map's: the graph may hold only some years.
+  const milestones = timeline.data.years.reduce((sum, y) => sum + y.papers.length, 0)
   const s2Skipped = String(current.build_stats?.s2 ?? '').startsWith('skipped')
 
   return (
@@ -409,15 +414,20 @@ export function TopicView({ slug }: { slug: string }) {
                 Papers
                 <Segmented label="Papers shown" value={String(limit)} options={LIMITS} onChange={(v) => setLimit(Number(v))} />
               </span>
+              <YearPicker years={graph.data.years} value={years} onChange={setYears} papers={in_range} />
               <label className="flex items-center gap-2">
                 <input id="evolution-citations" type="checkbox" checked={showCitations} onChange={(e) => setShowCitations(e.target.checked)} className="accent-[var(--accent)]" />
                 Every citation
               </label>
-              <label className="flex items-center gap-2" title="A later paper whose text matches an earlier paper's stated gap, with no citation needed">
-                <input id="evolution-loose" type="checkbox" checked={showLoose} onChange={(e) => setShowLoose(e.target.checked)} className="accent-[var(--accent)]" />
-                Loose links ({loose_edges.length})
-              </label>
-              <Legend />
+              <Legend
+                mainPath={showMainPath}
+                onMainPath={setShowMainPath}
+                strict={showStrict}
+                onStrict={setShowStrict}
+                loose={showLoose}
+                onLoose={setShowLoose}
+                looseCount={loose_edges.length}
+              />
               <span className="ml-auto flex items-center gap-1">
                 {timeline.data.without_full_text.length > 0 && (
                   <Button variant="ghost" size="sm" onClick={() => setTab('no-full-text')} title="Notable papers whose full text is not openly available, so their gaps and citing sentences are missing">
@@ -439,6 +449,8 @@ export function TopicView({ slug }: { slug: string }) {
                 selectedId={selectedId}
                 onSelect={setSelectedId}
                 showCitations={showCitations}
+                showMainPath={showMainPath}
+                showStrict={showStrict}
                 onExporter={(e) => { exporter.current = e }}
                 className={fullScreen ? 'h-full rounded-none border-0' : undefined}
                 actions={fullScreen && (
@@ -452,7 +464,7 @@ export function TopicView({ slug }: { slug: string }) {
           {selectedId ? (
             <MapPaperPanel slug={slug} paperId={selectedId} onSelect={setSelectedId} onClose={() => setSelectedId(null)} />
           ) : (
-            <aside className="grid content-start gap-5">
+            <aside className="grid min-w-0 content-start gap-5">
               <p className="rounded-xl border border-line bg-surface p-4 text-[13px] text-fg-2">
                 Select a paper in the map, or a milestone above. A thread then traces what the paper built on and what built on it.
               </p>
@@ -541,11 +553,62 @@ function SearchTopicActions({ topic, className }: { topic: EvolutionTopic; class
   )
 }
 
-function Legend() {
+const yearSelect = 'h-7 rounded-md border border-line bg-surface-2 px-1.5 text-[12.5px] text-fg tabular-nums focus:border-accent-line focus:outline-none'
+
+/** Which years the map draws: all of them, one, or a span. The first menu picks All or the first year (one year
+ *  on its own); the second, there once a year is picked, stretches it to a later one. */
+function YearPicker({ years, value, onChange, papers }: { years: number[]; value: YearSpan; onChange: (span: YearSpan) => void; papers: number }) {
+  const onFrom = (picked: string) => {
+    if (picked === 'all') return onChange(null)
+    const from = Number(picked)
+    onChange([from, value && value[1] >= from ? value[1] : from])
+  }
+  return (
+    <span className="flex items-center gap-2">
+      Years
+      <select id="evolution-year-from" aria-label="From year" value={value ? String(value[0]) : 'all'} onChange={(e) => onFrom(e.target.value)} className={yearSelect}>
+        <option value="all">All years</option>
+        {years.map((y) => <option key={y} value={y}>{y}</option>)}
+      </select>
+      {value && (
+        <>
+          to
+          <select id="evolution-year-to" aria-label="To year" value={String(value[1])} onChange={(e) => onChange([value[0], Number(e.target.value)])} className={yearSelect}>
+            {years.filter((y) => y >= value[0]).map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <span className="font-mono text-[12px] text-fg-3 tabular-nums">{papers} {papers === 1 ? 'paper' : 'papers'}</span>
+        </>
+      )}
+    </span>
+  )
+}
+
+interface LegendProps {
+  mainPath: boolean
+  onMainPath: (on: boolean) => void
+  strict: boolean
+  onStrict: (on: boolean) => void
+  loose: boolean
+  onLoose: (on: boolean) => void
+  looseCount: number
+}
+
+/** What the marks mean; each kind of line has a checkbox to show or hide it. */
+function Legend({ mainPath, onMainPath, strict, onStrict, loose, onLoose, looseCount }: LegendProps) {
   const entry = (mark: ReactNode, label: string, meaning: string) => (
     <span className="flex items-center gap-1.5">
       {mark}
       <span>{label}<InfoTip label={label} text={meaning} /></span>
+    </span>
+  )
+  const toggle = (id: string, on: boolean, onChange: (on: boolean) => void, mark: ReactNode, label: string, meaning: string, count?: number) => (
+    <span className="flex items-center gap-1.5">
+      <label className="flex cursor-pointer items-center gap-1.5">
+        <input id={id} type="checkbox" checked={on} onChange={(e) => onChange(e.target.checked)} className="accent-[var(--accent)]" />
+        {mark}
+        {label}{count !== undefined && ` (${count})`}
+      </label>
+      <InfoTip label={label} text={meaning} />
     </span>
   )
   const dot = (style: CSSProperties) => <span className="inline-block h-2.5 w-2.5 rounded-full" style={style} />
@@ -554,14 +617,14 @@ function Legend() {
     <span className="flex flex-wrap items-center gap-3 text-fg-3">
       {entry(dot({ background: 'var(--accent)' }), 'Milestone',
         'A key method paper of the topic, picked era by era for how much later work cites and builds on it.')}
-      {entry(dot({ boxShadow: 'inset 0 0 0 2px var(--fg-2)' }), 'On the main path',
-        'Part of the citation chain that carries the most of the field, from its oldest papers to its newest.')}
       {entry(dot({ boxShadow: 'inset 0 0 0 2px var(--warn)' }), 'Seed paper',
         'One of the papers the map was built from; the rest were found through their references and citers.')}
-      {entry(line('bg-bad'), 'Takes on a stated limitation',
+      {toggle('evolution-main-path', mainPath, onMainPath, line('bg-fg-2'), 'On the main path',
+        'The citation chain that carries the most of the field, from its oldest papers to its newest. Its papers keep their grey ring when the lines are hidden.')}
+      {toggle('evolution-strict', strict, onStrict, line('bg-bad'), 'Takes on a stated limitation',
         'A later paper that cites an earlier one in a sentence addressing or criticising a limitation of it.')}
-      {entry(line('bg-warn'), 'Loose link',
-        "A later paper whose text matches a gap an earlier paper stated, though it doesn't cite it.")}
+      {toggle('evolution-loose', loose, onLoose, line('bg-warn'), 'Loose link',
+        "A later paper whose text matches a gap an earlier paper stated, though it doesn't cite it.", looseCount)}
     </span>
   )
 }

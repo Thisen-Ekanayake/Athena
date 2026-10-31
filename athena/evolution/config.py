@@ -60,6 +60,7 @@ class TopicConfig:
     milestones_per_era: int = 3
     global_top: int = 12               # the highest-scoring papers are milestones whatever their era's quota
     milestone_min_score: float = 0.55  # no era pick below this, so sparse eras are not padded
+    max_milestones_per_year: int = 3   # after every rule above; a person's pin still adds one
     # Main-path papers at or above this score are milestones too. None: the main path is display only.
     # Membership is a yes/no that favoured mid-tier papers on long paths; the flow weight replaces it.
     main_path_min_score: float | None = None

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { fireEvent, screen } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { mockApi, renderWithProviders } from '../../test/utils'
 import type { EvolutionNode, EvolutionTopic } from './api'
@@ -7,8 +7,12 @@ import { SharedMapPage } from './SharedMapPage'
 
 // The lineage map draws with WebGL and d3-force, which jsdom has neither of; the page around it is under test.
 vi.mock('./EvolutionGraph', () => ({
-  EvolutionGraph: ({ nodes, actions }: { nodes: EvolutionNode[]; actions?: ReactNode }) => (
-    <div data-testid="graph">{nodes.length} stars{actions}</div>
+  EvolutionGraph: ({ nodes, actions, showMainPath, showStrict }: {
+    nodes: EvolutionNode[]; actions?: ReactNode; showMainPath?: boolean; showStrict?: boolean
+  }) => (
+    <div data-testid="graph" data-lines={[showMainPath && 'main', showStrict && 'strict'].filter(Boolean).join(' ')}>
+      {nodes.length} stars{actions}
+    </div>
   ),
 }))
 
@@ -35,7 +39,7 @@ describe('SharedMapPage', () => {
     const calls = mockApi({
       'GET /share/good-token': { data: topic },
       'GET /share/good-token/graph': {
-        data: { topic, nodes: [ddpm, ldm], edges: [], loose_edges: [], total_papers: 2, strict_links: 0, year_range: [2020, 2022] },
+        data: { topic, nodes: [ddpm, ldm], edges: [], loose_edges: [], total_papers: 2, in_range: 2, strict_links: 0, year_range: [2020, 2022], years: [2020, 2022] },
       },
       'GET /share/good-token/timeline': { data: { topic, years: [{ year: 2020, papers: [ddpm] }], without_full_text: [] } },
       'POST /share/good-token/view': { data: {} },
@@ -58,7 +62,7 @@ describe('SharedMapPage', () => {
     const calls = mockApi({
       'GET /share/good-token': { data: topic },
       'GET /share/good-token/graph': {
-        data: { topic, nodes: [ddpm, ldm], edges: [], loose_edges: [], total_papers: 2, strict_links: 0, year_range: [2020, 2022] },
+        data: { topic, nodes: [ddpm, ldm], edges: [], loose_edges: [], total_papers: 2, in_range: 2, strict_links: 0, year_range: [2020, 2022], years: [2020, 2022] },
       },
       'GET /share/good-token/timeline': { data: { topic, years: [{ year: 2020, papers: [ddpm] }], without_full_text: [] } },
       'POST /share/good-token/view': { data: {} },
@@ -70,6 +74,25 @@ describe('SharedMapPage', () => {
     for (const label of ['On the main path', 'Seed paper', 'Takes on a stated limitation', 'Loose link']) {
       expect(screen.getByRole('button', { name: `What "${label}" means` })).toHaveAccessibleDescription(/\w/)
     }
+
+    // Each kind of line can be hidden.
+    expect(screen.getByTestId('graph')).toHaveAttribute('data-lines', 'main strict')
+    fireEvent.click(screen.getByRole('checkbox', { name: /On the main path/ }))
+    expect(screen.getByTestId('graph')).toHaveAttribute('data-lines', 'strict')
+    fireEvent.click(screen.getByRole('checkbox', { name: /Takes on a stated limitation/ }))
+    expect(screen.getByTestId('graph')).toHaveAttribute('data-lines', '')
+    expect(screen.getByRole('checkbox', { name: 'Loose link (0)' })).not.toBeChecked()
+
+    // Years: all of them, one, or a span; the papers limit applies within them.
+    expect(screen.queryByRole('combobox', { name: 'To year' })).not.toBeInTheDocument()
+    fireEvent.change(screen.getByRole('combobox', { name: 'From year' }), { target: { value: '2020' } })
+    await waitFor(() => expect(calls).toContainEqual(expect.objectContaining({
+      url: '/share/good-token/graph', params: { limit: 250, year_from: 2020, year_to: 2020 } })))
+    fireEvent.change(screen.getByRole('combobox', { name: 'To year' }), { target: { value: '2022' } })
+    await waitFor(() => expect(calls).toContainEqual(expect.objectContaining({
+      url: '/share/good-token/graph', params: { limit: 250, year_from: 2020, year_to: 2022 } })))
+    fireEvent.change(screen.getByRole('combobox', { name: 'From year' }), { target: { value: 'all' } })
+    expect(screen.queryByRole('combobox', { name: 'To year' })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'All' }))
     expect(await screen.findByTestId('graph')).toBeInTheDocument()

@@ -55,10 +55,17 @@ export interface EvolutionGraph {
   nodes: EvolutionNode[]
   edges: EvolutionEdge[]
   loose_edges: LooseEdge[]
+  /** Papers in the whole map, and in the years asked for */
   total_papers: number
+  in_range: number
   strict_links: number
   year_range: [number, number] | null
+  /** Every year the map has papers in, whatever years were asked for */
+  years: number[]
 }
+
+/** Inclusive; null draws every year. */
+export type YearSpan = [number, number] | null
 
 export interface EvolutionTimeline {
   topic: EvolutionTopic
@@ -119,13 +126,16 @@ export const useTopicRising = (slug: string, limit = 10) => {
   })
 }
 
-/** ``limit`` 0 draws every paper; ``version`` (status and build time) refetches the map when a build or refinement finishes. */
-export const useTopicGraph = (slug: string | undefined, limit: number, version = '', enabled = true) => {
+/** ``limit`` 0 draws every paper; ``version`` (status and build time) refetches the map when a build or refinement
+ *  finishes; ``years`` draws only those years' papers, the limit applying within them. */
+export const useTopicGraph = (slug: string | undefined, limit: number, version = '', enabled = true, years: YearSpan = null) => {
   const scope = useMapScope()
   return useQuery({
-    queryKey: [scope.key, 'graph', slug, limit, version],
-    queryFn: async () =>
-      (await apiClient.get<EvolutionGraph>(`${scope.base(slug!)}/graph`, { params: { limit } })).data,
+    queryKey: [scope.key, 'graph', slug, limit, version, years],
+    queryFn: async () => {
+      const params = years ? { limit, year_from: years[0], year_to: years[1] } : { limit }
+      return (await apiClient.get<EvolutionGraph>(`${scope.base(slug!)}/graph`, { params })).data
+    },
     enabled: !!slug && enabled,
     staleTime: 5 * 60 * 1000,
     placeholderData: (previous) => previous,

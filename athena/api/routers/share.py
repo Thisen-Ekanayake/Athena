@@ -79,11 +79,12 @@ def shared_view(found=Depends(shared), session: Session = Depends(get_db)):
 
 
 @router.get("/{token}/graph")
-def shared_graph(limit: int = Query(250), found=Depends(shared), session: Session = Depends(get_db),
-                 r: redis_lib.Redis = Depends(get_redis)):
+def shared_graph(limit: int = Query(250), year_from: int | None = Query(None, ge=1000, le=3000),
+                 year_to: int | None = Query(None, ge=1000, le=3000), found=Depends(shared),
+                 session: Session = Depends(get_db), r: redis_lib.Redis = Depends(get_redis)):
     if limit not in GRAPH_LIMITS:
         raise HTTPException(status_code=422, detail=f"limit is one of {', '.join(map(str, GRAPH_LIMITS))}")
-    return _public(graph.topic_graph(found[1].slug, limit, session, r))
+    return _public(graph.topic_graph(found[1].slug, limit, year_from, year_to, session, r))
 
 
 @router.get("/{token}/timeline")
