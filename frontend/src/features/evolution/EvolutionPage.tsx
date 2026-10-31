@@ -460,7 +460,7 @@ export function TopicView({ slug }: { slug: string }) {
           {selectedId ? (
             <MapPaperPanel slug={slug} paperId={selectedId} onSelect={setSelectedId} onClose={() => setSelectedId(null)} />
           ) : (
-            <aside className="grid content-start gap-5">
+            <aside className="grid min-w-0 content-start gap-5">
               <p className="rounded-xl border border-line bg-surface p-4 text-[13px] text-fg-2">
                 Select a paper in the map, or a milestone above. A thread then traces what the paper built on and what built on it.
               </p>

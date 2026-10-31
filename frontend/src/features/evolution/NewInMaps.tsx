@@ -16,21 +16,24 @@ export function NewInMaps({ topic, limit = 6 }: NewInMapsProps) {
   const open = usePanelStore((s) => s.open)
   if (!data?.length) return null
   return (
-    <section className="grid gap-2.5">
+    <section className="grid min-w-0 gap-2.5">
       <h2 className="text-[11px] font-medium tracking-[0.08em] text-fg-3 uppercase">
         {topic ? 'New papers citing these milestones' : 'New in your maps'}
       </h2>
       <ul className="grid gap-px overflow-hidden rounded-xl border border-line bg-line">
         {data.slice(0, limit).map((p) => (
-          <li key={p.id} className="grid gap-1.5 bg-surface px-4 py-3">
+          <li key={p.id} className="grid min-w-0 gap-1.5 bg-surface px-4 py-3">
             <button type="button" onClick={() => open(p.id)} className="text-left text-[13.5px] leading-snug font-medium text-fg hover:underline">
               {p.title}
             </button>
-            <div className="flex flex-wrap items-center gap-1.5 text-[12px] text-fg-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[12px] text-fg-3">
               <span>{timeAgo(p.published_at)} · cites</span>
               {p.cites.slice(0, 4).map((c) => (
-                <Link key={`${c.topic}-${c.paper_id}`} to={`/evolution/${c.topic}?paper=${c.paper_id}`} title={`${c.title} — a milestone in ${c.topic_name}`}>
-                  <Chip className="hover:border-line-strong">{c.named_method ?? c.title}{!topic && <span className="text-fg-3"> · {c.topic_name}</span>}</Chip>
+                <Link key={`${c.topic}-${c.paper_id}`} to={`/evolution/${c.topic}?paper=${c.paper_id}`} title={`${c.title} — a milestone in ${c.topic_name}`} className="max-w-full min-w-0">
+                  {/* Chips don't wrap: a long title is cut short so it stays inside a narrow column. */}
+                  <Chip className="max-w-full hover:border-line-strong">
+                    <span className="truncate">{c.named_method ?? c.title}{!topic && <span className="text-fg-3"> · {c.topic_name}</span>}</span>
+                  </Chip>
                 </Link>
               ))}
               {p.cites.length > 4 && <span>and {p.cites.length - 4} more</span>}
