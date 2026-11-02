@@ -157,7 +157,7 @@ def yield_to_chat(max_wait: float | None = None, me: str | None = None, who: str
         while True:
             held = pausable and bool(paused(group_of(who)) if group_of(who) else paused())
             chat = chat_active() and (me is None or holder() != me)
-            blocked = turns.check(model, level) if gated and not held and not chat else None
+            blocked = turns.check(model, level, waited) if gated and not held and not chat else None
             if pausable and waited + paused_for >= PAUSE_HOLD and (held or chat or blocked):
                 raise Paused(f"{who} waited {int(waited + paused_for)} s for background work to resume")
             if held:
@@ -192,7 +192,11 @@ def my_turn(who: str, model: str | None) -> bool:
         return True
     level = turns.priority_of(who)
     key = f"{WAITING}minute:{who}"
-    blocked = turns.check(model, level)
+    try:
+        since = json.loads(_redis().get(key) or "{}").get("since")
+    except Exception:
+        since = None
+    blocked = turns.check(model, level, time.time() - since if since else 0.0)
     if blocked is None:
         turns.used(model, level)
         try:

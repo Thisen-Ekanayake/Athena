@@ -33,6 +33,7 @@ USED_KEY = "athena:lane:used"     # hash "model|priority" -> when work last pass
 TURN = 300.0     # a model keeps the GPU this long while work of the same priority waits for another
 IDLE = 30.0      # unused this long, the loaded model gives way at once (covers the gaps between a worker's calls)
 AGING = 1800.0   # work that waited this long gets the next turn, whatever its priority
+ACTIVE = 15.0     # used this recently by higher-priority work, a model is theirs: lower work on it waits too
 DRAIN_MAX = 300.0  # a swap waits for a call in flight at most this old: older, its process is taken for dead
 
 BACKLOG, ROUTINE, ASKED = 0, 1, 2
@@ -141,11 +142,25 @@ def _target(current: dict | None, demand: dict[str, dict], now: float) -> str | 
     return model
 
 
-def check(model: str, level: int) -> str | None:
+def _busy_above(model: str, level: int, now: float) -> int | None:
+    """The highest priority above ``level`` that used ``model`` in the last ``ACTIVE`` seconds, if any."""
+    try:
+        stamps = _redis().hgetall(USED_KEY)
+    except Exception:
+        return None
+    levels = [int(key.rpartition("|")[2]) for key, at in stamps.items()
+              if key.rpartition("|")[0] == model and now - float(at) < ACTIVE]
+    top = max(levels, default=None)
+    return top if top is not None and top > level else None
+
+
+def check(model: str, level: int, waited: float = 0.0) -> str | None:
     """None when work at ``level`` may call ``model`` now; otherwise what it waits for (the activity page's line).
 
     Moves the turn on when it should; a model whose turn it is still waits for calls in flight on another model to
-    end, so a call is never cut off by a swap."""
+    end, so a call is never cut off by a swap. The model server answers one request at a time, so while work of a
+    higher priority is using the model, lower work on the same model waits as well (2026-11-02: summaries took half
+    the 9B from a map someone was waiting for), until it has ``waited`` ``AGING`` seconds."""
     from athena.model_server import activity, lane
     now = time.time()
     live = activity.live()
@@ -160,6 +175,9 @@ def check(model: str, level: int) -> str | None:
             return None  # no Redis: no turns, as before
     if target != model:
         return f"{target} has the GPU"
+    above = _busy_above(model, level, now)
+    if above is not None and waited < AGING:
+        return f"{NAMES[above]} work is using {model}"
     # A process that died mid-call leaves its call listed (activity drops it once it is sure); a swap waits at
     # most DRAIN_MAX for one, not the 15 minutes it took the list to forget one on 2026-11-02.
     busy = sorted({c["model"] for c in live if c.get("server") == "gpu" and c.get("model") not in (None, model)

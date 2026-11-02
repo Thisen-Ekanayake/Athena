@@ -23,11 +23,22 @@ def waiter(who: str, model: str, level: int, since: float | None = None) -> None
             {"who": who, "reason": "turn", "since": since, "model": model, "priority": level}), ex=60)
 
 
-def test_the_first_work_takes_the_turn_and_the_same_model_never_waits():
+def test_the_first_work_takes_the_turn_and_work_as_important_on_the_same_model_never_waits():
     assert lane.yield_to_chat(who="summary", model=NINE_B) == 0
     assert turns.turn()["model"] == NINE_B
-    with turns.priority(turns.BACKLOG):  # lower priority, but the loaded model: it runs beside the summaries
-        assert lane.yield_to_chat(who="map_build", model=NINE_B) == 0
+    assert lane.yield_to_chat(who="cluster_label", model=NINE_B) == 0  # the same priority: it runs beside them
+
+
+def test_lower_work_on_the_same_model_waits_while_asked_work_uses_it(monkeypatch):
+    """The server answers one request at a time: summaries took half the 9B from a map someone waited for."""
+    with turns.priority(turns.ASKED):
+        lane.yield_to_chat(who="map_build", model=NINE_B)
+    assert turns.check(NINE_B, turns.ROUTINE) == f"asked for work is using {NINE_B}"
+    assert turns.check(NINE_B, turns.ROUTINE, waited=turns.AGING) is None  # it has waited long enough
+    with turns.priority(turns.ASKED):
+        assert lane.yield_to_chat(who="map_proposal", model=NINE_B) == 0  # as important: no wait
+    monkeypatch.setattr(turns, "ACTIVE", 0.0)  # the asked work stopped using it
+    assert turns.check(NINE_B, turns.ROUTINE) is None
 
 
 def test_cpu_and_unknown_models_take_no_turns():
