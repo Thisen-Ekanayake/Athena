@@ -177,6 +177,15 @@ function RunningNow({ data }: { data: Activity }) {
   )
 }
 
+const PRIORITY = ['backlog', 'routine', 'asked for']
+
+function waitReason(w: Activity['lane']['waiting'][number]): string {
+  if (w.reason === 'paused') return 'held by the pause'
+  if (w.reason === 'chat') return 'waits for a chat'
+  const level = w.priority != null ? ` (${PRIORITY[w.priority]})` : ''
+  return `waits for its turn on the GPU${level}${w.detail ? `: ${w.detail}` : ''}`
+}
+
 function Waiting({ data }: { data: Activity }) {
   const queued = data.queues.filter((q) => q.count > 0)
   if (data.lane.waiting.length === 0 && queued.length === 0) return <p className="text-[12px] text-fg-3">Nothing waiting.</p>
@@ -185,7 +194,7 @@ function Waiting({ data }: { data: Activity }) {
       {data.lane.waiting.map((w, i) => (
         <p key={i} className="flex flex-wrap gap-x-2">
           <span className="text-fg">{w.label}</span>
-          <span className="text-fg-3">{w.reason === 'paused' ? 'held by the pause' : 'waits for a chat'}, {ago(data.now, w.since).replace(' ago', '')}</span>
+          <span className="text-fg-3">{waitReason(w)}, {ago(data.now, w.since).replace(' ago', '')}</span>
         </p>
       ))}
       {queued.length > 0 && (

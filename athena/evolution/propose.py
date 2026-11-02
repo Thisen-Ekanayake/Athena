@@ -450,6 +450,7 @@ def run_refinement(proposal_id: str, r=None) -> str:
     from athena.core.redis_client import get_redis
     from athena.evolution.classify import Classifier
     from athena.evolution.model_lane import chat_server  # the worker image only
+    from athena.model_server import lane
 
     r = r or get_redis(decode_responses=True)
     proposal = load(r, proposal_id)
@@ -460,7 +461,9 @@ def run_refinement(proposal_id: str, r=None) -> str:
     try:
         url, server = chat_server()
         with server:
-            clf = Classifier(base_url=url, feature="map_proposal")
+            # Someone waits for it: never held by a pause, and first in line for the 9B's turn.
+            clf = Classifier(base_url=url, feature="map_proposal",
+                             wait={"pausable": False, "max_wait": lane.ASKED_WAIT})
             state = {"status": "done", "model": clf.model, **refine(proposal, clf)}
     except Exception as exc:
         state = {"status": "failed", "error": str(exc)[:300]}

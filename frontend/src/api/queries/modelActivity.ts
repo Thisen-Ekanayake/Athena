@@ -107,7 +107,16 @@ export interface Activity {
     paused: PauseState | null
     /** What a pause can hold, one group at a time */
     groups: PauseGroup[]
-    waiting: { who: string; label: string; reason: 'chat' | 'paused'; since: number }[]
+    waiting: {
+      who: string
+      label: string
+      reason: 'chat' | 'paused' | 'turn'
+      since: number
+      model?: string | null
+      priority?: number | null // 2 asked for, 1 routine, 0 backlog (athena/model_server/turns.py)
+      detail?: string | null // a turn's wait: "qwen3-embedding-8b has the GPU"
+    }[]
+    turn?: { model: string; since: number } | null // the model whose turn the GPU is
   }
   queues: { label: string; count: number; group: PauseGroup['key'] }[]
   recent: ModelCall[]

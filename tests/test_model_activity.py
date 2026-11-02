@@ -74,7 +74,7 @@ def test_a_pause_holds_background_work_but_not_what_people_asked_for(monkeypatch
     assert lane.paused()["by"] == "Admin"
     assert lane.yield_to_chat(who="project_index", pausable=False) == 0
     seen = []
-    monkeypatch.setattr(lane, "_waiting", lambda key, who, reason: seen.append((who, reason)) or "k")
+    monkeypatch.setattr(lane, "_waiting", lambda key, who, reason, **kw: seen.append((who, reason)) or "k")
     with pytest.raises(lane.Paused):  # past the hold the task queues itself again
         lane.yield_to_chat(who="summary")
     assert seen[0] == ("summary", "paused")
@@ -117,8 +117,8 @@ def test_waiters_are_listed_while_they_wait(monkeypatch):
     seen = []
     real = lane._waiting
 
-    def spy(key, who, reason):
-        key = real(key, who, reason)
+    def spy(key, who, reason, **kw):
+        key = real(key, who, reason, **kw)
         seen.append(lane.waiting())
         return key
     monkeypatch.setattr(lane, "_waiting", spy)
@@ -140,7 +140,7 @@ def test_a_map_lane_held_too_long_queues_itself_again(monkeypatch):
     monkeypatch.setattr(model_lane, "run_lane", lambda **kw: (_ for _ in ()).throw(lane.Paused("held")))
     monkeypatch.setattr(tasks.run_gpu_lane, "apply_async", lambda **kw: queued.append(kw))
     assert "paused" in tasks.run_gpu_lane(True, False)
-    assert queued == [{"args": [True, False], "countdown": lane.REQUEUE_SECONDS}]
+    assert queued == [{"args": [True, False, None, False], "countdown": lane.REQUEUE_SECONDS}]
 
 
 # ── unloading ────────────────────────────────────────────────────────

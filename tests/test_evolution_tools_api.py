@@ -338,7 +338,7 @@ def test_refresh_queues_the_chain_and_keeps_the_map_readable(client):
         resp = c.post("/api/v1/evolution/topics/object-detection/refresh")
     assert resp.status_code == 202 and resp.json()["task_id"] == "t1"
     assert status.call_args.args == ("object-detection", "refining", "Refresh queued")
-    assert queue.call_args.args == ("object-detection",)
+    assert queue.call_args.args == ("object-detection",) and queue.call_args.kwargs == {"asked": True}
 
 
 def test_refresh_of_a_busy_map_is_409(client):
@@ -353,7 +353,7 @@ def test_full_text_skips_the_rebuild(client):
     with patch(f"{ROUTER_DB}.get_topic", return_value=TOPIC), \
             patch("athena.evolution.refresh.queue_refresh", return_value="t2") as queue:
         assert c.post("/api/v1/evolution/topics/object-detection/full-text").status_code == 202
-    assert queue.call_args.kwargs == {"rebuild": False, "reason": "full_text"}
+    assert queue.call_args.kwargs == {"rebuild": False, "reason": "full_text", "asked": True}
 
 
 def test_refresh_interval_is_bounded(client):

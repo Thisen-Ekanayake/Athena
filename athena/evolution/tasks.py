@@ -12,10 +12,13 @@ def build_topic(slug: str) -> dict:
 
 
 @celery_app.task
-def build_search_topic(slug: str) -> dict:
-    """A topic built from a search: the map, then again with abstract embeddings."""
+def build_search_topic(slug: str, asked: bool = True) -> dict:
+    """A topic built from a search: the map, then again with abstract embeddings. Someone asked for it, so its
+    model work goes ahead of the feed's on the GPU (``turns``)."""
     from athena.evolution.build import build_search_topic as run_build
-    return run_build(slug)
+    from athena.model_server import turns
+    with turns.priority(turns.ASKED if asked else turns.BACKLOG):
+        return run_build(slug)
 
 
 @celery_app.task
@@ -33,15 +36,17 @@ def process_full_text(slug: str, reparse: bool = False) -> dict:
 
 
 @celery_app.task
-def run_gpu_lane(embed: bool = True, classify: bool = True) -> dict:
-    """Embed pending chunks, then label pending citing sentences, one model on the GPU at a time. Queued again when
-    background work stays paused (the work left pending is picked up then)."""
+def run_gpu_lane(embed: bool = True, classify: bool = True, slug: str | None = None, asked: bool = False) -> dict:
+    """Embed pending chunks, then label pending citing sentences, one model on the GPU at a time; ``asked``: someone
+    waits for ``slug``'s, so it goes ahead of the feed (``turns``). Queued again when background work stays paused
+    (the work left pending is picked up then)."""
     from athena.evolution.model_lane import run_lane
-    from athena.model_server import lane
+    from athena.model_server import lane, turns
     try:
-        return run_lane(embed=embed, classify=classify)
+        with turns.priority(turns.ASKED if asked else turns.BACKLOG):
+            return run_lane(embed=embed, classify=classify)
     except lane.Paused as exc:
-        run_gpu_lane.apply_async(args=[embed, classify], countdown=lane.REQUEUE_SECONDS)
+        run_gpu_lane.apply_async(args=[embed, classify, slug, asked], countdown=lane.REQUEUE_SECONDS)
         return {"paused": str(exc)}
 
 
@@ -62,7 +67,7 @@ def refresh_due_topics() -> list[str]:
 
 
 @celery_app.task
-def refresh_build(slug: str) -> dict:
+def refresh_build(slug: str, asked: bool = False) -> dict:
     """Rebuild with the old map readable meanwhile (status ``refining``). A failure stops the chain.
 
     The build saves in one transaction, so when it fails the previous map is still there: it goes back to
@@ -71,12 +76,14 @@ def refresh_build(slug: str) -> dict:
     from athena.database import evolution as db
     from athena.database.db import SessionLocal
     from athena.evolution.build import build_search_topic, build_topic as run_build
+    from athena.model_server import turns
     with SessionLocal() as session:
         topic = db.get_topic(session, slug)
         origin = topic.origin if topic else None
     try:
         if origin == "search":
-            return build_search_topic(slug, stage_status="refining", snapshot=False)
+            with turns.priority(turns.ASKED if asked else turns.BACKLOG):
+                return build_search_topic(slug, stage_status="refining", snapshot=False)
         return run_build(slug, stage_status="refining", snapshot=False)
     except Exception as exc:
         db.set_topic_status(slug, "ready", f"The refresh failed, so this is the previous build: {exc}"[:500])
@@ -94,13 +101,14 @@ def refresh_full_text(slug: str) -> dict:
 
 
 @celery_app.task
-def refresh_gpu_lane() -> dict:
+def refresh_gpu_lane(slug: str | None = None, asked: bool = False) -> dict:
     from athena.evolution.model_lane import run_lane
-    from athena.model_server import lane
+    from athena.model_server import lane, turns
     try:
-        return run_lane()
+        with turns.priority(turns.ASKED if asked else turns.BACKLOG):
+            return run_lane()
     except lane.Paused as exc:  # the snapshot goes ahead; the lane runs once background work resumes
-        run_gpu_lane.apply_async(countdown=lane.REQUEUE_SECONDS)
+        run_gpu_lane.apply_async(args=[True, True, slug, asked], countdown=lane.REQUEUE_SECONDS)
         return {"paused": str(exc)}
     except Exception as exc:  # no model server: the snapshot still records the rebuild
         logger.warning(f"Refresh: GPU lane did not run: {exc}")

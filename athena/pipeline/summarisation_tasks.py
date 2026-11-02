@@ -58,9 +58,10 @@ def _text_to_summarise(item: ContentItem, staged: str) -> Optional[str]:
 def _complete(system_prompt: str, user_msg: str, name: str, schema: dict, feature: str = "summary",
               pausable: bool = True):
     """One summary-model call with a JSON-schema answer; returns the response and the model used. Waits for chats
-    first, and while background work is paused when ``pausable`` (``lane.Paused`` past the hold)."""
+    first, while background work is paused when ``pausable`` (``lane.Paused`` past the hold), and for the model's
+    turn on the GPU."""
     model = llm.chat_model("summary")
-    lane.yield_to_chat(who=feature, pausable=pausable)
+    lane.yield_to_chat(who=feature, pausable=pausable, model=model)
     with activity.track(feature, model) as call:
         res = llm.chat_client(model=model).chat.completions.create(
             model=model,

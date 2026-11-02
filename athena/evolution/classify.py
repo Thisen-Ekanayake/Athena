@@ -161,12 +161,15 @@ def auth_headers(url: str | None = None) -> dict:
 
 class Classifier:
     def __init__(self, base_url: str | None = None, model: str | None = None, http: httpx.Client | None = None,
-                 local: bool | None = None, feature: str = "map_build"):
+                 local: bool | None = None, feature: str = "map_build", wait: dict | None = None):
         self.base_url = (base_url or chat_url()).rstrip("/")
         self.model = model or chat_model_name()
         self.local = is_local() if local is None else local
         self.http = http or httpx.Client(timeout=900.0, headers=auth_headers(self.base_url))
         self.feature = feature  # what its calls count as in the usage log
+        # Background use: before each call, wait for chats and the model's turn on the GPU (lane.yield_to_chat's
+        # arguments); None calls at once.
+        self.wait = wait
 
     def ask(self, prompt: str, schema: dict, name: str, think: bool = False,
             max_tokens: int | None = None) -> dict | None:
@@ -180,6 +183,9 @@ class Classifier:
         if self.local:
             # Qwen's chat template switches thinking per request; other servers may reject the field.
             payload["chat_template_kwargs"] = {"enable_thinking": think}
+        if self.wait is not None:
+            from athena.model_server import lane
+            lane.yield_to_chat(**{"who": self.feature, "model": self.model} | self.wait)
         with activity.track(self.feature, self.model) as call:
             resp = self.http.post(f"{self.base_url}/v1/chat/completions", json=payload)
             resp.raise_for_status()

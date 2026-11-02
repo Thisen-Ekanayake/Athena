@@ -241,7 +241,7 @@ def refresh_topic(slug: str, session: Session = Depends(get_db), r: redis_lib.Re
     before = (topic.status, topic.status_detail)
     db.set_topic_status(slug, "refining", "Refresh queued")
     try:
-        task_id = _queue_or_503(slug)
+        task_id = _queue_or_503(slug, asked=True)
     except HTTPException:
         db.set_topic_status(slug, *before)
         raise
@@ -253,7 +253,7 @@ def refresh_topic(slug: str, session: Session = Depends(get_db), r: redis_lib.Re
 def read_full_text(slug: str, session: Session = Depends(get_db)):
     """Tier 2 full text, then the GPU lane (labels, embeddings, gap themes), then a snapshot. No rebuild."""
     _built_topic_or_409(session, slug)
-    return {"queued": True, "task_id": _queue_or_503(slug, rebuild=False, reason="full_text")}
+    return {"queued": True, "task_id": _queue_or_503(slug, rebuild=False, reason="full_text", asked=True)}
 
 
 @router.patch("/topics/{slug}/settings", dependencies=[Depends(auth.require_admin)])

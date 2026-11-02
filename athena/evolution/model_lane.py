@@ -95,8 +95,8 @@ def _fit(http: httpx.Client, url: str, text: str) -> tuple[str, bool]:
 
 
 def _embed(http: httpx.Client, url: str, texts: list[str]) -> np.ndarray:
-    lane.yield_to_chat(who="map_embed")  # between batches, a chat gets the GPU first
     body: dict = {"input": texts, "model": embed_model_name()}
+    lane.yield_to_chat(who="map_embed", model=body["model"])  # between batches: chats first, then the GPU's turns
     dimensions = get_setting("EVOLUTION_EMBED_DIMENSIONS") or get_setting("EMBED_DIMENSIONS")
     if dimensions:  # OpenAI's text-embedding-3 models shorten vectors themselves
         body["dimensions"] = int(dimensions)
@@ -230,7 +230,7 @@ def classify_pending(limit: int | None = None) -> dict:
     url, server = chat_server()
     labelled = strict = gaps = candidates = rechecked = confirmed = 0
     with server, SessionLocal() as session:
-        clf = Classifier(base_url=url)
+        clf = Classifier(base_url=url, wait={})  # each call waits for chats and the 9B's turn
         cited_ids = db.all_tier2_ids(session)
         if clf.local:
             # Strict links labelled before the thinking confirmation existed: confirm them now.
@@ -248,7 +248,6 @@ def classify_pending(limit: int | None = None) -> dict:
             if not rows:
                 break
             out = []
-            lane.yield_to_chat(who="map_build")
             for ctx, citing_title, cited_title in rows:
                 v = clf.classify(citing_title, cited_title, ctx.sentence, ctx.marked)
                 # A failed answer is stored as "unknown" so it is not retried forever.
@@ -260,7 +259,6 @@ def classify_pending(limit: int | None = None) -> dict:
             logger.info(f"Labelled {labelled} citing sentences, {strict} strict "
                         f"({labelled / max(time.time() - start, 1e-6):.1f}/s)")
         while limit is None and (rows := db.pending_gap_candidates(session, 64)):
-            lane.yield_to_chat(who="map_build")
             out = []
             for gap, title in rows:
                 label = clf.is_gap(title, gap.section_type, gap.sentence) or "unknown"
@@ -299,7 +297,7 @@ def label_themes() -> int:
         if not pending:
             return 0
         with server:
-            clf = Classifier(base_url=url)
+            clf = Classifier(base_url=url, wait={})
             for theme, topic_name, sentences in pending:
                 label = clf.theme_label(topic_name, sentences)
                 if label:
