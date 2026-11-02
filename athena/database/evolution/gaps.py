@@ -137,6 +137,19 @@ def topic_gap_rows(session: Session, topic: EvoTopic) -> list[dict]:
              "fix": context_label == "addresses_limitation"} for g, year, context_label in rows]
 
 
+def named_themes(session: Session, topic_id: UUID) -> list[tuple[set[UUID], str, dict]]:
+    """A topic's gap themes the 9B named, with their members: [(gap ids, label, detail)], so a rebuild can keep
+    the names (``athena.evolution.gaps.keep_names``)."""
+    themes = [t for t in session.execute(select(EvoGapTheme).where(EvoGapTheme.topic_id == topic_id)).scalars()
+              if (t.detail or {}).get("label_model")]
+    members: dict[UUID, set[UUID]] = defaultdict(set)
+    if themes:
+        for theme_id, gap_id in session.execute(select(EvoGapThemeMember.theme_id, EvoGapThemeMember.gap_id)
+                                                .where(EvoGapThemeMember.theme_id.in_([t.id for t in themes]))):
+            members[theme_id].add(gap_id)
+    return [(members[t.id], t.label, dict(t.detail)) for t in themes]
+
+
 def save_themes(topic_id: UUID, themes: list[dict]) -> None:
     """Replace a topic's gap themes. ``themes``: [{label, size, yearly, first_year, last_year, status, detail,
     members}]."""

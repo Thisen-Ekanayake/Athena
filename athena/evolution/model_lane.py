@@ -34,7 +34,7 @@ from athena.database import evolution as db
 from athena.database.db import SessionLocal
 from athena.evolution import vectors
 from athena.evolution.classify import Classifier, auth_headers, chat_url, embed_model_name, embed_url, is_local
-from athena.evolution.gaps import build_themes
+from athena.evolution.gaps import build_themes, keep_names
 
 # Phase 0: throughput is the same with one slot as with eight, and every input must fit one ubatch.
 MAX_CHUNK_TOKENS = llm.EMBED_MAX_TOKENS
@@ -298,8 +298,9 @@ def build_all_themes(slug: str | None = None) -> dict:
             vecs = vectors.vectors_for([r["id"] for r in rows]) if rows else {}
             rows = [r for r in rows if r["id"] in vecs]
             themes = build_themes(rows, np.asarray([vecs[r["id"]] for r in rows])) if rows else []
+            kept = keep_names(themes, db.named_themes(session, topic.id))  # unchanged themes keep their 9B name
             db.save_themes(topic.id, themes)
-            out[topic.slug] = {"gap_statements": len(rows), "themes": len(themes),
+            out[topic.slug] = {"gap_statements": len(rows), "themes": len(themes), "names_kept": kept,
                                "persisting": sum(t["status"] == "persisting" for t in themes)}
     logger.info(f"Gap themes: {out}")
     return out

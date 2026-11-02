@@ -107,3 +107,18 @@ def test_labels_ignore_citations_and_author_names():
     assert "Lester" not in _clean("Prompt tuning lags full tuning (Lester et al., 2021).")
     assert "[12, 14]" not in _clean("Adapters add latency [12, 14] at inference.")
     assert _clean("3.1 Lack of universality of prompts").strip().startswith("Lack")
+
+
+def test_a_rebuilt_theme_keeps_the_name_of_the_old_theme_it_mostly_is():
+    from athena.evolution.gaps import keep_names
+    themes = [{"label": "depth · metric · scale", "detail": {"terms": []}, "members": [1, 2, 3, 4]},
+              {"label": "glass · mirror · reflective", "detail": {"terms": []}, "members": [7, 8, 9]},
+              {"label": "new · words · here", "detail": {"terms": []}, "members": [20, 21, 22]}]
+    named = [({1, 2, 3}, "An older, smaller version", {"label_model": "qwen3.5-9b"}),
+             ({1, 2, 3, 4, 5}, "Metric scale from one image", {"label_model": "qwen3.5-9b"}),
+             ({7, 30, 31, 32}, "Too different to keep", {"label_model": "qwen3.5-9b"})]
+    assert keep_names(themes, named) == 1
+    assert themes[0]["label"] == "Metric scale from one image"  # the better overlap of two (4/5 against 3/4)
+    assert themes[0]["detail"]["terms_label"] == "depth · metric · scale" and themes[0]["detail"]["terms"] == []
+    assert themes[1]["label"] == "glass · mirror · reflective" and "label_model" not in themes[1]["detail"]
+    assert themes[2]["label"] == "new · words · here"

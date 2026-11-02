@@ -32,6 +32,7 @@ THEME_DISTANCE = 0.40   # average-linkage cosine distance at which clusters stop
 MIN_THEME_SIZE = 3
 RECENT_YEARS = 2
 LABEL_TERMS = 3
+KEEP_NAME = 0.5  # a rebuilt theme keeps an old theme's 9B name when they share this share of members (Jaccard)
 # Words every gap statement uses; they say nothing about which gap it is.
 _GENERIC = {
     "method", "methods", "model", "models", "approach", "approaches", "work", "works", "paper", "papers", "propose",
@@ -146,3 +147,27 @@ def build_themes(rows: list[dict], vectors: np.ndarray, distance: float = THEME_
         })
     order = {"persisting": 0, "new": 1, "addressed": 2, "quiet": 3}
     return sorted(themes, key=lambda th: (order[th["status"]], -th["size"]))
+
+
+def keep_names(themes: list[dict], named: list[tuple[set, str, dict]], overlap: float = KEEP_NAME) -> int:
+    """Give rebuilt ``themes`` the 9B names of the old themes they mostly are, so a rebuild does not send every
+    theme back to the 9B. ``named``: [(members, label, detail)] of the old named themes. Each name goes to at most
+    one theme, best overlap first. Returns how many kept a name."""
+    pairs = []
+    for i, theme in enumerate(themes):
+        new = set(theme["members"])
+        for j, (old, _, _) in enumerate(named):
+            score = len(new & old) / len(new | old) if new | old else 0.0
+            if score >= overlap:
+                pairs.append((score, i, j))
+    used_themes, used_names = set(), set()
+    for _, i, j in sorted(pairs, reverse=True):
+        if i in used_themes or j in used_names:
+            continue
+        used_themes.add(i)
+        used_names.add(j)
+        _, label, detail = named[j]
+        themes[i]["detail"] = {**themes[i]["detail"], "label_model": detail["label_model"],
+                               "terms_label": themes[i]["label"]}
+        themes[i]["label"] = label
+    return len(used_themes)

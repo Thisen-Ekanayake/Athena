@@ -19,6 +19,7 @@ from athena.database.evolution.graph import (  # noqa: F401
 from athena.database.evolution.gaps import (  # noqa: F401
     gap_export_rows, sync_citing_gaps, pending_gap_candidates, save_gap_labels, pending_gap_vectors, mark_gaps,
     pending_loose, save_loose_links, topic_gap_rows, save_themes, topic_gaps, themes_to_label, save_theme_label,
+    named_themes,
 )
 from athena.database.evolution.reading import (  # noqa: F401
     NOTE_WHY, current_notes, save_note, read_papers, set_read, reading_path, note_context,
