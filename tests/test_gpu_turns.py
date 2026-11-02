@@ -39,6 +39,9 @@ def test_lower_work_on_the_same_model_waits_while_asked_work_uses_it(monkeypatch
         assert lane.yield_to_chat(who="map_proposal", model=NINE_B) == 0  # as important: no wait
     monkeypatch.setattr(turns, "ACTIVE", 0.0)  # the asked work stopped using it
     assert turns.check(NINE_B, turns.ROUTINE) is None
+    with turns.priority(turns.ASKED):
+        with activity.track("map_build", NINE_B):  # a long thinking call outlasts the window: still theirs
+            assert turns.check(NINE_B, turns.ROUTINE) == f"asked for work is using {NINE_B}"
 
 
 def test_cpu_and_unknown_models_take_no_turns():

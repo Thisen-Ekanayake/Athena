@@ -26,9 +26,8 @@ def test_a_call_is_live_then_logged_with_sizes_and_no_text(gpu_presets):
     assert activity.live() == []
     (done,) = activity.recent()
     assert done["status"] == "done" and (done["input_tokens"], done["output_tokens"]) == (1200, 300)
-    assert set(done) == {"id", "feature", "model", "kind", "user_id", "started", "server", "swapped", "pid", "host",
-                         "seconds",
-                         "status", "error", "input_tokens", "output_tokens"}
+    assert set(done) == {"id", "feature", "model", "kind", "user_id", "started", "server", "swapped", "priority",
+                         "pid", "host", "seconds", "status", "error", "input_tokens", "output_tokens"}
     (today,) = activity.today()
     assert today["label"] == "Summaries" and today["calls"] == 1 and today["input_tokens"] == 1200
 

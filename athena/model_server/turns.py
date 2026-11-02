@@ -33,7 +33,7 @@ USED_KEY = "athena:lane:used"     # hash "model|priority" -> when work last pass
 TURN = 300.0     # a model keeps the GPU this long while work of the same priority waits for another
 IDLE = 30.0      # unused this long, the loaded model gives way at once (covers the gaps between a worker's calls)
 AGING = 1800.0   # work that waited this long gets the next turn, whatever its priority
-ACTIVE = 15.0     # used this recently by higher-priority work, a model is theirs: lower work on it waits too
+ACTIVE = 60.0     # used this recently by higher-priority work, a model is theirs: lower work on it waits too
 DRAIN_MAX = 300.0  # a swap waits for a call in flight at most this old: older, its process is taken for dead
 
 BACKLOG, ROUTINE, ASKED = 0, 1, 2
@@ -142,14 +142,17 @@ def _target(current: dict | None, demand: dict[str, dict], now: float) -> str | 
     return model
 
 
-def _busy_above(model: str, level: int, now: float) -> int | None:
-    """The highest priority above ``level`` that used ``model`` in the last ``ACTIVE`` seconds, if any."""
+def _busy_above(model: str, level: int, now: float, live: list[dict]) -> int | None:
+    """The highest priority above ``level`` that is calling ``model`` now or used it in the last ``ACTIVE`` seconds,
+    if any (a thinking call can outlast the window, so calls in flight count too)."""
     try:
         stamps = _redis().hgetall(USED_KEY)
     except Exception:
-        return None
+        stamps = {}
     levels = [int(key.rpartition("|")[2]) for key, at in stamps.items()
               if key.rpartition("|")[0] == model and now - float(at) < ACTIVE]
+    levels += [int(c["priority"]) for c in live if c.get("model") == model and c.get("priority") is not None
+               and now - float(c.get("started") or now) < DRAIN_MAX]
     top = max(levels, default=None)
     return top if top is not None and top > level else None
 
@@ -175,7 +178,7 @@ def check(model: str, level: int, waited: float = 0.0) -> str | None:
             return None  # no Redis: no turns, as before
     if target != model:
         return f"{target} has the GPU"
-    above = _busy_above(model, level, now)
+    above = _busy_above(model, level, now, live)
     if above is not None and waited < AGING:
         return f"{NAMES[above]} work is using {model}"
     # A process that died mid-call leaves its call listed (activity drops it once it is sure); a swap waits at
