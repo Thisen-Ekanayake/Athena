@@ -193,3 +193,20 @@ def test_a_call_left_by_a_dead_process_holds_no_swap(monkeypatch):
     old = ghost | {"id": "o", "host": "another-machine", "started": time.time() - turns.DRAIN_MAX - 1}
     lane._redis().hset(activity.LIVE, "o", _json.dumps(old))
     assert turns.check(NINE_B, turns.ASKED) is None  # elsewhere and too old to be waited for
+
+
+def test_tokenizing_for_the_map_takes_the_embedders_turn_and_outlasts_a_swap(monkeypatch):
+    """/tokenize loads the embedder in router mode; mid-swap the router answered with an error and a lane run died
+    on KeyError('tokens') (2026-11-02)."""
+    import httpx
+    from athena.evolution import model_lane
+    monkeypatch.setattr(model_lane.time, "sleep", lambda s: None)
+    answers = iter([{"error": {"message": "model is loading"}}, {"tokens": [1, 2, 3]}])
+    http = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=next(answers))))
+    gates = []
+    monkeypatch.setattr(lane, "yield_to_chat", lambda **kw: gates.append(kw) or 0)
+    assert model_lane._count_tokens(http, "http://llm", EMBED, "a gap") == 3
+    assert gates == [{"who": "map_embed", "model": EMBED}]
+    broken = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"error": "x"})))
+    with pytest.raises(RuntimeError, match="did not tokenize"):
+        model_lane._count_tokens(broken, "http://llm", EMBED, "a gap")

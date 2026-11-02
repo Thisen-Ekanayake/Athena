@@ -90,8 +90,24 @@ def _fit(http: httpx.Client, url: str, text: str) -> tuple[str, bool]:
         words = text.split()
         return " ".join(words[:EXTERNAL_MAX_WORDS]), len(words) > EXTERNAL_MAX_WORDS
     model = embed_model_name()  # the router needs it to pick the tokenizer
-    return llm.fit(text, MAX_CHUNK_TOKENS,
-                   lambda t: len(http.post(f"{url}/tokenize", json={"content": t, "model": model}).json()["tokens"]))
+    return llm.fit(text, MAX_CHUNK_TOKENS, lambda t: _count_tokens(http, url, model, t))
+
+
+TOKENIZE_TRIES = 5
+
+
+def _count_tokens(http: httpx.Client, url: str, model: str, text: str) -> int:
+    """Tokens in ``text`` by the embedder's tokenizer. In router mode /tokenize loads the embedder, so it takes the
+    embedder's turn on the GPU first; a router that answers with an error while it swaps models is asked again
+    (2026-11-02: a lane run died on the KeyError)."""
+    lane.yield_to_chat(who="map_embed", model=model)
+    body: dict = {}
+    for attempt in range(TOKENIZE_TRIES):
+        body = http.post(f"{url}/tokenize", json={"content": text, "model": model}).json()
+        if "tokens" in body:
+            return len(body["tokens"])
+        time.sleep(2.0 * (attempt + 1))
+    raise RuntimeError(f"The model server did not tokenize the text: {str(body)[:200]}")
 
 
 def _embed(http: httpx.Client, url: str, texts: list[str]) -> np.ndarray:
