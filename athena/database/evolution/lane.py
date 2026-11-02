@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, aliased
 
@@ -172,15 +172,16 @@ def _save_own_gaps(session: Session, paper_id: UUID, gaps: list[tuple[str, str]]
                                                    set_={"section_type": stmt.excluded.section_type}))
 
 
-def pending_chunks(session: Session, limit: int) -> list[tuple[EvoChunk, EvoPaper, EvoSection]]:
-    return session.execute(
-        select(EvoChunk, EvoPaper, EvoSection)
-        .join(EvoPaper, EvoChunk.paper_id == EvoPaper.id)
-        .join(EvoSection, EvoChunk.section_id == EvoSection.id)
-        .where(EvoChunk.embedded_at.is_(None))
-        .order_by(EvoChunk.paper_id, EvoChunk.position)
-        .limit(limit)
-    ).all()
+def pending_chunks(session: Session, limit: int,
+                   papers: set[UUID] | None = None) -> list[tuple[EvoChunk, EvoPaper, EvoSection]]:
+    """Chunks without a vector; ``papers``: only these papers' (one map's)."""
+    q = (select(EvoChunk, EvoPaper, EvoSection)
+         .join(EvoPaper, EvoChunk.paper_id == EvoPaper.id)
+         .join(EvoSection, EvoChunk.section_id == EvoSection.id)
+         .where(EvoChunk.embedded_at.is_(None)))
+    if papers is not None:
+        q = q.where(EvoChunk.paper_id.in_(papers))
+    return session.execute(q.order_by(EvoChunk.paper_id, EvoChunk.position).limit(limit)).all()
 
 
 def mark_embedded(session: Session, chunk_ids: list[UUID]) -> None:
@@ -243,6 +244,24 @@ def all_tier2_ids(session: Session) -> set[UUID]:
     return ids
 
 
+def topic_scope(session: Session, topic: EvoTopic) -> dict[str, set[UUID]]:
+    """What one map's lane work covers: {"tier2": papers whose citing sentences it labels, "papers": every paper in
+    the map (chunks, gap statements, abstracts)}."""
+    return {"tier2": tier2_ids(session, topic, TopicConfig.from_dict(topic.config).tier2_successors),
+            "papers": set(session.execute(select(EvoTopicPaper.paper_id)
+                                          .where(EvoTopicPaper.topic_id == topic.id)).scalars())}
+
+
+def count_pending_contexts(session: Session, cited_ids: set[UUID]) -> int:
+    """How many citing sentences ``pending_contexts`` would still return for these cited papers."""
+    if not cited_ids:
+        return 0
+    return session.execute(
+        select(func.count()).select_from(EvoCitationContext)
+        .where(EvoCitationContext.label.is_(None), EvoCitationContext.cited_id.in_(cited_ids),
+               EvoCitationContext.cues != [])).scalar_one()
+
+
 def cited_by(session: Session, paper_ids: list[UUID]) -> dict[UUID, set[UUID]]:
     """{paper: papers citing it}, for flagging loose links that coincide with a citation."""
     out: dict[UUID, set[UUID]] = defaultdict(set)
@@ -252,12 +271,13 @@ def cited_by(session: Session, paper_ids: list[UUID]) -> dict[UUID, set[UUID]]:
     return out
 
 
-def pending_abstracts(session: Session, limit: int) -> list[EvoPaper]:
-    """Topic papers whose title and abstract are not yet in Qdrant's paper_abstracts (Tier 1)."""
-    return list(session.execute(
-        select(EvoPaper).where(EvoPaper.abstract_embedded_at.is_(None),
-                               EvoPaper.id.in_(select(EvoTopicPaper.paper_id)))
-        .limit(limit)).scalars())
+def pending_abstracts(session: Session, limit: int, papers: set[UUID] | None = None) -> list[EvoPaper]:
+    """Topic papers whose title and abstract are not yet in Qdrant's paper_abstracts (Tier 1); ``papers`` as
+    above."""
+    q = select(EvoPaper).where(EvoPaper.abstract_embedded_at.is_(None), EvoPaper.id.in_(select(EvoTopicPaper.paper_id)))
+    if papers is not None:
+        q = q.where(EvoPaper.id.in_(papers))
+    return list(session.execute(q.limit(limit)).scalars())
 
 
 def mark_abstracts(session: Session, paper_ids: list[UUID]) -> None:

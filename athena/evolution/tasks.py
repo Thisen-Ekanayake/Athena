@@ -37,17 +37,52 @@ def process_full_text(slug: str, reparse: bool = False) -> dict:
 
 @celery_app.task
 def run_gpu_lane(embed: bool = True, classify: bool = True, slug: str | None = None, asked: bool = False) -> dict:
-    """Embed pending chunks, then label pending citing sentences, one model on the GPU at a time; ``asked``: someone
-    waits for ``slug``'s, so it goes ahead of the feed (``turns``). Queued again when background work stays paused
-    (the work left pending is picked up then)."""
-    from athena.evolution.model_lane import run_lane
+    """Embed pending chunks, then label pending citing sentences, one model on the GPU at a time. With ``slug``, that
+    map's work only, and the rest is queued as a backlog run; ``asked``: someone waits for it, so it goes ahead of
+    the feed (``turns``). Queued again when background work stays paused, and a backlog run when other work waits
+    for the evolution worker (what was done is kept)."""
+    return _gpu_lane(embed, classify, slug, asked)
+
+
+BACKLOG_QUEUED = "athena:evo:backlog_queued"  # one backlog lane run in the queue at a time
+
+
+def queue_backlog() -> bool:
+    """Queue a backlog lane run unless one is queued already."""
+    from athena.core.redis_client import get_redis
+    try:
+        if not get_redis().set(BACKLOG_QUEUED, "1", nx=True, ex=24 * 3600):
+            return False
+    except Exception:
+        pass
+    run_gpu_lane.apply_async(args=[True, True, None, False])
+    return True
+
+
+def _gpu_lane(embed: bool, classify: bool, slug: str | None, asked: bool) -> dict:
+    from athena.evolution.model_lane import StepAside, run_lane
     from athena.model_server import lane, turns
+    if slug is None:
+        from athena.core.redis_client import get_redis
+        try:
+            get_redis().delete(BACKLOG_QUEUED)  # this is the queued one: a later map may queue the next
+        except Exception:
+            pass
     try:
         with turns.priority(turns.ASKED if asked else turns.BACKLOG):
-            return run_lane(embed=embed, classify=classify)
+            summary = run_lane(embed=embed, classify=classify, slug=slug)
     except lane.Paused as exc:
         run_gpu_lane.apply_async(args=[embed, classify, slug, asked], countdown=lane.REQUEUE_SECONDS)
         return {"paused": str(exc)}
+    except StepAside as exc:  # to the back of the queue, behind the work that waits
+        if slug is None:
+            queue_backlog()
+        else:
+            run_gpu_lane.apply_async(args=[embed, classify, slug, asked])
+        return {"stepped_aside": str(exc)}
+    if slug is not None:
+        queue_backlog()  # the maps nobody is waiting for, once this one is done
+    return summary
 
 
 @celery_app.task
@@ -102,14 +137,10 @@ def refresh_full_text(slug: str) -> dict:
 
 @celery_app.task
 def refresh_gpu_lane(slug: str | None = None, asked: bool = False) -> dict:
-    from athena.evolution.model_lane import run_lane
-    from athena.model_server import lane, turns
+    """The refresh's GPU lane: the map's own work (``slug``), then a backlog run is queued. A pause or another task
+    waiting queues the lane again; the snapshot goes ahead either way."""
     try:
-        with turns.priority(turns.ASKED if asked else turns.BACKLOG):
-            return run_lane()
-    except lane.Paused as exc:  # the snapshot goes ahead; the lane runs once background work resumes
-        run_gpu_lane.apply_async(args=[True, True, slug, asked], countdown=lane.REQUEUE_SECONDS)
-        return {"paused": str(exc)}
+        return _gpu_lane(True, True, slug, asked)
     except Exception as exc:  # no model server: the snapshot still records the rebuild
         logger.warning(f"Refresh: GPU lane did not run: {exc}")
         return {"error": str(exc)[:300]}

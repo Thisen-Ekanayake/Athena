@@ -135,8 +135,10 @@ def test_minute_embedding_runs_skip_while_paused(monkeypatch):
 
 
 def test_a_map_lane_held_too_long_queues_itself_again(monkeypatch):
+    from athena.core import redis_client
     from athena.evolution import model_lane, tasks
     queued = []
+    monkeypatch.setattr(redis_client, "get_redis", lambda *a, **kw: lane._redis())
     monkeypatch.setattr(model_lane, "run_lane", lambda **kw: (_ for _ in ()).throw(lane.Paused("held")))
     monkeypatch.setattr(tasks.run_gpu_lane, "apply_async", lambda **kw: queued.append(kw))
     assert "paused" in tasks.run_gpu_lane(True, False)

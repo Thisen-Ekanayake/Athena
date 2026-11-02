@@ -39,5 +39,5 @@ from athena.database.evolution.changes import (  # noqa: F401
 from athena.database.evolution.lane import (  # noqa: F401
     tier2_ids, _PARSE_ERRORS, needs_full_text, tier2_papers, known_papers, save_full_text, _save_own_gaps,
     pending_chunks, mark_embedded, paper_topics, pending_contexts, unconfirmed_strict, save_labels, all_tier2_ids,
-    cited_by, pending_abstracts, mark_abstracts, forget_vectors,
+    cited_by, pending_abstracts, mark_abstracts, forget_vectors, topic_scope, count_pending_contexts,
 )

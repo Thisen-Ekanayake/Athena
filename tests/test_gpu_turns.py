@@ -146,7 +146,10 @@ def test_priorities_come_from_the_feature_unless_a_task_says_otherwise():
 
 
 def test_a_built_map_is_asked_for_and_a_scheduled_refresh_is_backlog(monkeypatch):
+    from athena.core import redis_client
     from athena.evolution import build, model_lane, tasks
+    monkeypatch.setattr(redis_client, "get_redis", lambda *a, **kw: lane._redis())
+    monkeypatch.setattr(tasks.run_gpu_lane, "apply_async", lambda **kw: None)  # the backlog run it queues
     seen = []
     monkeypatch.setattr(build, "build_search_topic", lambda slug, **kw: seen.append(turns.priority_of("map_embed")))
     tasks.build_search_topic("vln")
