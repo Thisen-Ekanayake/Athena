@@ -65,35 +65,6 @@ def label_prompt(citing_title: str, cited_title: str, sentence: str, marked: str
     )
 
 
-def batch_label_prompt(items: list[tuple[str, str, str, str | None]]) -> str:
-    """``label_prompt`` for several sentences at once: [(citing title, cited title, sentence, marked)]."""
-    listed = "\n".join(
-        f"{i}. Citing paper: {citing}\n   Cited paper: {cited}\n   Sentence from the citing paper: {marked or sentence}"
-        for i, (citing, cited, sentence, marked) in enumerate(items, 1))
-    note = "In each sentence, the citation of the cited paper is marked [[like this]].\n" \
-        if any(m for *_, m in items) else ""
-    return (
-        f"{listed}\n\n{note}"
-        "For each numbered sentence: what does it say about its cited paper?\n"
-        "- addresses_limitation: the cited work has a problem and the citing paper claims to fix or improve "
-        "on it.\n"
-        "- criticises: the sentence states a problem or limitation of the cited work, with no fix claimed in "
-        "the same sentence.\n"
-        "- extends_or_uses: the citing paper builds on or uses the cited method, data or code without "
-        "claiming to fix a flaw.\n"
-        "- compares: results are compared against the cited work as a baseline.\n"
-        "- background: the cited work is mentioned as context.\n"
-        "Judge each sentence on its own, only by what it says about its cited paper.\n"
-        f'Return {{"labels": [...]}} with {len(items)} labels, one per sentence, in order.'
-    )
-
-
-def batch_label_schema(n: int) -> dict:
-    return {"type": "object", "properties": {"labels": {"type": "array", "items": {"type": "string", "enum": LABELS},
-                                                        "minItems": n, "maxItems": n}},
-            "required": ["labels"], "additionalProperties": False}
-
-
 def attribution_prompt(citing_title: str, cited_title: str, sentence: str, marked: str | None = None) -> str:
     return (
         _header(citing_title, cited_title, sentence, marked)
@@ -256,33 +227,6 @@ class Classifier:
             if attributed and self.local:
                 attributed = self.attribution(citing_title, cited_title, sentence, marked, think=True)
         return Verdict(label, attributed, time.time() - start)
-
-    def labels(self, items: list[tuple[str, str, str, str | None]]) -> list[str | None]:
-        """The first question for several sentences in one request: [(citing title, cited title, sentence,
-        marked)] -> a label (or None) each."""
-        if len(items) == 1:
-            answer = self.ask(label_prompt(*items[0]), LABEL_SCHEMA, "citation_label") or {}
-            return [answer.get("label") if answer.get("label") in LABELS else None]
-        answer = self.ask(batch_label_prompt(items), batch_label_schema(len(items)), "citation_labels",
-                          max_tokens=16 + 12 * len(items)) or {}
-        got = answer.get("labels") if isinstance(answer.get("labels"), list) else []
-        if len(got) != len(items):
-            return [None] * len(items)
-        return [label if label in LABELS else None for label in got]
-
-    def classify_many(self, items: list[tuple[str, str, str, str | None]]) -> list[Verdict]:
-        """``classify`` for several sentences: their labels in one request, then the attribution questions one
-        sentence at a time (only limitation labels get them)."""
-        start = time.time()
-        out = []
-        for (citing, cited, sentence, marked), label in zip(items, self.labels(items)):
-            attributed = None
-            if label in LIMITATION_LABELS:
-                attributed = self.attribution(citing, cited, sentence, marked)
-                if attributed and self.local:
-                    attributed = self.attribution(citing, cited, sentence, marked, think=True)
-            out.append(Verdict(label, attributed, time.time() - start))
-        return out
 
     def is_gap(self, paper_title: str, section_type: str | None, sentence: str) -> str | None:
         answer = self.ask(gap_prompt(paper_title, section_type, sentence), GAP_SCHEMA, "gap") or {}
