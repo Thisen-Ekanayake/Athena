@@ -24,12 +24,14 @@ GPU router take turns: the CPU router keeps its models loaded beside it, and a h
 from __future__ import annotations
 
 import json
+import os
+import socket
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 
 TURN_KEY = "athena:lane:turn"
-USED_KEY = "athena:lane:used"     # hash "model|priority" -> when work last passed the gate
+USED_KEY = "athena:lane:used"     # hash "model|priority|process" -> when work last passed the gate
 TURN = 300.0     # a model keeps the GPU this long while work of the same priority waits for another
 IDLE = 30.0      # unused this long, the loaded model gives way at once (covers the gaps between a worker's calls)
 AGING = 1800.0   # work that waited this long gets the next turn, whatever its priority
@@ -84,17 +86,38 @@ def turn() -> dict | None:
         return None
 
 
+def _me() -> str:
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
 def used(model: str, level: int) -> None:
-    """Work at ``level`` passed the gate for ``model`` (and is about to call it)."""
+    """Work at ``level`` in this process passed the gate for ``model`` (and is about to call it)."""
     try:
-        _redis().hset(USED_KEY, f"{model}|{level}", time.time())
+        _redis().hset(USED_KEY, f"{model}|{level}|{_me()}", time.time())
     except Exception:
         pass
 
 
-def _demand(now: float, waiters: list[dict], live: list[dict]) -> dict[str, dict]:
+def _stamps(now: float, window: float) -> list[tuple[str, int, str | None]]:
+    """[(model, priority, process)] used within ``window`` seconds."""
+    try:
+        stamps = _redis().hgetall(USED_KEY)
+    except Exception:
+        return []
+    out = []
+    for key, at in stamps.items():
+        parts = key.split("|")
+        if len(parts) < 2 or now - float(at) >= window:
+            continue
+        out.append((parts[0], int(parts[1]), parts[2] if len(parts) > 2 else None))
+    return out
+
+
+def _demand(now: float, waiters: list[dict], live: list[dict], asking: str | None = None) -> dict[str, dict]:
     """{model: {priority, since, waiting}}: who wants each GPU model now. ``since`` is the oldest wait (a model only
-    in use has none); ``waiting`` is whether anyone waits for it."""
+    in use has none); ``waiting`` is whether anyone waits for it. This process's own recent use of a model other than
+    the one it is ``asking`` for does not count: a map job moving from the 9B to the embedder is not held up by
+    itself (it waited the whole ``IDLE`` window while summaries took the 9B back, 2026-11-02)."""
     out: dict[str, dict] = {}
 
     def add(model: str, level: int, since: float | None = None):
@@ -107,14 +130,10 @@ def _demand(now: float, waiters: list[dict], live: list[dict]) -> dict[str, dict
     for w in waiters:
         if w.get("model") and w.get("priority") is not None:
             add(w["model"], int(w["priority"]), float(w.get("since") or now))
-    try:
-        stamps = _redis().hgetall(USED_KEY)
-    except Exception:
-        stamps = {}
-    for key, at in stamps.items():
-        model, _, level = key.rpartition("|")
-        if now - float(at) < IDLE:
-            add(model, int(level))
+    me = _me()
+    for model, level, who in _stamps(now, IDLE):
+        if who != me or model == asking:
+            add(model, level)
     for call in live:
         if call.get("server") == "gpu" and call.get("model"):
             add(call["model"], DEFAULTS.get(call.get("feature") or "", BACKLOG))
@@ -145,12 +164,8 @@ def _target(current: dict | None, demand: dict[str, dict], now: float) -> str | 
 def _busy_above(model: str, level: int, now: float, live: list[dict]) -> int | None:
     """The highest priority above ``level`` that is calling ``model`` now or used it in the last ``ACTIVE`` seconds,
     if any (a thinking call can outlast the window, so calls in flight count too)."""
-    try:
-        stamps = _redis().hgetall(USED_KEY)
-    except Exception:
-        stamps = {}
-    levels = [int(key.rpartition("|")[2]) for key, at in stamps.items()
-              if key.rpartition("|")[0] == model and now - float(at) < ACTIVE]
+    me = _me()
+    levels = [lv for m, lv, who in _stamps(now, ACTIVE) if m == model and who != me]
     levels += [int(c["priority"]) for c in live if c.get("model") == model and c.get("priority") is not None
                and now - float(c.get("started") or now) < DRAIN_MAX]
     top = max(levels, default=None)
@@ -167,7 +182,7 @@ def check(model: str, level: int, waited: float = 0.0) -> str | None:
     from athena.model_server import activity, lane
     now = time.time()
     live = activity.live()
-    demand = _demand(now, lane.waiting(), live)
+    demand = _demand(now, lane.waiting(), live, asking=model)
     demand.setdefault(model, {"priority": level, "since": now, "waiting": True})
     current = turn()
     target = _target(current, demand, now)
