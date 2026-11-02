@@ -18,7 +18,7 @@ from athena.api.deps import get_db, get_redis
 from athena.core.models import User
 from athena.database import evolution as db
 from athena.database import watches as watch_db
-from athena.evolution import propose as proposals
+from athena.evolution import progress, propose as proposals
 from athena.evolution.classify import chat_available
 from athena.core.openalex import FIELD_IDS, OpenAlexBudgetError
 from athena.evolution.search import find_topic_by_content
@@ -245,6 +245,7 @@ def refresh_topic(slug: str, session: Session = Depends(get_db), r: redis_lib.Re
     except HTTPException:
         db.set_topic_status(slug, *before)
         raise
+    progress.stage(slug, "queued")
     cache_invalidate(r, f"evo:{slug}:*")
     return {"queued": True, "task_id": task_id}
 
@@ -253,7 +254,9 @@ def refresh_topic(slug: str, session: Session = Depends(get_db), r: redis_lib.Re
 def read_full_text(slug: str, session: Session = Depends(get_db)):
     """Tier 2 full text, then the GPU lane (labels, embeddings, gap themes), then a snapshot. No rebuild."""
     _built_topic_or_409(session, slug)
-    return {"queued": True, "task_id": _queue_or_503(slug, rebuild=False, reason="full_text", asked=True)}
+    task_id = _queue_or_503(slug, rebuild=False, reason="full_text", asked=True)
+    progress.stage(slug, "queued")
+    return {"queued": True, "task_id": task_id}
 
 
 @router.patch("/topics/{slug}/settings", dependencies=[Depends(auth.require_admin)])

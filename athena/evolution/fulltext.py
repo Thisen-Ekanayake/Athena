@@ -400,8 +400,10 @@ def _from_s2(paper: Tier2Paper, index: PaperIndex, s2: SemanticScholarClient | N
 
 
 def run_full_text(slug: str, reparse: bool = False, limit: int | None = None,
-                  fetcher: FullTextFetcher | None = None, s2: SemanticScholarClient | None = None) -> dict:
-    """Fetch, parse and store full text for a topic's Tier 2 papers that do not have it yet."""
+                  fetcher: FullTextFetcher | None = None, s2: SemanticScholarClient | None = None,
+                  on_progress=None) -> dict:
+    """Fetch, parse and store full text for a topic's Tier 2 papers that do not have it yet. ``on_progress(done,
+    total)`` is called before the first batch and after each."""
     from collections import Counter
 
     with SessionLocal() as session:
@@ -418,6 +420,8 @@ def run_full_text(slug: str, reparse: bool = False, limit: int | None = None,
     statuses: Counter = Counter()
     contexts = new_refs = 0
     stale: list[UUID] = []
+    if on_progress:
+        on_progress(0, len(papers))
     for start in range(0, len(papers), BATCH):
         for result in process_papers(papers[start:start + BATCH], index, fetcher, s2, reparse):
             stale += db.save_full_text(result)
@@ -425,6 +429,8 @@ def run_full_text(slug: str, reparse: bool = False, limit: int | None = None,
             contexts += len(result.contexts)
             new_refs += len(result.new_refs)
         logger.info(f"{slug}: {min(start + BATCH, len(papers))}/{len(papers)} done, {dict(statuses)}")
+        if on_progress:
+            on_progress(min(start + BATCH, len(papers)), len(papers))
     if stale:
         from athena.evolution.vectors import delete_points
         delete_points(stale)

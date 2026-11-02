@@ -72,6 +72,8 @@ def _gpu_lane(embed: bool, classify: bool, slug: str | None, asked: bool) -> dic
         with turns.priority(turns.ASKED if asked else turns.BACKLOG):
             summary = run_lane(embed=embed, classify=classify, slug=slug)
     except lane.Paused as exc:
+        from athena.evolution import progress
+        progress.stage(slug, "queued", note="Background model work is paused (Settings → Models and keys → Activity)")
         run_gpu_lane.apply_async(args=[embed, classify, slug, asked], countdown=lane.REQUEUE_SECONDS)
         return {"paused": str(exc)}
     except StepAside as exc:  # to the back of the queue, behind the work that waits
@@ -127,11 +129,19 @@ def refresh_build(slug: str, asked: bool = False) -> dict:
 
 @celery_app.task
 def refresh_full_text(slug: str) -> dict:
+    from athena.evolution import progress
     from athena.evolution.fulltext import run_full_text
+
+    def reading(done: int, total: int) -> None:
+        if done == 0:
+            progress.stage(slug, "reading", total, note="")
+        else:
+            progress.advance(slug, done - (progress.get(slug) or {}).get("done", 0))
     try:
-        return run_full_text(slug)
+        return run_full_text(slug, on_progress=reading)
     except Exception as exc:  # GROBID down: the lane still labels and embeds what is there
         logger.warning(f"Refresh {slug}: full text not processed: {exc}")
+        progress.stage(slug, "reading", note=f"The PDFs were not read: {exc}"[:400])
         return {"error": str(exc)[:300]}
 
 

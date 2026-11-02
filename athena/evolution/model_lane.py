@@ -32,7 +32,7 @@ from athena.core.config_store import get_setting
 from athena.core.models import EvoTopic
 from athena.database import evolution as db
 from athena.database.db import SessionLocal
-from athena.evolution import vectors
+from athena.evolution import progress, vectors
 from athena.evolution.classify import Classifier, auth_headers, chat_url, embed_model_name, embed_url, is_local
 from athena.evolution.gaps import build_themes, keep_names
 
@@ -250,6 +250,8 @@ def classify_pending(limit: int | None = None, scope: dict | None = None) -> dic
                 confirmed += sum(bool(o["attributed"]) for o in out)
                 rechecked += len(out)
                 logger.info(f"Rechecked {rechecked} strict links with thinking, {confirmed} confirmed")
+        slug = (scope or {}).get("slug")
+        progress.stage(slug, "labelling", db.count_pending_contexts(session, cited_ids) if slug else None)
         start = time.time()
         while limit is None or labelled < limit:
             _step_aside()
@@ -265,9 +267,11 @@ def classify_pending(limit: int | None = None, scope: dict | None = None) -> dic
                 strict += v.strict
             db.save_labels(session, out)
             labelled += len(out)
+            progress.advance(slug, len(out))
             logger.info(f"Labelled {labelled} citing sentences, {strict} strict "
                         f"({labelled / max(time.time() - start, 1e-6):.1f}/s)")
         papers = scope["papers"] if scope else None
+        progress.stage(slug, "gaps")
         while limit is None and (rows := db.pending_gap_candidates(session, 64, papers)):
             _step_aside()
             out = []
@@ -277,6 +281,7 @@ def classify_pending(limit: int | None = None, scope: dict | None = None) -> dic
                 gaps += label == "gap"
             db.save_gap_labels(session, out)
             candidates += len(out)
+            progress.advance(slug, len(out))
             logger.info(f"Labelled {candidates} gap candidates, {gaps} gaps")
     return {"strict_rechecked": rechecked, "strict_confirmed": confirmed, "contexts_labelled": labelled,
             "strict_links": strict, "gap_candidates_labelled": candidates, "gaps": gaps}
@@ -321,6 +326,7 @@ def label_themes(slug: str | None = None) -> int:
         pending = db.themes_to_label(session, topic_id)
         if not pending:
             return 0
+        progress.stage(slug, "naming", len(pending))
         with server:
             clf = Classifier(base_url=url, wait={})
             for theme, topic_name, sentences in pending:
@@ -329,6 +335,7 @@ def label_themes(slug: str | None = None) -> int:
                 if label:
                     db.save_theme_label(session, theme.id, label, clf.model)
                     done += 1
+                progress.advance(slug)
     logger.info(f"Labelled {done} gap themes")
     return done
 
@@ -369,16 +376,19 @@ def _run_scope(embed: bool, classify: bool, slug: str | None) -> dict:
             topic = db.get_topic(session, slug)
             if topic is None:
                 return {}
-            scope = db.topic_scope(session, topic)
+            scope = db.topic_scope(session, topic) | {"slug": slug}
     if classify:
         summary |= classify_pending(scope=scope)
     with SessionLocal() as session:
         summary["citing_gaps"] = db.sync_citing_gaps(session)
     if embed:
+        progress.stage(slug, "embedding")
         summary |= embed_pending(scope=scope)
+        progress.stage(slug, "themes")
         summary["themes"] = build_all_themes(slug)
         if classify:
             summary["theme_labels"] = label_themes(slug)
+    progress.stage(slug, "done")
     return summary
 
 

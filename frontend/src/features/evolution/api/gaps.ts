@@ -46,18 +46,36 @@ export interface GapTheme {
   loose_candidates: { paper: MiniPaper; score: number }[]
 }
 
+/** How far the map's open problems have got (athena/evolution/progress.py); null before anyone asked. */
+export interface GapsProgress {
+  stage: 'queued' | 'reading' | 'labelling' | 'gaps' | 'embedding' | 'themes' | 'naming' | 'done'
+  label: string
+  done: number
+  total: number | null
+  started: number
+  updated: number
+  eta_seconds: number | null
+  note: string | null // why the PDFs were not read, or that background work is paused
+}
+
 export interface TopicGaps {
   topic: EvolutionTopic
   latest_year: number | null
   themes: GapTheme[]
   loose_min_score: number
+  progress?: GapsProgress | null
+  waiting?: { reason: 'chat' | 'paused' | 'turn'; detail: string | null; since: number } | null
 }
+
+export const gapsInProgress = (data: TopicGaps | undefined) => !!data?.progress && data.progress.stage !== 'done'
 
 export const topicGapsQuery = (slug: string | undefined, scope: MapScope = ACCOUNT_SCOPE) => ({
   queryKey: [scope.key, 'gaps', slug],
   queryFn: async () => (await apiClient.get<TopicGaps>(`${scope.base(slug!)}/gaps`)).data,
   enabled: !!slug,
   staleTime: 5 * 60 * 1000,
+  // While the GPU works on them, look again every 15 s: the progress line moves and themes arrive at the end.
+  refetchInterval: (query: { state: { data?: TopicGaps } }) => (gapsInProgress(query.state.data) ? 15_000 : false),
 })
 
 export const useTopicGaps = (slug: string | undefined) => useQuery(topicGapsQuery(slug, useMapScope()))
