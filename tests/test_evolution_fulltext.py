@@ -165,6 +165,9 @@ class TestClassifier:
         assert v.attributed is False and not v.strict
         assert [b["chat_template_kwargs"]["enable_thinking"] for b in seen] == [False, False, True]
         assert seen[2]["max_tokens"] > 64 and clf.model_tag == "m+think"
+        # The thinking cap goes with the request: presets without one ran thinking into max_tokens, no answer.
+        assert seen[2]["reasoning_budget_tokens"] < seen[2]["max_tokens"]
+        assert "reasoning_budget_tokens" not in seen[0] and "reasoning_budget_tokens" not in seen[1]
 
     def test_attribution_is_asked_only_for_limitation_labels(self):
         answers = iter([{"label": "criticises"}, {"attributed": True}, {"attributed": True}, {"label": "background"}])
