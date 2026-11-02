@@ -33,6 +33,7 @@ USED_KEY = "athena:lane:used"     # hash "model|priority" -> when work last pass
 TURN = 300.0     # a model keeps the GPU this long while work of the same priority waits for another
 IDLE = 30.0      # unused this long, the loaded model gives way at once (covers the gaps between a worker's calls)
 AGING = 1800.0   # work that waited this long gets the next turn, whatever its priority
+DRAIN_MAX = 300.0  # a swap waits for a call in flight at most this old: older, its process is taken for dead
 
 BACKLOG, ROUTINE, ASKED = 0, 1, 2
 NAMES = {BACKLOG: "backlog", ROUTINE: "routine", ASKED: "asked for"}
@@ -159,7 +160,10 @@ def check(model: str, level: int) -> str | None:
             return None  # no Redis: no turns, as before
     if target != model:
         return f"{target} has the GPU"
-    busy = sorted({c["model"] for c in live if c.get("server") == "gpu" and c.get("model") not in (None, model)})
+    # A process that died mid-call leaves its call listed (activity drops it once it is sure); a swap waits at
+    # most DRAIN_MAX for one, not the 15 minutes it took the list to forget one on 2026-11-02.
+    busy = sorted({c["model"] for c in live if c.get("server") == "gpu" and c.get("model") not in (None, model)
+                   and now - float(c.get("started") or now) < DRAIN_MAX})
     if busy:
         return f"{busy[0]} is finishing a call"
     return None

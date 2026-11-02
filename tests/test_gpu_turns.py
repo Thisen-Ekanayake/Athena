@@ -164,3 +164,18 @@ def test_a_refresh_someone_started_carries_it_through_the_chain():
     steps = {t.task.rsplit(".", 1)[1]: t.args for t in refresh_chain("vln", asked=True).tasks}
     assert tuple(steps["refresh_build"]) == ("vln", True) == tuple(steps["refresh_gpu_lane"])
     assert tuple(refresh_chain("vln").tasks[0].args) == ("vln", False)
+
+
+def test_a_call_left_by_a_dead_process_holds_no_swap(monkeypatch):
+    """A worker killed mid-call left its call listed for 15 minutes, and the map waited for it (2026-11-02)."""
+    import json as _json
+    lane.yield_to_chat(who="summary", model=NINE_B)
+    ghost = {"id": "g", "feature": "map_build", "model": NINE_B, "server": "gpu", "started": time.time() - 10,
+             "pid": 2 ** 22 + 7, "host": activity.socket.gethostname()}
+    lane._redis().hset(activity.LIVE, "g", _json.dumps(ghost))
+    with turns.priority(turns.ASKED):
+        assert turns.check(EMBED, turns.ASKED) is None  # its process is gone: no wait
+    assert activity.live() == []
+    old = ghost | {"id": "o", "host": "another-machine", "started": time.time() - turns.DRAIN_MAX - 1}
+    lane._redis().hset(activity.LIVE, "o", _json.dumps(old))
+    assert turns.check(NINE_B, turns.ASKED) is None  # elsewhere and too old to be waited for
