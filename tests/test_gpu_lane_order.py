@@ -41,9 +41,30 @@ def test_the_backlog_goes_shortest_first_then_the_rest(scopes):
     assert scopes == ["depth", "vln", None]
 
 
+def message(task: str, *args) -> str:
+    """A queued Celery message as the Redis broker stores it."""
+    import base64
+    import json
+    body = base64.b64encode(json.dumps([list(args), {}, {}]).encode()).decode()
+    return json.dumps({"body": body, "headers": {"task": f"athena.evolution.tasks.{task}"},
+                       "properties": {"body_encoding": "base64"}})
+
+
+def test_backlog_runs_never_step_aside_for_each_other(fake_redis):
+    """Two queued backlog runs would each see the other waiting and swap places forever."""
+    for queued in (message("run_gpu_lane", True, True, None, False), message("refresh_gpu_lane"),
+                   message("run_gpu_lane", True, True)):
+        fake_redis.rpush(model_lane.EVOLUTION_QUEUE, queued)
+    with turns.priority(turns.BACKLOG):
+        model_lane._step_aside()
+        fake_redis.rpush(model_lane.EVOLUTION_QUEUE, message("refresh_gpu_lane", "vln", False))  # one map's lane
+        with pytest.raises(model_lane.StepAside, match="^1 task"):
+            model_lane._step_aside()
+
+
 def test_backlog_steps_aside_for_queued_work_but_asked_work_never_does(fake_redis):
     model_lane._step_aside()  # nothing queued
-    fake_redis.rpush(model_lane.EVOLUTION_QUEUE, "a full-text request")
+    fake_redis.rpush(model_lane.EVOLUTION_QUEUE, message("build_search_topic", "vln"))
     with turns.priority(turns.BACKLOG):
         with pytest.raises(model_lane.StepAside):
             model_lane._step_aside()

@@ -352,19 +352,41 @@ EVOLUTION_QUEUE = "evolution"  # the Celery queue (a Redis list) the single evol
 
 
 def _step_aside() -> None:
-    """Between batches of backlog work: raise ``StepAside`` when a task waits on the evolution queue (a map someone
-    is building, a full-text request, a proposal), so it does not wait hours behind maps nobody asked about. Work
-    someone asked for never steps aside."""
+    """Between batches of backlog work: raise ``StepAside`` when other work waits on the evolution queue (a map
+    someone is building, a full-text request, a proposal), so it does not wait hours behind maps nobody asked about.
+    Work someone asked for never steps aside, and backlog runs never step aside for each other (each would see the
+    other waiting, and they would swap places forever)."""
     from athena.model_server import turns
     if turns.priority_of("map_build") != turns.BACKLOG:
         return
     try:
         from athena.core.redis_client import get_redis
-        queued = get_redis().llen(EVOLUTION_QUEUE)
+        waiting = [m for m in get_redis().lrange(EVOLUTION_QUEUE, 0, -1) if not _is_backlog(m)]
     except Exception:
         return
-    if queued:
-        raise StepAside(f"{queued} task(s) wait for the evolution worker")
+    if waiting:
+        raise StepAside(f"{len(waiting)} task(s) wait for the evolution worker")
+
+
+def _is_backlog(message) -> bool:
+    """Whether a queued Celery message is a backlog lane run: ``run_gpu_lane`` or ``refresh_gpu_lane`` for no map
+    in particular. Anything unreadable counts as other work."""
+    import base64
+    import json
+    try:
+        m = json.loads(message)
+        task = m["headers"]["task"].rsplit(".", 1)[-1]
+        body = m["body"]
+        if m.get("properties", {}).get("body_encoding") == "base64":
+            body = base64.b64decode(body)
+        args, kwargs = json.loads(body)[:2]
+    except Exception:
+        return False
+    if task == "run_gpu_lane":
+        return (args[2] if len(args) > 2 else kwargs.get("slug")) is None
+    if task == "refresh_gpu_lane":
+        return (args[0] if args else kwargs.get("slug")) is None
+    return False
 
 
 def _run_scope(embed: bool, classify: bool, slug: str | None) -> dict:
