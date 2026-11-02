@@ -44,30 +44,20 @@ def run_gpu_lane(embed: bool = True, classify: bool = True, slug: str | None = N
     return _gpu_lane(embed, classify, slug, asked)
 
 
-BACKLOG_QUEUED = "athena:evo:backlog_queued"  # one backlog lane run in the queue at a time
-
-
 def queue_backlog() -> bool:
-    """Queue a backlog lane run unless one is queued already."""
-    from athena.core.redis_client import get_redis
-    try:
-        if not get_redis().set(BACKLOG_QUEUED, "1", nx=True, ex=24 * 3600):
-            return False
-    except Exception:
-        pass
+    """Queue a backlog lane run unless one is already in the queue (it will find this map's leftovers too)."""
+    from athena.evolution.model_lane import backlog_queued
+    if backlog_queued():
+        return False
     run_gpu_lane.apply_async(args=[True, True, None, False])
     return True
 
 
 def _gpu_lane(embed: bool, classify: bool, slug: str | None, asked: bool) -> dict:
-    from athena.evolution.model_lane import StepAside, run_lane
+    from athena.evolution.model_lane import StepAside, backlog_queued, run_lane
     from athena.model_server import lane, turns
-    if slug is None:
-        from athena.core.redis_client import get_redis
-        try:
-            get_redis().delete(BACKLOG_QUEUED)  # this is the queued one: a later map may queue the next
-        except Exception:
-            pass
+    if slug is None and backlog_queued():
+        return {"skipped": "another backlog run is queued"}  # it does the same work, later
     try:
         with turns.priority(turns.ASKED if asked else turns.BACKLOG):
             summary = run_lane(embed=embed, classify=classify, slug=slug)

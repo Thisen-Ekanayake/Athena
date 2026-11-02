@@ -368,9 +368,19 @@ def _step_aside() -> None:
         raise StepAside(f"{len(waiting)} task(s) wait for the evolution worker")
 
 
+def backlog_queued() -> bool:
+    """Whether a backlog lane run waits on the evolution queue."""
+    try:
+        from athena.core.redis_client import get_redis
+        return any(_is_backlog(m) for m in get_redis().lrange(EVOLUTION_QUEUE, 0, -1))
+    except Exception:
+        return False
+
+
 def _is_backlog(message) -> bool:
     """Whether a queued Celery message is a backlog lane run: ``run_gpu_lane`` or ``refresh_gpu_lane`` for no map
-    in particular. Anything unreadable counts as other work."""
+    in particular (an old chain's ``refresh_gpu_lane`` with no map is one too). Anything unreadable counts as other
+    work."""
     import base64
     import json
     try:

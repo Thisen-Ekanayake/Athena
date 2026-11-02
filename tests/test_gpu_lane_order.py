@@ -94,14 +94,19 @@ def test_a_scoped_run_labels_only_that_maps_sentences(monkeypatch, fake_redis):
 
 
 def test_an_asked_map_queues_the_backlog_once(monkeypatch, fake_redis):
-    queued = []
     monkeypatch.setattr(model_lane, "run_lane", lambda **kw: {"ran": kw["slug"]})
-    monkeypatch.setattr(tasks.run_gpu_lane, "apply_async", lambda **kw: queued.append(kw))
+    monkeypatch.setattr(tasks.run_gpu_lane, "apply_async",
+                        lambda **kw: fake_redis.rpush(model_lane.EVOLUTION_QUEUE, message("run_gpu_lane", *kw["args"])))
     assert tasks.run_gpu_lane(True, True, "vln", True) == {"ran": "vln"}
     tasks.run_gpu_lane(True, True, "depth", True)
-    assert queued == [{"args": [True, True, None, False]}]  # one backlog run in the queue
-    tasks.run_gpu_lane(True, True, None, False)  # it starts: the next map may queue another
-    assert tasks.queue_backlog() and len(queued) == 2
+    assert fake_redis.llen(model_lane.EVOLUTION_QUEUE) == 1  # one backlog run in the queue
+    assert not tasks.queue_backlog()
+
+
+def test_a_backlog_run_with_another_queued_behind_it_leaves_the_work_to_that_one(monkeypatch, fake_redis):
+    monkeypatch.setattr(model_lane, "run_lane", lambda **kw: pytest.fail("did the work twice"))
+    fake_redis.rpush(model_lane.EVOLUTION_QUEUE, message("refresh_gpu_lane"))  # an old chain's step
+    assert tasks.run_gpu_lane(True, True, None, False) == {"skipped": "another backlog run is queued"}
 
 
 def test_a_backlog_run_that_steps_aside_goes_to_the_back(monkeypatch, fake_redis):
@@ -114,3 +119,6 @@ def test_a_backlog_run_that_steps_aside_goes_to_the_back(monkeypatch, fake_redis
     assert "stepped_aside" in tasks.run_gpu_lane(True, True, None, False)
     assert "stepped_aside" in tasks.refresh_gpu_lane("vln")  # a scheduled refresh's own map too
     assert queued == [{"args": [True, True, None, False]}, {"args": [True, True, "vln", False]}]
+    fake_redis.rpush(model_lane.EVOLUTION_QUEUE, message("run_gpu_lane", True, True, None, False))
+    assert "stepped_aside" in tasks.run_gpu_lane(True, True, "vln", False)
+    assert len(queued) == 3 and not tasks.queue_backlog()  # the queued backlog run will do it
