@@ -24,7 +24,7 @@ def register(mcp: MCPServer) -> None:
         """The literature reviews this account has had Athena write: a list, or one review in full (`review_id`),
         as Markdown or as BibTeX of its references."""
         if not review_id:
-            reviews = await common.get(ctx, "/reviews")
+            reviews = (await common.get(ctx, "/reviews"))["reviews"]
             if not reviews:
                 return "No reviews yet; literature_review has Athena write one."
             return "\n".join(f"- {r['title']} (id {r['id']}; {r['status']}; {r.get('cited', 0)} sources; "

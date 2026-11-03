@@ -220,7 +220,7 @@ async def test_a_long_review_hands_back_a_job_to_wait_for(fake, monkeypatch):
 
 async def test_a_second_review_waits_for_the_one_being_written(fake):
     fake.on("POST", "/reviews", ApiError(409, "A review of yours is still being written; wait for it to finish"))
-    fake.on("GET", "/reviews", [[review("running")]])
+    fake.on("GET", "/reviews", {"reviews": [review("running")]})
     fake.on("GET", "/reviews/r1", review("done", markdown="Earlier review."))
     failed, text = await call("literature_review", {"query": "lora"})
     assert not failed and "finished that one first" in text and "Earlier review." in text
@@ -288,9 +288,16 @@ async def test_an_existing_map_is_returned_not_built_again(fake):
 async def test_a_map_paper_is_named_by_its_digest_id(fake):
     fake.on("GET", "/evolution/search", {"found": False})
     fake.on("GET", "/evolution/topics/peft/digest", {"text": "", "papers": {"A3": {"paper_id": "uuid-3"}}})
-    fake.on("GET", "/evolution/topics/peft/papers/uuid-3", {"title": "LoRA", "year": 2021, "cites": []})
+    fake.on("GET", "/evolution/topics/peft/papers/uuid-3", {
+        "title": "LoRA: Low-Rank Adaptation", "named_method": "LoRA", "year": 2021, "is_milestone": True,
+        "builds_on": [{"title": "Adapters for NLP", "named_method": "Adapters", "year": 2019}],
+        "addressed_by": [{"paper": {"title": "QLoRA", "year": 2023},
+                          "evidence": [{"sentence": "LoRA still needs 16-bit weights."}]}],
+        "gaps": [{"sentence": "Rank is fixed per layer.", "theme": "rank choice"}]})
     failed, text = await call("map_paper", {"map": "peft", "paper": "A3"})
-    assert not failed and "title: LoRA" in text
+    assert not failed and text.startswith("# LoRA: Low-Rank Adaptation (2021)") and "milestone" in text
+    assert "- Adapters for NLP (2019)" in text and "; ;" not in text
+    assert "- QLoRA (2023): “LoRA still needs 16-bit weights.”" in text and "[rank choice]" in text
 
 
 async def test_a_chat_turn_comes_back_with_sources_and_artifacts(fake):
@@ -374,3 +381,23 @@ async def test_a_tool_sees_what_its_tokens_account_sees(monkeypatch):
         assert failed and "Athena refused (401)" in text and "Settings → Agents" in text
     finally:
         app.dependency_overrides.clear()
+
+
+async def test_my_reviews_lists_them(fake):
+    fake.on("GET", "/reviews", {"reviews": [review("done", created_at="2026-11-02T10:00:00Z")]})
+    failed, text = await call("my_reviews", {})
+    assert not failed and text == "- PEFT: a literature review (id r1; done; 12 sources; 2026-11-02)"
+
+
+def test_compact_keeps_zero_and_drops_empty():
+    assert common.compact({"errors": 0, "done": False, "none": None, "list": []}) == "errors: 0\ndone: False"
+
+
+def test_a_sync_reads_as_a_line_and_the_sources_that_did_something():
+    from athena.mcp.admin import sync_text
+    text = sync_text({"state": "done", "trigger": "scheduled", "total": 2, "completed": 2, "new_items": 3,
+                      "errors": 0, "started_at": 0, "finished_at": 60,
+                      "sources": [{"name": "ArXiv AI", "state": "done", "new": 0},
+                                  {"name": "LessWrong", "state": "done", "new": 3}]})
+    assert text == ("Sync (scheduled): done, 2/2 sources, 3 new items, 0 errors; started 1970-01-01 00:00 UTC, "
+                    "finished 1970-01-01 00:01 UTC\n- LessWrong: done, 3 new")

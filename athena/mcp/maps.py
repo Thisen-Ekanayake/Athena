@@ -41,9 +41,41 @@ def reading_text(name: str, data: dict) -> str:
     steps = ([data["survey"]] if data.get("survey") else []) + (data.get("steps") or [])
     lines = [f"Reading path for {name}, in order:"]
     for i, s in enumerate(steps, 1):
-        label = s.get("named_method") or ""
-        lines.append(f"{i}. {label + ': ' if label else ''}{s.get('title')} ({s.get('year') or 'n.d.'})"
+        lines.append(f"{i}. {_name(s)}"
                      + (" [read]" if s.get("read") else "") + (f" — {s['why']}" if s.get("why") else ""))
+    return "\n".join(lines)
+
+
+def _name(n: dict) -> str:
+    label, title = n.get("named_method") or "", n.get("title") or ""
+    named = label and not title.lower().startswith(label.lower())
+    return f"{label + ': ' if named else ''}{common.clip(title, 90)} ({n.get('year') or 'n.d.'})"
+
+
+def paper_text(p: dict, page: str) -> str:
+    """A map paper: what it is, its place in the lineage, the citing sentences that link it, its limitations."""
+    flags = [x for x, on in (("milestone", p.get("is_milestone")), ("on the main path", p.get("on_main_path"))) if on]
+    about = [common.authors(p.get("authors")), p.get("venue") or "", f"{p.get('cited_by_count') or 0} citations",
+             *flags]
+    lines = [f"# {_name(p)}", "; ".join(x for x in about if x),
+             " ".join(x for x in (p.get("url"), p.get("doi") and f"doi:{p['doi']}") if x), f"In Athena: {page}"]
+    if p.get("abstract"):
+        lines += ["", common.clip(p["abstract"], 1200)]
+    for key, title in (("builds_on", "Builds on"), ("built_upon_by", "Built upon by")):
+        if p.get(key):
+            lines += ["", f"{title}:"] + [f"- {_name(n)}" for n in p[key][:6]]
+    for key, title in (("addresses", "Takes on limitations of"), ("addressed_by", "Its limitations taken on by")):
+        if p.get(key):
+            lines += ["", f"{title}:"]
+            for x in p[key][:6]:
+                said = next((e.get("sentence") for e in x.get("evidence") or [] if e.get("sentence")), None)
+                lines.append(f"- {_name(x.get('paper') or {})}" + (f": “{common.clip(said, 220)}”" if said else ""))
+    if p.get("gaps"):
+        lines += ["", "Limitations stated:"]
+        for g in p["gaps"][:8]:
+            by = g.get("stated_by")
+            lines.append(f"- “{common.clip(g.get('sentence'), 220)}”" + (f" [{g['theme']}]" if g.get("theme") else "")
+                         + (f" (said by {_name(by)})" if by else ""))
     return "\n".join(lines)
 
 
@@ -118,4 +150,4 @@ def register(mcp: MCPServer) -> None:
         topic = await lookup.find_map(ctx, map)
         pid = await paper_id(ctx, topic["slug"], paper)
         data = await common.get(ctx, f"/evolution/topics/{topic['slug']}/papers/{pid}")
-        return common.compact(data, width=400, items=15)
+        return paper_text(data, common.link(f"/evolution/{topic['slug']}"))

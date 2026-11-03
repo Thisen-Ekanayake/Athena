@@ -153,7 +153,7 @@ def register(mcp: MCPServer) -> None:
         except ToolError as exc:
             if "still being written" not in str(exc):
                 raise
-            mine = await common.get(ctx, "/reviews")
+            mine = (await common.get(ctx, "/reviews"))["reviews"]
             busy = next((r for r in mine if r.get("status") in ("queued", "running")), None)
             if busy is None:
                 raise

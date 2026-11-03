@@ -4,6 +4,7 @@ model work, and usage. For an agent working on Athena itself as much as for one 
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Literal
 
 from mcp.server.mcpserver import Context, MCPServer
@@ -22,6 +23,30 @@ async def _maybe(ctx: Context, path: str, **params):
         return await common.get(ctx, path, **params)
     except ToolError as exc:
         return {"unavailable": str(exc)}
+
+
+def _when(epoch) -> str:
+    try:
+        return datetime.fromtimestamp(float(epoch), timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    except (TypeError, ValueError):
+        return "?"
+
+
+def sync_text(s: dict) -> str:
+    if "unavailable" in s:
+        return f"Sync: {s['unavailable']}"
+    if not s or not s.get("state"):
+        return "Sync: none has run yet."
+    head = (f"Sync ({s.get('trigger') or 'manual'}): {s['state']}, "
+            f"{s.get('completed', 0)}/{s.get('total', 0)} sources, {s.get('new_items', 0)} new items, "
+            f"{s.get('errors', 0)} errors; started {_when(s.get('started_at'))}"
+            + (f", finished {_when(s['finished_at'])}" if s.get("finished_at") else "")
+            + (" (waiting for the worker)" if s.get("waiting_for_worker") else ""))
+    busy = [x for x in s.get("sources") or []
+            if x.get("new") or x.get("state") not in ("done", None) or x.get("error")]
+    lines = [head] + [f"- {x.get('name')}: {x.get('state')}" + (f", {x['new']} new" if x.get("new") else "")
+                      + (f", error: {common.clip(x['error'], 160)}" if x.get("error") else "") for x in busy]
+    return "\n".join(lines)
 
 
 def activity_text(a: dict) -> str:
@@ -66,7 +91,7 @@ def register(mcp: MCPServer) -> None:
         activity = await _maybe(ctx, "/models/activity")
         scoring = await _maybe(ctx, "/health/scoring")
         fetch = await _maybe(ctx, "/health/fetch")
-        parts = ["Sync:\n" + common.compact(sync, width=160, items=12),
+        parts = [sync_text(sync),
                  activity_text(activity),
                  "Scoring health:\n" + common.compact(scoring, width=160, items=12),
                  "Fetch health:\n" + common.compact(fetch, width=160, items=20)]

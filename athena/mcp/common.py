@@ -133,7 +133,7 @@ def still_running(exc: StillRunning, what: str) -> str:
 
 
 def clip(text: Any, limit: int) -> str:
-    text = " ".join(str(text or "").split())
+    text = " ".join(("" if text is None else str(text)).split())
     return text if len(text) <= limit else text[:limit - 1].rstrip() + "…"
 
 
