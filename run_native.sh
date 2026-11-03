@@ -84,6 +84,16 @@ esac
 # --- preflight --------------------------------------------------------------
 need() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not found on PATH." >&2; exit 1; }; }
 need docker; need python3; need uvicorn; need celery; need npm; need curl
+# The MCP SDK (athena/mcp/) needs Python 3.11; an older python3 fails only once the API imports it.
+if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
+  echo "ERROR: python3 is $(python3 -c 'import platform; print(platform.python_version())'); Athena needs 3.11 or later." >&2
+  echo "       Make a 3.11 environment with requirements.txt and requirements-dev.txt (e.g. pyenv local <env>)." >&2
+  exit 1
+fi
+if ! python3 -c 'import mcp' 2>/dev/null; then
+  echo "ERROR: this python3 lacks Athena's packages: pip install -r requirements.txt -r requirements-dev.txt" >&2
+  exit 1
+fi
 
 if ! docker info >/dev/null 2>&1; then
   echo "ERROR: the Docker daemon is not running (needed for infra)." >&2
