@@ -12,7 +12,9 @@ anyio==4.15.1
     # via
     #   httpx
     #   httpx2
+    #   mcp
     #   openai
+    #   sse-starlette
     #   starlette
 argon2-cffi==25.1.0
     # via -r requirements.in
@@ -20,6 +22,10 @@ argon2-cffi-bindings==26.1.0
     # via argon2-cffi
 async-timeout==5.0.1
     # via redis
+attrs==26.1.0
+    # via
+    #   jsonschema
+    #   referencing
 beautifulsoup4==4.15.0
     # via
     #   -r requirements.in
@@ -59,7 +65,9 @@ click-repl==0.4.1
 cloudpickle==3.1.2
     # via joblib
 cryptography==50.0.2
-    # via pdfminer-six
+    # via
+    #   pdfminer-six
+    #   pyjwt
 fastapi==0.162.0
     # via -r requirements.in
 feedparser==6.0.14
@@ -92,7 +100,9 @@ httpx==0.28.1
     #   -r requirements.in
     #   qdrant-client
 httpx2==2.16.0
-    # via openai
+    # via
+    #   mcp
+    #   openai
 hyperframe==6.1.0
     # via h2
 idna==3.20
@@ -110,6 +120,10 @@ joblib==1.6.0
     # via
     #   pynndescent
     #   scikit-learn
+jsonschema==4.26.0
+    # via mcp
+jsonschema-specifications==2025.9.1
+    # via jsonschema
 kombu==5.6.2
     # via celery
 llvmlite==0.50.0
@@ -129,6 +143,10 @@ mako==1.4.3
     # via alembic
 markupsafe==3.0.4
     # via mako
+mcp==2.3.0
+    # via -r requirements.in
+mcp-types==2.3.0
+    # via mcp
 narwhals==2.27.1
     # via scikit-learn
 newspaper4k==0.9.6
@@ -148,7 +166,9 @@ numpy==2.4.6
 openai==3.37.0
     # via -r requirements.in
 opentelemetry-api==1.45.1
-    # via fastapi
+    # via
+    #   fastapi
+    #   mcp
 packaging==26.3
     # via kombu
 pdfminer-six==20260107
@@ -175,12 +195,16 @@ pydantic==2.14.1
     # via
     #   -r requirements.in
     #   fastapi
+    #   mcp
+    #   mcp-types
     #   openai
     #   qdrant-client
 pydantic-core==2.50.1
     # via pydantic
 pyee==13.0.1
     # via playwright
+pyjwt==2.15.1
+    # via mcp
 pynndescent==0.6.0
     # via umap-learn
 pypdfium2==5.14.0
@@ -195,7 +219,9 @@ python-dotenv==1.2.4
 python-igraph==1.0.0
     # via -r requirements.in
 python-multipart==0.0.32
-    # via -r requirements.in
+    # via
+    #   -r requirements.in
+    #   mcp
 pyyaml==6.0.3
     # via newspaper4k
 qdrant-client==1.20.0
@@ -204,6 +230,10 @@ redis==6.4.0
     # via
     #   -r requirements.in
     #   kombu
+referencing==0.37.0
+    # via
+    #   jsonschema
+    #   jsonschema-specifications
 regex==2026.9.29
     # via tiktoken
 requests==2.34.2
@@ -215,6 +245,10 @@ requests==2.34.2
     #   tldextract
 requests-file==3.0.1
     # via tldextract
+rpds-py==2026.9.1
+    # via
+    #   jsonschema
+    #   referencing
 scikit-learn==1.9.1
     # via
     #   -r requirements.in
@@ -235,8 +269,13 @@ sqlalchemy==2.1.6
     # via
     #   -r requirements.in
     #   alembic
+sse-starlette==3.6.0
+    # via mcp
 starlette==1.9.0
-    # via fastapi
+    # via
+    #   fastapi
+    #   mcp
+    #   sse-starlette
 tenacity==9.2.1
     # via -r requirements.in
 texttable==1.7.2
@@ -262,18 +301,22 @@ typing-extensions==4.16.0
     #   fastapi
     #   grpcio
     #   httpx2
+    #   mcp
+    #   mcp-types
     #   newspaper4k
     #   openai
     #   opentelemetry-api
     #   pydantic
     #   pydantic-core
     #   pyee
+    #   referencing
     #   sqlalchemy
     #   starlette
     #   typing-inspection
 typing-inspection==0.4.4
     # via
     #   fastapi
+    #   mcp
     #   pydantic
 tzdata==2026.5
     # via kombu
@@ -286,7 +329,9 @@ urllib3==2.8.0
     #   qdrant-client
     #   requests
 uvicorn==0.54.0
-    # via -r requirements.in
+    # via
+    #   -r requirements.in
+    #   mcp
 vine==5.1.0
     # via
     #   amqp

@@ -6,13 +6,14 @@
 #   uv pip compile requirements-dev.in -o requirements-dev.txt --python-version 3.11 -c requirements.txt
 #
 # (pip-compile from pip-tools takes the same files.) Add --upgrade-package NAME to move one package on.
-# The pins also install on Python 3.10 (which adds a few backports, such as tomli and exceptiongroup).
+# Python 3.11 or later: the MCP SDK (mcp) needs it.
 
 # Web and API
 fastapi
 python-multipart  # file uploads (projects, chats)
 uvicorn
 httpx
+mcp  # the MCP server at /mcp (athena/mcp/); needs Python 3.11
 requests
 pydantic
 argon2-cffi

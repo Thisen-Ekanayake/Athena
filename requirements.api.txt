@@ -21,7 +21,9 @@ anyio==4.15.1
     #   -c requirements.txt
     #   httpx
     #   httpx2
+    #   mcp
     #   openai
+    #   sse-starlette
     #   starlette
 argon2-cffi==25.1.0
     # via
@@ -35,6 +37,11 @@ async-timeout==5.0.1
     # via
     #   -c requirements.txt
     #   redis
+attrs==26.1.0
+    # via
+    #   -c requirements.txt
+    #   jsonschema
+    #   referencing
 beautifulsoup4==4.15.0
     # via
     #   -c requirements.txt
@@ -87,6 +94,7 @@ cryptography==50.0.2
     # via
     #   -c requirements.txt
     #   pdfminer-six
+    #   pyjwt
 fastapi==0.162.0
     # via
     #   -c requirements.txt
@@ -133,6 +141,7 @@ httpx==0.28.1
 httpx2==2.16.0
     # via
     #   -c requirements.txt
+    #   mcp
     #   openai
 hyperframe==6.1.0
     # via
@@ -149,6 +158,14 @@ jiter==0.18.0
     # via
     #   -c requirements.txt
     #   openai
+jsonschema==4.26.0
+    # via
+    #   -c requirements.txt
+    #   mcp
+jsonschema-specifications==2025.9.1
+    # via
+    #   -c requirements.txt
+    #   jsonschema
 kombu==5.6.2
     # via
     #   -c requirements.txt
@@ -169,6 +186,14 @@ markupsafe==3.0.4
     # via
     #   -c requirements.txt
     #   mako
+mcp==2.3.0
+    # via
+    #   -c requirements.txt
+    #   -r requirements.api.in
+mcp-types==2.3.0
+    # via
+    #   -c requirements.txt
+    #   mcp
 numpy==2.4.6
     # via
     #   -c requirements.txt
@@ -182,6 +207,7 @@ opentelemetry-api==1.45.1
     # via
     #   -c requirements.txt
     #   fastapi
+    #   mcp
 packaging==26.3
     # via
     #   -c requirements.txt
@@ -223,12 +249,18 @@ pydantic==2.14.1
     #   -c requirements.txt
     #   -r requirements.api.in
     #   fastapi
+    #   mcp
+    #   mcp-types
     #   openai
     #   qdrant-client
 pydantic-core==2.50.1
     # via
     #   -c requirements.txt
     #   pydantic
+pyjwt==2.15.1
+    # via
+    #   -c requirements.txt
+    #   mcp
 pypdfium2==5.14.0
     # via
     #   -c requirements.txt
@@ -245,6 +277,7 @@ python-multipart==0.0.32
     # via
     #   -c requirements.txt
     #   -r requirements.api.in
+    #   mcp
 qdrant-client==1.20.0
     # via
     #   -c requirements.txt
@@ -254,6 +287,11 @@ redis==6.4.0
     #   -c requirements.txt
     #   -r requirements.api.in
     #   kombu
+referencing==0.37.0
+    # via
+    #   -c requirements.txt
+    #   jsonschema
+    #   jsonschema-specifications
 regex==2026.9.29
     # via
     #   -c requirements.txt
@@ -262,6 +300,11 @@ requests==2.34.2
     # via
     #   -c requirements.txt
     #   tiktoken
+rpds-py==2026.9.1
+    # via
+    #   -c requirements.txt
+    #   jsonschema
+    #   referencing
 six==1.17.0
     # via
     #   -c requirements.txt
@@ -279,10 +322,16 @@ sqlalchemy==2.1.6
     #   -c requirements.txt
     #   -r requirements.api.in
     #   alembic
+sse-starlette==3.6.0
+    # via
+    #   -c requirements.txt
+    #   mcp
 starlette==1.9.0
     # via
     #   -c requirements.txt
     #   fastapi
+    #   mcp
+    #   sse-starlette
 tenacity==9.2.1
     # via
     #   -c requirements.txt
@@ -306,10 +355,13 @@ typing-extensions==4.16.0
     #   fastapi
     #   grpcio
     #   httpx2
+    #   mcp
+    #   mcp-types
     #   openai
     #   opentelemetry-api
     #   pydantic
     #   pydantic-core
+    #   referencing
     #   sqlalchemy
     #   starlette
     #   typing-inspection
@@ -317,6 +369,7 @@ typing-inspection==0.4.4
     # via
     #   -c requirements.txt
     #   fastapi
+    #   mcp
     #   pydantic
 tzdata==2026.5
     # via
@@ -335,6 +388,7 @@ uvicorn==0.54.0
     # via
     #   -c requirements.txt
     #   -r requirements.api.in
+    #   mcp
 vine==5.1.0
     # via
     #   -c requirements.txt

@@ -4,6 +4,7 @@ fastapi
 python-multipart  # file uploads (projects, chats)
 uvicorn
 httpx
+mcp  # the MCP server at /mcp (athena/mcp/); needs Python 3.11
 pydantic
 argon2-cffi
 sqlalchemy
