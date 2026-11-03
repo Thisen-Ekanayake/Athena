@@ -136,3 +136,22 @@ def test_a_built_map_becomes_a_graph(session, monkeypatch):
 
     topic.built_at = None
     assert d.digest(session, topic) is None
+
+
+def test_the_digest_route_gives_the_text_and_its_ids(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from athena.api.deps import get_db
+    from athena.api.main import app
+    from athena.api.routers.evolution import graph
+    monkeypatch.setattr(graph, "_built_topic_or_409", lambda session, slug: object())
+    monkeypatch.setattr(graph.digest, "digest", lambda session, topic: data())
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        r = TestClient(app).get("/api/v1/evolution/topics/peft/digest", params={"level": "minimal"})
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["level"] == "minimal" and body["text"] == d.render(data(), "A", "minimal")
+    assert body["papers"]["A4"]["paper_id"] == "p4"

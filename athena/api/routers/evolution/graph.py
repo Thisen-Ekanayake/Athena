@@ -1,5 +1,6 @@
 """
-A map's graph, timeline, links to other maps, rising papers, one paper's detail and milestone overrides.
+A map's graph, its text digest, timeline, links to other maps, rising papers, one paper's detail and milestone
+overrides.
 """
 from typing import Literal
 from uuid import UUID
@@ -14,6 +15,7 @@ from athena.api.cache import cache_get, cache_invalidate, cache_set
 from athena.api.config import settings
 from athena.api.deps import get_db, get_redis
 from athena.database import evolution as db
+from athena.evolution import digest
 from athena.api.routers.evolution._common import _built_topic_or_409, _cache_key, _topic_or_404
 
 router = APIRouter()
@@ -22,6 +24,17 @@ router = APIRouter()
 class MilestoneOverrideRequest(BaseModel):
     action: Literal["pin", "unpin", "reset"]
     note: str | None = Field(None, max_length=500)
+
+
+@router.get("/topics/{slug}/digest")
+def topic_digest(slug: str, level: Literal["full", "compact", "minimal"] = "compact",
+                 session: Session = Depends(get_db)):
+    """The map as text (athena.evolution.digest): papers as ids like A3, the main path, typed links, eras and open
+    problems. Chats give it to their model; the MCP server gives it to agents. ``papers`` maps each id to its paper."""
+    data = digest.digest(session, _built_topic_or_409(session, slug))
+    if data is None:
+        raise HTTPException(status_code=409, detail="The map is not built yet")
+    return {"level": level, "text": digest.render(data, "A", level), "papers": digest.refs(data, "A")}
 
 
 @router.get("/topics/{slug}/graph")
