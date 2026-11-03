@@ -170,14 +170,16 @@ def register(mcp: MCPServer) -> None:
         those parts of the papers."""
         topic = await lookup.find_map(ctx, map)
         sources, parts, error = [], [], None
-        await common.progress(ctx, 0, None, f"Searching the papers of {topic['name']}")
+        report = common.Reporter(ctx)
+        await report(f"Searching the papers of {topic['name']}")
         try:
             async for event in common.api.stream(common.token(ctx), "POST",
                                                  f"/api/v1/evolution/topics/{topic['slug']}/ask",
                                                  body={"question": question, "sections": sections or []}):
+                await report.beat()
                 if "sources" in event:
                     sources = event["sources"]
-                    await common.progress(ctx, 1, None, f"Writing the answer from {len(sources)} passages")
+                    await report(f"Writing the answer from {len(sources)} passages")
                 elif "token" in event:
                     parts.append(event["token"])
                 elif "error" in event:
@@ -272,25 +274,27 @@ def register(mcp: MCPServer) -> None:
             project_id = (await lookup.find_project(ctx, project))["id"] if project else None
             c = await common.post(ctx, "/chats", {"project_id": project_id, "effort": effort})
         chat_id = c["id"]
-        done, notices, error, steps = None, [], None, 0
+        done, notices, error = None, [], None
+        report = common.Reporter(ctx)
+        await report("Sending the message to Athena")
         try:
             async for event in common.api.stream(common.token(ctx), "POST", f"/api/v1/chats/{chat_id}/messages",
                                                  body={"content": message, "effort": effort}):
+                await report.beat()
                 kind = event.get("type")
                 if kind == "loading":
-                    state = event.get("state") or {}
-                    await common.progress(ctx, steps, None, state.get("label") or "Loading the model")
-                elif kind == "reasoning" and steps == 0:
-                    steps = 1
-                    await common.progress(ctx, steps, None, "Thinking")
+                    stages = (event.get("state") or {}).get("stages") or []
+                    label = next((x["label"] for x in stages if x.get("state") == "active"), "Loading the model")
+                    if label != report.label:
+                        await report(label)
+                elif kind == "reasoning" and report.label != "Thinking":
+                    await report("Thinking")
                 elif kind == "tool":
                     step = event.get("step") or {}
                     if step.get("status") == "running":
-                        steps += 1
-                        await common.progress(ctx, steps, None, step.get("label") or step.get("tool") or "A tool")
-                elif kind == "token" and steps < 100:
-                    steps = 100
-                    await common.progress(ctx, steps, None, "Writing the answer")
+                        await report(step.get("label") or step.get("tool") or "A tool")
+                elif kind == "token" and report.label != "Writing the answer":
+                    await report("Writing the answer")
                 elif kind == "notice":
                     notices.append(event.get("text") or "")
                 elif kind == "error":

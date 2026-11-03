@@ -18,6 +18,7 @@ from athena.api.config import settings
 from athena.mcp import api
 
 POLL_SECONDS = 3.0
+HEARTBEAT = 30.0  # progress at least this often, so proxies and clients see a long wait is alive
 
 HINTS = {
     401: "The access token was not accepted (revoked, expired, or the account is off). Make a new one in "
@@ -78,6 +79,25 @@ async def progress(ctx: Context, step: float, total: float | None, message: str)
         pass
 
 
+class Reporter:
+    """Progress while a stream runs: a new label at once, and the current one again whenever HEARTBEAT has passed
+    (call ``beat`` on every event), so a model thinking for minutes still shows it is alive."""
+
+    def __init__(self, ctx: Context):
+        self.ctx, self.step, self.label, self.sent = ctx, 0, "", 0.0
+
+    async def __call__(self, label: str) -> None:
+        self.step += 1
+        self.label = label
+        self.sent = time.monotonic()
+        await progress(self.ctx, self.step, None, label)
+
+    async def beat(self) -> None:
+        if self.label and time.monotonic() - self.sent >= HEARTBEAT:
+            self.sent = time.monotonic()
+            await progress(self.ctx, self.step, None, self.label)
+
+
 class StillRunning(Exception):
     """The wait ran out; ``job`` is what to pass to wait_for."""
     def __init__(self, job: str, state: str):
@@ -91,14 +111,14 @@ async def wait(ctx: Context, job: str, check: Callable[[], Awaitable[tuple[bool,
     """Poll ``check`` (done, step, total, label) every few seconds, passing its label on as progress, until it is
     done or ``seconds`` (MCP_WAIT_SECONDS) run out, then raise StillRunning with the job to wait on."""
     deadline = time.monotonic() + (settings.MCP_WAIT_SECONDS if seconds is None else seconds)
-    last = None
+    last, sent = None, 0.0
     while True:
         done, step, total, label = await check()
         if done:
             return
-        if label != last:
+        if label != last or time.monotonic() - sent >= HEARTBEAT:
             await progress(ctx, step, total, label)
-            last = label
+            last, sent = label, time.monotonic()
         if time.monotonic() >= deadline:
             raise StillRunning(job, label)
         await asyncio.sleep(POLL_SECONDS)

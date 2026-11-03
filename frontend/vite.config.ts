@@ -14,6 +14,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': 'http://127.0.0.1:8000',
+      '/mcp': 'http://127.0.0.1:8000',  // the MCP server for agents (athena/mcp/)
     },
   },
   // `npm test`: components render in jsdom against a faked API (src/test/utils.tsx).
