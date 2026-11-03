@@ -23,6 +23,16 @@ class Settings:
     CORS_ORIGINS: list[str] = [o.strip().rstrip("/") for o in os.getenv(
         "CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",") if o.strip()]
 
+    # The web app's address, for links in what the MCP server tells agents; the first CORS origin unless set
+    PUBLIC_URL: str = (os.getenv("PUBLIC_URL")
+                       or (CORS_ORIGINS[0] if CORS_ORIGINS else "http://localhost:5173")).rstrip("/")
+
+    # The MCP server (/mcp, athena/mcp/): the Host names it answers besides localhost (comma-separated; "*" for any,
+    # behind a proxy that checks Host itself), and how long a tool waits on a review or map build before it hands the
+    # agent a job to wait on
+    MCP_ALLOWED_HOSTS: list[str] = [h.strip() for h in os.getenv("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    MCP_WAIT_SECONDS: int = int(os.getenv("MCP_WAIT_SECONDS", "600"))
+
     # Swagger / ReDoc and the OpenAPI schema: off unless switched on; DOCS_PASSWORD puts them behind Basic Auth
     DOCS_ENABLED: bool = os.getenv("DOCS_ENABLED", "false").lower() == "true"
     DOCS_USERNAME: str = os.getenv("DOCS_USERNAME", "athena")

@@ -13,6 +13,7 @@ from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from loguru import logger
+from starlette.routing import Route
 
 from athena.api.routers import (
     feed, items, clusters, search, sources, sync, app_settings, saved, evolution, inbox, auth as auth_routes,
@@ -20,6 +21,7 @@ from athena.api.routers import (
     model_registry, model_activity, tokens,
 )
 from athena.api import qa_api
+from athena.mcp import api as api_inprocess, server as mcp_server
 from athena.api.auth import acting_admin, acting_user
 from athena.api.config import settings
 
@@ -53,7 +55,8 @@ def create_app() -> FastAPI:
             logger.warning(f"Model registry presets not written: {exc}")
         from athena.model_server import loading
         loading.load_on_start()  # the default chat model at its default context, so the first chat need not wait
-        yield
+        async with mcp_server.running():  # the MCP server at /mcp
+            yield
 
     # Disable built-in docs and schema; we mount our own routes with auth below.
     app = FastAPI(
@@ -132,6 +135,10 @@ def create_app() -> FastAPI:
     app.include_router(qa_api.router, prefix="/api/v1", tags=["QA"], dependencies=login)
     app.include_router(scoring.router, dependencies=login)  # rescore-all adds require_admin itself
     app.include_router(summaries.router, dependencies=login)  # the admin views add require_admin themselves
+
+    # ── MCP server for agents (athena/mcp/): its tools call these routes in-process with an access token ──
+    api_inprocess.attach(app)
+    app.router.routes.append(Route("/mcp", endpoint=mcp_server.endpoint))
 
     # ── Health check ────────────────────────────────────
     @app.get("/health", tags=["Health"])
