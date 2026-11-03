@@ -1,5 +1,5 @@
 """
-Accounts and sessions, app settings, and the usage log of model calls.
+Accounts, sessions and agents' access tokens, app settings, and the usage log of model calls.
 """
 from datetime import datetime
 from uuid import uuid4
@@ -48,6 +48,23 @@ class UserSession(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)  # rolling: pushed back while the session is used
     last_seen_at = Column(DateTime(timezone=True), nullable=True)
     user_agent = Column(String, nullable=True)
+
+    user = relationship("User")
+
+
+class ApiToken(Base):
+    """A personal access token an agent uses for the MCP server (/mcp) in its account's name. Shown once when it is
+    made; only its SHA-256 is stored. It works only through the MCP server, never on the REST API directly."""
+    __tablename__ = "api_tokens"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(80), nullable=False)
+    token_hash = Column(String, unique=True, nullable=False)
+    hint = Column(String(16), nullable=False)  # the token's first characters, to tell tokens apart
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=True)  # none: until revoked
 
     user = relationship("User")
 

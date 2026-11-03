@@ -8,6 +8,12 @@ its password revokes it. The cookie is SameSite=Lax, so browsers leave it off
 cross-site POST, PATCH and DELETE requests, and CORS only admits the frontend's
 origins; together they stand in for a CSRF token.
 
+Agents use personal access tokens (``ath_…``, ``api_tokens``) with the MCP server
+at /mcp, which calls these same routes in-process in the token's account
+(athena/mcp/api.py). A token counts only on those calls: their ASGI scope carries
+``AGENT``, which no HTTP request can set, so a token sent to the REST API from
+outside is refused like a missing cookie.
+
 Dependencies:
     current_user   any logged-in account (the auth routes use it)
     active_user    a logged-in account that has no pending password change (every other route)
@@ -29,7 +35,7 @@ from sqlalchemy.orm import Session
 from athena.api.deps import get_db, get_redis
 from athena.core import usage
 from athena.core.config_store import get_setting
-from athena.core.models import User, UserSession
+from athena.core.models import ApiToken, User, UserSession
 
 COOKIE = "athena_session"
 SESSION_DAYS = 30
@@ -37,6 +43,8 @@ TOUCH_EVERY = timedelta(hours=1)  # the rolling expiry is pushed back at most ho
 MIN_PASSWORD = 8
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_CHANGE_REQUIRED = "password_change_required"
+TOKEN_PREFIX = "ath_"
+AGENT = "athena.agent"  # ASGI scope key: a call the MCP server makes in-process with an agent's token
 
 # Daily allowances for calls that take GPU time (or money with a hosted model). Admins have none.
 LIMITS = {"qa": 100, "lit_review": 10, "map_proposal": 10, "map_build": 3, "idea_check": 20, "map_qa": 30}
@@ -151,11 +159,56 @@ def session_user(db: Session, token: str | None) -> User | None:
     return user
 
 
+# ── access tokens (agents) ─────────────────────────────────────────────
+
+
+def create_api_token(db: Session, user: User, name: str, expires_days: int | None = None) -> tuple[ApiToken, str]:
+    """A new token for ``user``; the plain token is returned once and never stored."""
+    token = TOKEN_PREFIX + secrets.token_urlsafe(32)
+    row = ApiToken(user_id=user.id, name=name, token_hash=_digest(token), hint=token[:len(TOKEN_PREFIX) + 4],
+                   expires_at=_now() + timedelta(days=expires_days) if expires_days else None)
+    db.add(row)
+    db.commit()
+    return row, token
+
+
+def token_user(db: Session, token: str | None) -> User | None:
+    """The active account behind an access token, noting (at most hourly) that it was used."""
+    if not token or not token.startswith(TOKEN_PREFIX):
+        return None
+    row = db.execute(select(ApiToken).where(ApiToken.token_hash == _digest(token))).scalar_one_or_none()
+    if row is None:
+        return None
+    now = _now()
+    if row.expires_at is not None and _aware(row.expires_at) <= now:
+        return None
+    user = row.user
+    if user is None or not user.is_active:
+        return None
+    if row.last_used_at is None or now - _aware(row.last_used_at) > TOUCH_EVERY:
+        row.last_used_at = now
+        db.commit()
+    return user
+
+
+def bearer(authorization: str | None) -> str | None:
+    """The token in an ``Authorization: Bearer …`` header."""
+    scheme, _, token = (authorization or "").partition(" ")
+    return (token.strip() or None) if scheme.lower() == "bearer" else None
+
+
+def from_agent(request: Request) -> bool:
+    return bool(request.scope.get(AGENT))
+
+
 # ── dependencies ───────────────────────────────────────────────────────
 
 
 def current_user(request: Request, db: Session = Depends(get_db)) -> User:
-    user = session_user(db, request.cookies.get(COOKIE))
+    if from_agent(request):  # the MCP server's in-process call: the agent's token, never a cookie
+        user = token_user(db, bearer(request.headers.get("authorization")))
+    else:
+        user = session_user(db, request.cookies.get(COOKIE))
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Log in to continue")
     return user

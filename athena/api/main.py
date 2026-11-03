@@ -17,7 +17,7 @@ from loguru import logger
 from athena.api.routers import (
     feed, items, clusters, search, sources, sync, app_settings, saved, evolution, inbox, auth as auth_routes,
     users, watches, usage, share, momentum, personal, interests, reviews, scoring, summaries, projects, chats,
-    model_registry, model_activity,
+    model_registry, model_activity, tokens,
 )
 from athena.api import qa_api
 from athena.api.auth import acting_admin, acting_user
@@ -107,6 +107,7 @@ def create_app() -> FastAPI:
     admin = [Depends(acting_admin)]
     app.include_router(auth_routes.router)
     app.include_router(users.router)
+    app.include_router(tokens.router)  # browser sessions only: an agent cannot make tokens
     app.include_router(feed.router, dependencies=login)
     app.include_router(items.router, dependencies=login)
     app.include_router(momentum.router, dependencies=login)

@@ -8,7 +8,7 @@ from athena.core.models.feed import (
     ClusterRunLog,
 )
 from athena.core.models.accounts import (
-    AppSetting, User, UserSession, UsageEvent,
+    ApiToken, AppSetting, User, UserSession, UsageEvent,
 )
 from athena.core.models.evolution import (
     EvoTopic, EvoPaper, EvoCitation, EvoTopicPaper, EvoMainPathEdge, EvoMilestoneOverride, EvoSection, EvoChunk,
@@ -46,6 +46,7 @@ __all__ = [
     "AppSetting",
     "User",
     "UserSession",
+    "ApiToken",
     "UsageEvent",
     "EvoTopic",
     "EvoPaper",
