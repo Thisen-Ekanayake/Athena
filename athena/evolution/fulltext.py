@@ -309,8 +309,8 @@ class FullTextFetcher:
             self.http.get(f"{self.grobid_url}/api/isalive", timeout=10).raise_for_status()
         except httpx.HTTPError as exc:
             raise RuntimeError(
-                f"GROBID is not reachable at {self.grobid_url}. Start it with "
-                "`docker compose -f docker/docker-compose.yml up -d grobid`."
+                f"GROBID is not reachable at {self.grobid_url}. ./run_native.sh starts it (give it a minute); "
+                "alone: `docker compose -f docker/docker-compose.yml up -d grobid`."
             ) from exc
 
 
