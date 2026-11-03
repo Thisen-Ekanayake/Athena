@@ -1,0 +1,228 @@
+"""Turns on the GPU: background work grouped by model, so the router swaps per turn rather than per batch."""
+from __future__ import annotations
+
+import json
+import time
+
+import pytest
+
+from athena.model_server import activity, lane, turns
+
+NINE_B, EMBED = "qwen3.5-9b", "qwen3-embedding-8b"
+
+
+@pytest.fixture(autouse=True)
+def gpu_presets(monkeypatch):
+    servers = {NINE_B: "gpu", EMBED: "gpu", "small": "cpu"}
+    monkeypatch.setattr(activity, "server_of", lambda model: servers.get(model))
+    monkeypatch.setattr(lane, "POLL", 0.01)
+
+
+def busy(model: str, level: int) -> None:
+    """Another process is using ``model`` at ``level``, and it has the turn."""
+    lane._redis().hset(turns.USED_KEY, f"{model}|{level}|elsewhere:1", time.time())
+    lane._redis().set(turns.TURN_KEY, json.dumps({"model": model, "since": time.time()}))
+
+
+def waiter(who: str, model: str, level: int, since: float | None = None) -> None:
+    lane._waiting(None, who, "turn", model=model, priority=level, ttl=60) if since is None else \
+        lane._redis().set(f"{lane.WAITING}{who}", __import__("json").dumps(
+            {"who": who, "reason": "turn", "since": since, "model": model, "priority": level}), ex=60)
+
+
+def test_the_first_work_takes_the_turn_and_work_as_important_on_the_same_model_never_waits():
+    assert lane.yield_to_chat(who="summary", model=NINE_B) == 0
+    assert turns.turn()["model"] == NINE_B
+    assert lane.yield_to_chat(who="cluster_label", model=NINE_B) == 0  # the same priority: it runs beside them
+
+
+def test_lower_work_on_the_same_model_waits_while_asked_work_uses_it(monkeypatch):
+    """The server answers one request at a time: summaries took half the 9B from a map someone waited for."""
+    busy(NINE_B, turns.ASKED)
+    assert turns.check(NINE_B, turns.ROUTINE) == f"asked for work is using {NINE_B}"
+    assert turns.check(NINE_B, turns.ROUTINE, waited=turns.AGING) is None  # it has waited long enough
+    with turns.priority(turns.ASKED):
+        assert lane.yield_to_chat(who="map_proposal", model=NINE_B) == 0  # as important: no wait
+    monkeypatch.setattr(turns, "ACTIVE", 0.0)  # the asked work stopped using it
+    assert turns.check(NINE_B, turns.ROUTINE) is None
+    with turns.priority(turns.ASKED):
+        with activity.track("map_build", NINE_B):  # a long thinking call outlasts the window: still theirs
+            assert turns.check(NINE_B, turns.ROUTINE) == f"asked for work is using {NINE_B}"
+
+
+def test_cpu_and_unknown_models_take_no_turns():
+    busy(NINE_B, turns.ROUTINE)
+    assert lane.yield_to_chat(who="summary", model="small") == 0
+    assert lane.yield_to_chat(who="summary", model="hosted-model") == 0
+    assert turns.turn()["model"] == NINE_B
+
+
+def test_work_for_another_model_waits_while_the_loaded_one_is_in_use():
+    busy(NINE_B, turns.ROUTINE)  # the feed uses the 9B now
+    assert turns.check(EMBED, turns.ROUTINE) == f"{NINE_B} has the GPU"
+    assert lane.yield_to_chat(who="feed_embed", model=EMBED, max_wait=0.03) >= 0.03  # someone's work runs in the end
+
+
+def test_asked_for_work_takes_the_gpu_after_the_call_in_hand():
+    busy(NINE_B, turns.ROUTINE)
+    with activity.track("summary", NINE_B):  # a summary is being written
+        assert turns.check(EMBED, turns.ASKED) == f"{NINE_B} is finishing a call"
+        waiter("map_embed", EMBED, turns.ASKED)  # as yield_to_chat lists it
+        assert turns.turn()["model"] == EMBED  # the turn moved: the next summary waits
+        assert turns.check(NINE_B, turns.ROUTINE) == f"{EMBED} has the GPU"
+    assert turns.check(EMBED, turns.ASKED) is None
+
+
+def test_an_idle_model_gives_way_at_once(monkeypatch):
+    busy(NINE_B, turns.ROUTINE)
+    monkeypatch.setattr(turns, "IDLE", 0.0)  # its last use is already too long ago
+    assert turns.check(EMBED, turns.BACKLOG) is None and turns.turn()["model"] == EMBED
+
+
+def test_equal_work_swaps_once_the_turn_is_up(monkeypatch):
+    busy(NINE_B, turns.ROUTINE)
+    waiter("feed_embed", EMBED, turns.ROUTINE)
+    assert turns.check(NINE_B, turns.ROUTINE) is None  # the 9B keeps its turn
+    monkeypatch.setattr(turns, "TURN", 0.0)
+    assert turns.check(NINE_B, turns.ROUTINE) == f"{EMBED} has the GPU"
+
+
+def test_backlog_waits_for_routine_work_until_it_has_aged(monkeypatch):
+    busy(NINE_B, turns.ROUTINE)
+    monkeypatch.setattr(turns, "TURN", 0.0)
+    waiter("map_embed", EMBED, turns.BACKLOG, since=time.time() - 60)
+    assert turns.check(NINE_B, turns.ROUTINE) is None  # lower priority: the turn being up is not enough
+    waiter("map_embed", EMBED, turns.BACKLOG, since=time.time() - turns.AGING - 1)
+    assert turns.check(NINE_B, turns.ROUTINE) == f"{EMBED} has the GPU"
+
+
+def test_a_waiter_that_gave_up_hands_the_turn_back():
+    busy(NINE_B, turns.ROUTINE)
+    lane._redis().set(turns.TURN_KEY, '{"model": "%s", "since": %f}' % (EMBED, time.time()))  # its waiter died
+    assert turns.check(NINE_B, turns.ROUTINE) is None and turns.turn()["model"] == NINE_B
+
+
+def test_turn_waits_are_listed_with_model_and_priority(monkeypatch):
+    busy(NINE_B, turns.ROUTINE)
+    seen = []
+    real = lane._waiting
+
+    def spy(key, who, reason, **kw):
+        key = real(key, who, reason, **kw)
+        seen.extend(lane.waiting())
+        return key
+    monkeypatch.setattr(lane, "_waiting", spy)
+    lane.yield_to_chat(who="feed_embed", model=EMBED, max_wait=0.02)
+    assert seen[0]["reason"] == "turn" and seen[0]["model"] == EMBED and seen[0]["priority"] == turns.ROUTINE
+    assert seen[0]["detail"] == f"{NINE_B} has the GPU" and lane.waiting() == []
+
+
+def test_background_work_waiting_its_turn_too_long_queues_itself_again(monkeypatch):
+    monkeypatch.setattr(lane, "PAUSE_HOLD", 0.03)
+    busy(NINE_B, turns.ROUTINE)
+    with pytest.raises(lane.Paused):
+        lane.yield_to_chat(who="map_embed", model=EMBED)
+
+
+def test_the_minute_run_skips_and_keeps_its_place_in_line():
+    busy(NINE_B, turns.ROUTINE)
+    assert not lane.my_turn("feed_embed", EMBED)
+    (w,) = lane.waiting()
+    first = w["since"]
+    assert not lane.my_turn("feed_embed", EMBED)
+    assert lane.waiting()[0]["since"] == first  # it ages across runs
+    assert lane.my_turn("feed_embed", "small")  # a CPU model never waits
+
+
+def test_the_minute_embedding_run_leaves_the_queue_alone_when_not_its_turn(monkeypatch):
+    from athena.pipeline import embedding_worker
+    busy(NINE_B, turns.ROUTINE)
+    monkeypatch.setattr(embedding_worker, "init_qdrant", lambda: None)
+    monkeypatch.setattr(embedding_worker.llm, "embed_model", lambda: EMBED)
+    r = lane._redis()
+    monkeypatch.setattr(embedding_worker, "get_redis", lambda: r)
+    r.rpush("athena:embedding_queue", "item-1")
+    monkeypatch.setattr(embedding_worker, "process_batch", lambda ids: pytest.fail("embedded out of turn"))
+    embedding_worker.process_embedding_queue()
+    assert r.llen("athena:embedding_queue") == 1
+    assert [w["who"] for w in lane.waiting()] == ["feed_embed"]
+
+
+def test_an_empty_embedding_queue_does_not_ask_for_the_embedder(monkeypatch):
+    from athena.pipeline import embedding_worker
+    busy(NINE_B, turns.ROUTINE)
+    monkeypatch.setattr(embedding_worker, "init_qdrant", lambda: None)
+    monkeypatch.setattr(embedding_worker, "get_redis", lane._redis)
+    embedding_worker.process_embedding_queue()
+    assert lane.waiting() == []
+
+
+def test_priorities_come_from_the_feature_unless_a_task_says_otherwise():
+    assert turns.priority_of("summary") == turns.ROUTINE and turns.priority_of("map_build") == turns.BACKLOG
+    assert turns.priority_of("project_index") == turns.ASKED
+    with turns.priority(turns.ASKED):
+        assert turns.priority_of("map_embed") == turns.ASKED
+    assert turns.priority_of("map_embed") == turns.BACKLOG
+
+
+def test_a_built_map_is_asked_for_and_a_scheduled_refresh_is_backlog(monkeypatch):
+    from athena.core import redis_client
+    from athena.evolution import build, model_lane, tasks
+    monkeypatch.setattr(redis_client, "get_redis", lambda *a, **kw: lane._redis())
+    monkeypatch.setattr(tasks.run_gpu_lane, "apply_async", lambda **kw: None)  # the backlog run it queues
+    seen = []
+    monkeypatch.setattr(build, "build_search_topic", lambda slug, **kw: seen.append(turns.priority_of("map_embed")))
+    tasks.build_search_topic("vln")
+    monkeypatch.setattr(model_lane, "run_lane", lambda **kw: seen.append(turns.priority_of("map_build")) or {})
+    tasks.refresh_gpu_lane("vln", True)
+    tasks.refresh_gpu_lane()
+    assert seen == [turns.ASKED, turns.ASKED, turns.BACKLOG]
+
+
+def test_a_refresh_someone_started_carries_it_through_the_chain():
+    from athena.evolution.refresh import refresh_chain
+    steps = {t.task.rsplit(".", 1)[1]: t.args for t in refresh_chain("vln", asked=True).tasks}
+    assert tuple(steps["refresh_build"]) == ("vln", True) == tuple(steps["refresh_gpu_lane"])
+    assert tuple(refresh_chain("vln").tasks[0].args) == ("vln", False)
+
+
+def test_a_call_left_by_a_dead_process_holds_no_swap(monkeypatch):
+    """A worker killed mid-call left its call listed for 15 minutes, and the map waited for it (2026-11-02)."""
+    import json as _json
+    busy(NINE_B, turns.ROUTINE)
+    ghost = {"id": "g", "feature": "map_build", "model": NINE_B, "server": "gpu", "started": time.time() - 10,
+             "pid": 2 ** 22 + 7, "host": activity.socket.gethostname()}
+    lane._redis().hset(activity.LIVE, "g", _json.dumps(ghost))
+    with turns.priority(turns.ASKED):
+        assert turns.check(EMBED, turns.ASKED) is None  # its process is gone: no wait
+    assert activity.live() == []
+    old = ghost | {"id": "o", "host": "another-machine", "started": time.time() - turns.DRAIN_MAX - 1}
+    lane._redis().hset(activity.LIVE, "o", _json.dumps(old))
+    assert turns.check(NINE_B, turns.ASKED) is None  # elsewhere and too old to be waited for
+
+
+def test_tokenizing_for_the_map_takes_the_embedders_turn_and_outlasts_a_swap(monkeypatch):
+    """/tokenize loads the embedder in router mode; mid-swap the router answered with an error and a lane run died
+    on KeyError('tokens') (2026-11-02)."""
+    import httpx
+    from athena.evolution import model_lane
+    monkeypatch.setattr(model_lane.time, "sleep", lambda s: None)
+    answers = iter([{"error": {"message": "model is loading"}}, {"tokens": [1, 2, 3]}])
+    http = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=next(answers))))
+    gates = []
+    monkeypatch.setattr(lane, "yield_to_chat", lambda **kw: gates.append(kw) or 0)
+    assert model_lane._count_tokens(http, "http://llm", EMBED, "a gap") == 3
+    assert gates == [{"who": "map_embed", "model": EMBED}]
+    broken = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"error": "x"})))
+    with pytest.raises(RuntimeError, match="did not tokenize"):
+        model_lane._count_tokens(broken, "http://llm", EMBED, "a gap")
+
+
+def test_a_job_moving_to_the_other_model_is_not_held_up_by_its_own_last_use():
+    """A map job going from labelling (9B) to embedding waited out its own 9B use while summaries took the 9B."""
+    with turns.priority(turns.ASKED):
+        lane.yield_to_chat(who="map_build", model=NINE_B)  # this process labelled a moment ago
+        assert turns.check(EMBED, turns.ASKED) is None  # and may embed now: the 9B has no one else
+    assert turns.turn()["model"] == EMBED
+    lane._redis().hset(turns.USED_KEY, f"{NINE_B}|{turns.ASKED}|elsewhere:1", time.time())  # another process's
+    assert turns.check(NINE_B, turns.ASKED) is None  # the same priority, and the embedder is idle once mine is old

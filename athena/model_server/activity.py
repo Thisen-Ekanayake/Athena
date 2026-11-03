@@ -12,6 +12,8 @@ swaps. Everything here is best effort: a Redis error never fails a model call.
 from __future__ import annotations
 
 import json
+import os
+import socket
 import time
 import uuid
 from contextlib import contextmanager
@@ -72,6 +74,9 @@ class Call:
     started: float = field(default_factory=time.time)
     server: str | None = None
     swapped: bool = False
+    priority: int | None = None                               # its priority for turns on the GPU (turns)
+    pid: int = field(default_factory=os.getpid)              # so a call whose process died can be told apart
+    host: str = field(default_factory=socket.gethostname)
     input_tokens: int = 0
     output_tokens: int = 0
     done: bool = False
@@ -81,14 +86,16 @@ class Call:
 
     def public(self) -> dict:
         return {"id": self.id, "feature": self.feature, "model": self.model, "kind": self.kind,
-                "user_id": self.user_id, "started": self.started, "server": self.server, "swapped": self.swapped}
+                "user_id": self.user_id, "started": self.started, "server": self.server, "swapped": self.swapped,
+                "priority": self.priority, "pid": self.pid, "host": self.host}
 
 
 def start(feature: str | None, model: str | None, kind: str = "chat", user_id=None) -> Call:
     """A call begins: it is listed as in flight, and a swap is noted if its router held another preset."""
     user_id = user_id or acting_user.get()
+    from athena.model_server import turns
     call = Call(feature=feature or "other", model=model or "", kind=kind,
-                user_id=str(user_id) if user_id else None)
+                user_id=str(user_id) if user_id else None, priority=turns.priority_of(feature))
     try:
         r = _redis()
         call.server = server_of(call.model)
@@ -195,8 +202,22 @@ def _rows(raw: list[str]) -> list[dict]:
     return out
 
 
+def _dead(call: dict) -> bool:
+    """Whether the call's process is gone: known only for processes on this machine (a container has its own)."""
+    if call.get("host") != socket.gethostname() or not call.get("pid"):
+        return False
+    try:
+        os.kill(int(call["pid"]), 0)
+    except ProcessLookupError:
+        return True
+    except (PermissionError, OSError, ValueError):
+        return False
+    return False
+
+
 def live() -> list[dict]:
-    """Calls in flight, oldest first; entries left by a process that died are dropped."""
+    """Calls in flight, oldest first; entries left by a process that died are dropped (one on this machine at once,
+    others once older than the longest client timeout)."""
     try:
         r = _redis()
         found = r.hgetall(LIVE)
@@ -205,7 +226,7 @@ def live() -> list[dict]:
     now, calls, dead = time.time(), [], []
     for key, value in found.items():
         rows = _rows([value])
-        if not rows or now - rows[0].get("started", 0) > LIVE_MAX_AGE:
+        if not rows or now - rows[0].get("started", 0) > LIVE_MAX_AGE or _dead(rows[0]):
             dead.append(key)
             continue
         calls.append(rows[0] | {"elapsed": round(now - rows[0]["started"], 1)})

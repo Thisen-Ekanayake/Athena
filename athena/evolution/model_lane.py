@@ -32,9 +32,9 @@ from athena.core.config_store import get_setting
 from athena.core.models import EvoTopic
 from athena.database import evolution as db
 from athena.database.db import SessionLocal
-from athena.evolution import vectors
+from athena.evolution import progress, vectors
 from athena.evolution.classify import Classifier, auth_headers, chat_url, embed_model_name, embed_url, is_local
-from athena.evolution.gaps import build_themes
+from athena.evolution.gaps import build_themes, keep_names
 
 # Phase 0: throughput is the same with one slot as with eight, and every input must fit one ubatch.
 MAX_CHUNK_TOKENS = llm.EMBED_MAX_TOKENS
@@ -90,13 +90,29 @@ def _fit(http: httpx.Client, url: str, text: str) -> tuple[str, bool]:
         words = text.split()
         return " ".join(words[:EXTERNAL_MAX_WORDS]), len(words) > EXTERNAL_MAX_WORDS
     model = embed_model_name()  # the router needs it to pick the tokenizer
-    return llm.fit(text, MAX_CHUNK_TOKENS,
-                   lambda t: len(http.post(f"{url}/tokenize", json={"content": t, "model": model}).json()["tokens"]))
+    return llm.fit(text, MAX_CHUNK_TOKENS, lambda t: _count_tokens(http, url, model, t))
+
+
+TOKENIZE_TRIES = 5
+
+
+def _count_tokens(http: httpx.Client, url: str, model: str, text: str) -> int:
+    """Tokens in ``text`` by the embedder's tokenizer. In router mode /tokenize loads the embedder, so it takes the
+    embedder's turn on the GPU first; a router that answers with an error while it swaps models is asked again
+    (2026-11-02: a lane run died on the KeyError)."""
+    lane.yield_to_chat(who="map_embed", model=model)
+    body: dict = {}
+    for attempt in range(TOKENIZE_TRIES):
+        body = http.post(f"{url}/tokenize", json={"content": text, "model": model}).json()
+        if "tokens" in body:
+            return len(body["tokens"])
+        time.sleep(2.0 * (attempt + 1))
+    raise RuntimeError(f"The model server did not tokenize the text: {str(body)[:200]}")
 
 
 def _embed(http: httpx.Client, url: str, texts: list[str]) -> np.ndarray:
-    lane.yield_to_chat(who="map_embed")  # between batches, a chat gets the GPU first
     body: dict = {"input": texts, "model": embed_model_name()}
+    lane.yield_to_chat(who="map_embed", model=body["model"])  # between batches: chats first, then the GPU's turns
     dimensions = get_setting("EVOLUTION_EMBED_DIMENSIONS") or get_setting("EMBED_DIMENSIONS")
     if dimensions:  # OpenAI's text-embedding-3 models shorten vectors themselves
         body["dimensions"] = int(dimensions)
@@ -113,11 +129,12 @@ def _embed(http: httpx.Client, url: str, texts: list[str]) -> np.ndarray:
     return vectors.truncate(raw)
 
 
-def _embed_chunks(http: httpx.Client, url: str, session, limit: int | None) -> dict:
+def _embed_chunks(http: httpx.Client, url: str, session, limit: int | None, papers: set | None = None) -> dict:
     done = trimmed = 0
     start = time.time()
     while limit is None or done < limit:
-        rows = db.pending_chunks(session, FETCH if limit is None else min(FETCH, limit - done))
+        _step_aside()
+        rows = db.pending_chunks(session, FETCH if limit is None else min(FETCH, limit - done), papers)
         if not rows:
             break
         topics = db.paper_topics(session, list({c.paper_id for c, _, _ in rows}))
@@ -140,11 +157,12 @@ def _embed_chunks(http: httpx.Client, url: str, session, limit: int | None) -> d
     return {"chunks_embedded": done, "chunks_trimmed": trimmed}
 
 
-def _embed_gaps(http: httpx.Client, url: str, session) -> int:
+def _embed_gaps(http: httpx.Client, url: str, session, papers: set | None = None) -> int:
     """Gap statements as documents: the sentence alone, so themes group by gap rather than by paper."""
     vectors.ensure_collection(name=vectors.GAP_COLLECTION)
     done = 0
-    while rows := db.pending_gap_vectors(session, FETCH):
+    while rows := db.pending_gap_vectors(session, FETCH, papers):
+        _step_aside()
         for i in range(0, len(rows), EMBED_BATCH):
             batch = rows[i:i + EMBED_BATCH]
             vecs = _embed(http, url, [_fit(http, url, g.sentence)[0] for g, _ in batch])
@@ -156,11 +174,12 @@ def _embed_gaps(http: httpx.Client, url: str, session) -> int:
     return done
 
 
-def _embed_abstracts(http: httpx.Client, url: str, session) -> int:
-    """Tier 1: every topic paper's title and abstract, for topic search."""
+def _embed_abstracts(http: httpx.Client, url: str, session, scope: set | None = None) -> int:
+    """Tier 1: every topic paper's title and abstract (``scope``: these papers'), for topic search."""
     vectors.ensure_collection(name=vectors.ABSTRACT_COLLECTION)
     done = 0
-    while papers := db.pending_abstracts(session, FETCH):
+    while papers := db.pending_abstracts(session, FETCH, scope):
+        _step_aside()
         for i in range(0, len(papers), EMBED_BATCH):
             batch = papers[i:i + EMBED_BATCH]
             vecs = _embed(http, url, [_fit(http, url, f"{p.title}\n{p.abstract or ''}")[0] for p in batch])
@@ -172,10 +191,11 @@ def _embed_abstracts(http: httpx.Client, url: str, session) -> int:
     return done
 
 
-def _loose_links(http: httpx.Client, url: str, session) -> int:
+def _loose_links(http: httpx.Client, url: str, session, papers: set | None = None) -> int:
     """For each gap statement, the later papers whose abstract, introduction or method matches it best."""
     found = 0
-    while rows := db.pending_loose(session, FETCH):
+    while rows := db.pending_loose(session, FETCH, papers):
+        _step_aside()
         topics = db.paper_topics(session, list({g.paper_id for g, _ in rows}))
         citers = db.cited_by(session, list({g.paper_id for g, _ in rows}))
         for i in range(0, len(rows), EMBED_BATCH):
@@ -208,33 +228,37 @@ def embed_abstracts() -> int:
         return _embed_abstracts(http, url, session)
 
 
-def embed_pending(limit: int | None = None) -> dict:
-    """Embed chunks and gap statements that have no vector yet, search loose links, then embed abstracts."""
+def embed_pending(limit: int | None = None, scope: dict | None = None) -> dict:
+    """Embed chunks and gap statements that have no vector yet, search loose links, then embed abstracts; ``scope``
+    (``db.topic_scope``): one map's only."""
     vectors.ensure_collection()
     url, server = embed_server()
     llm.check_embed_space("evolution", embed_model_name())
+    papers = scope["papers"] if scope else None
     with server, httpx.Client(timeout=600.0, headers=auth_headers(url)) as http, SessionLocal() as session:
-        summary = _embed_chunks(http, url, session, limit)
+        summary = _embed_chunks(http, url, session, limit, papers)
         if limit is None:
-            summary["gaps_embedded"] = _embed_gaps(http, url, session)
-            summary["loose_links"] = _loose_links(http, url, session)
-            summary["abstracts_embedded"] = _embed_abstracts(http, url, session)
+            summary["gaps_embedded"] = _embed_gaps(http, url, session, papers)
+            summary["loose_links"] = _loose_links(http, url, session, papers)
+            summary["abstracts_embedded"] = _embed_abstracts(http, url, session, papers)
     return summary
 
 
 # ── classification ─────────────────────────────────────────────────────
 
 
-def classify_pending(limit: int | None = None) -> dict:
-    """Label cue-bearing citing sentences whose cited paper is in some topic's Tier 2, then gap candidates."""
+def classify_pending(limit: int | None = None, scope: dict | None = None) -> dict:
+    """Label cue-bearing citing sentences whose cited paper is in some topic's Tier 2, then gap candidates;
+    ``scope`` (``db.topic_scope``): one map's only."""
     url, server = chat_server()
     labelled = strict = gaps = candidates = rechecked = confirmed = 0
     with server, SessionLocal() as session:
-        clf = Classifier(base_url=url)
-        cited_ids = db.all_tier2_ids(session)
-        if clf.local:
+        clf = Classifier(base_url=url, wait={})  # each call waits for chats and the 9B's turn
+        cited_ids = scope["tier2"] if scope else db.all_tier2_ids(session)
+        if clf.local and scope is None:
             # Strict links labelled before the thinking confirmation existed: confirm them now.
             while rows := db.unconfirmed_strict(session, clf.model_tag, 32):
+                _step_aside()
                 out = [{"id": ctx.id, "label": ctx.label, "model": clf.model_tag,
                         "attributed": clf.attribution(citing_title, cited_title, ctx.sentence, ctx.marked,
                                                       think=True)} for ctx, citing_title, cited_title in rows]
@@ -242,13 +266,15 @@ def classify_pending(limit: int | None = None) -> dict:
                 confirmed += sum(bool(o["attributed"]) for o in out)
                 rechecked += len(out)
                 logger.info(f"Rechecked {rechecked} strict links with thinking, {confirmed} confirmed")
+        slug = (scope or {}).get("slug")
+        progress.stage(slug, "labelling", db.count_pending_contexts(session, cited_ids) if slug else None)
         start = time.time()
         while limit is None or labelled < limit:
+            _step_aside()
             rows = db.pending_contexts(session, cited_ids, 64 if limit is None else min(64, limit - labelled))
             if not rows:
                 break
             out = []
-            lane.yield_to_chat(who="map_build")
             for ctx, citing_title, cited_title in rows:
                 v = clf.classify(citing_title, cited_title, ctx.sentence, ctx.marked)
                 # A failed answer is stored as "unknown" so it is not retried forever.
@@ -257,10 +283,13 @@ def classify_pending(limit: int | None = None) -> dict:
                 strict += v.strict
             db.save_labels(session, out)
             labelled += len(out)
+            progress.advance(slug, len(out))
             logger.info(f"Labelled {labelled} citing sentences, {strict} strict "
                         f"({labelled / max(time.time() - start, 1e-6):.1f}/s)")
-        while limit is None and (rows := db.pending_gap_candidates(session, 64)):
-            lane.yield_to_chat(who="map_build")
+        papers = scope["papers"] if scope else None
+        progress.stage(slug, "gaps")
+        while limit is None and (rows := db.pending_gap_candidates(session, 64, papers)):
+            _step_aside()
             out = []
             for gap, title in rows:
                 label = clf.is_gap(title, gap.section_type, gap.sentence) or "unknown"
@@ -268,57 +297,171 @@ def classify_pending(limit: int | None = None) -> dict:
                 gaps += label == "gap"
             db.save_gap_labels(session, out)
             candidates += len(out)
+            progress.advance(slug, len(out))
             logger.info(f"Labelled {candidates} gap candidates, {gaps} gaps")
     return {"strict_rechecked": rechecked, "strict_confirmed": confirmed, "contexts_labelled": labelled,
             "strict_links": strict, "gap_candidates_labelled": candidates, "gaps": gaps}
 
 
-def build_all_themes() -> dict:
-    """Gap themes for every built topic, from the gap statements' vectors. CPU only."""
+def _ready_topics(session, slug: str | None = None) -> list[EvoTopic]:
+    q = select(EvoTopic).where(EvoTopic.status == "ready")
+    if slug is not None:
+        q = select(EvoTopic).where(EvoTopic.slug == slug)
+    return list(session.execute(q).scalars())
+
+
+def build_all_themes(slug: str | None = None) -> dict:
+    """Gap themes for every built topic (or one), from the gap statements' vectors. CPU only."""
     out = {}
     with SessionLocal() as session:
-        topics = list(session.execute(select(EvoTopic).where(EvoTopic.status == "ready")).scalars())
-        for topic in topics:
+        for topic in _ready_topics(session, slug):
             rows = db.topic_gap_rows(session, topic)
             vecs = vectors.vectors_for([r["id"] for r in rows]) if rows else {}
             rows = [r for r in rows if r["id"] in vecs]
             themes = build_themes(rows, np.asarray([vecs[r["id"]] for r in rows])) if rows else []
+            kept = keep_names(themes, db.named_themes(session, topic.id))  # unchanged themes keep their 9B name
             db.save_themes(topic.id, themes)
-            out[topic.slug] = {"gap_statements": len(rows), "themes": len(themes),
+            out[topic.slug] = {"gap_statements": len(rows), "themes": len(themes), "names_kept": kept,
                                "persisting": sum(t["status"] == "persisting" for t in themes)}
     logger.info(f"Gap themes: {out}")
     return out
 
 
-def label_themes() -> int:
-    """Short 9B names for gap themes; a theme keeps its TF-IDF label when the answer is unusable."""
+def label_themes(slug: str | None = None) -> int:
+    """Short 9B names for gap themes (one topic's, given one); a theme keeps its TF-IDF label when the answer is
+    unusable."""
     url, server = chat_server()
     done = 0
     with SessionLocal() as session:
-        pending = db.themes_to_label(session)
+        topic_id = None
+        if slug is not None:
+            topic = db.get_topic(session, slug)
+            if topic is None:
+                return 0
+            topic_id = topic.id
+        pending = db.themes_to_label(session, topic_id)
         if not pending:
             return 0
+        progress.stage(slug, "naming", len(pending))
         with server:
-            clf = Classifier(base_url=url)
+            clf = Classifier(base_url=url, wait={})
             for theme, topic_name, sentences in pending:
+                _step_aside()
                 label = clf.theme_label(topic_name, sentences)
                 if label:
                     db.save_theme_label(session, theme.id, label, clf.model)
                     done += 1
+                progress.advance(slug)
     logger.info(f"Labelled {done} gap themes")
     return done
 
 
-def run_lane(embed: bool = True, classify: bool = True) -> dict:
-    """Everything pending, one model at a time: the 9B, the embedder, themes on the CPU, then the 9B names them."""
+# ── the lane ───────────────────────────────────────────────────────────
+
+
+class StepAside(RuntimeError):
+    """Backlog lane work stops because other work waits for the evolution worker; its task queues itself again
+    behind that work, and what it labelled so far is kept."""
+
+
+EVOLUTION_QUEUE = "evolution"  # the Celery queue (a Redis list) the single evolution worker serves
+
+
+def _step_aside() -> None:
+    """Between batches of backlog work: raise ``StepAside`` when other work waits on the evolution queue (a map
+    someone is building, a full-text request, a proposal), so it does not wait hours behind maps nobody asked about.
+    Work someone asked for never steps aside, and backlog runs never step aside for each other (each would see the
+    other waiting, and they would swap places forever)."""
+    from athena.model_server import turns
+    if turns.priority_of("map_build") != turns.BACKLOG:
+        return
+    try:
+        from athena.core.redis_client import get_redis
+        waiting = [m for m in get_redis().lrange(EVOLUTION_QUEUE, 0, -1) if not _is_backlog(m)]
+    except Exception:
+        return
+    if waiting:
+        raise StepAside(f"{len(waiting)} task(s) wait for the evolution worker")
+
+
+def backlog_queued() -> bool:
+    """Whether a backlog lane run waits on the evolution queue."""
+    try:
+        from athena.core.redis_client import get_redis
+        return any(_is_backlog(m) for m in get_redis().lrange(EVOLUTION_QUEUE, 0, -1))
+    except Exception:
+        return False
+
+
+def _is_backlog(message) -> bool:
+    """Whether a queued Celery message is a backlog lane run: ``run_gpu_lane`` or ``refresh_gpu_lane`` for no map
+    in particular (an old chain's ``refresh_gpu_lane`` with no map is one too). Anything unreadable counts as other
+    work."""
+    import base64
+    import json
+    try:
+        m = json.loads(message)
+        task = m["headers"]["task"].rsplit(".", 1)[-1]
+        body = m["body"]
+        if m.get("properties", {}).get("body_encoding") == "base64":
+            body = base64.b64decode(body)
+        args, kwargs = json.loads(body)[:2]
+    except Exception:
+        return False
+    if task == "run_gpu_lane":
+        return (args[2] if len(args) > 2 else kwargs.get("slug")) is None
+    if task == "refresh_gpu_lane":
+        return (args[0] if args else kwargs.get("slug")) is None
+    return False
+
+
+def _run_scope(embed: bool, classify: bool, slug: str | None) -> dict:
+    """The lane for one map (``slug``), or for whatever belongs to no map in particular (None)."""
     summary = {}
+    scope = None
+    if slug is not None:
+        with SessionLocal() as session:
+            topic = db.get_topic(session, slug)
+            if topic is None:
+                return {}
+            scope = db.topic_scope(session, topic) | {"slug": slug}
     if classify:
-        summary |= classify_pending()
+        summary |= classify_pending(scope=scope)
     with SessionLocal() as session:
         summary["citing_gaps"] = db.sync_citing_gaps(session)
     if embed:
-        summary |= embed_pending()
-        summary["themes"] = build_all_themes()
+        progress.stage(slug, "embedding")
+        summary |= embed_pending(scope=scope)
+        progress.stage(slug, "themes")
+        summary["themes"] = build_all_themes(slug)
         if classify:
-            summary["theme_labels"] = label_themes()
+            summary["theme_labels"] = label_themes(slug)
+    progress.stage(slug, "done")
+    return summary
+
+
+def backlog_order() -> list[str]:
+    """Ready maps with sentences left to label, fewest first: the shortest job first finishes each map soonest
+    (a map's gaps show only once its themes are rebuilt, so sharing time between maps would only delay them all)."""
+    with SessionLocal() as session:
+        pending = []
+        for topic in _ready_topics(session):
+            left = db.count_pending_contexts(session, db.topic_scope(session, topic)["tier2"])
+            if left:
+                pending.append((left, topic.slug))
+    return [slug for _, slug in sorted(pending)]
+
+
+def run_lane(embed: bool = True, classify: bool = True, slug: str | None = None) -> dict:
+    """Everything pending, one model at a time: the 9B, the embedder, themes on the CPU, then the 9B names them.
+
+    With ``slug``, only that map's work (someone waits for its gaps; the rest is left for a backlog run). Without,
+    the backlog: maps one at a time, fewest sentences left first (``backlog_order``), then whatever is left over."""
+    if slug is not None:
+        return {slug: _run_scope(embed, classify, slug)}
+    summary = {}
+    for name in backlog_order():
+        logger.info(f"GPU lane backlog: {name}")
+        summary[name] = _run_scope(embed, classify, name)
+    summary["rest"] = _run_scope(embed, classify, None)
     return summary

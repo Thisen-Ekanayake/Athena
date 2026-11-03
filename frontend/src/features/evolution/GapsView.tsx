@@ -4,7 +4,7 @@ import { Chip, type ChipTone } from '../../ui/Chip'
 import { Notice } from '../../ui/Notice'
 import { Spinner } from '../../ui/Spinner'
 import { cn } from '../../ui/cn'
-import { useTopicGaps, type GapTheme, type MiniPaper } from './api'
+import { gapsInProgress, useTopicGaps, type GapTheme, type MiniPaper, type TopicGaps } from './api'
 
 interface GapsViewProps {
   slug: string
@@ -40,10 +40,14 @@ export function GapsView({ slug, onSelect }: GapsViewProps) {
   if (isLoading) return <Spinner label="Loading open problems…" />
   if (error || !data) return <Notice tone="error" title="The open problems could not be loaded">Check that the API is running.</Notice>
   if (data.themes.length === 0 || !scale) {
+    if (gapsInProgress(data) || data.progress?.note) return <GapsProgressLine data={data} />
+    if (data.progress?.stage === 'done') {
+      return <Notice title="No open problems found">The full text was read, but no limitation was stated often enough to make a theme.</Notice>
+    }
     return (
-      <Notice title="No open problems yet">
-        They appear after the GPU lane has labelled and embedded gap statements:{' '}
-        <code>python3 scripts/evolution_full_text.py --gpu-only</code>.
+      <Notice title="Open problems are not read yet">
+        They come from the full text of the map&apos;s key papers. An admin can start it under Changes → Read full text; it takes an
+        hour or two on the GPU, and this tab shows how far it has got.
       </Notice>
     )
   }
@@ -52,6 +56,7 @@ export function GapsView({ slug, onSelect }: GapsViewProps) {
 
   return (
     <div className="grid gap-5">
+      {(gapsInProgress(data) || data.progress?.note) && <GapsProgressLine data={data} />}
       {/* The edge of the map: open problems sit where the mist begins. */}
       <section className="relative overflow-hidden rounded-xl border border-line bg-surface">
         <div className="mist" aria-hidden="true"><span /><span /><span /><span /></div>
@@ -202,5 +207,39 @@ function Sparkline({ theme, scale, latest }: { theme: GapTheme; scale: { first: 
         <span>{scale.last}</span>
       </figcaption>
     </figure>
+  )
+}
+
+function duration(seconds: number): string {
+  if (seconds < 90) return 'about a minute'
+  if (seconds < 3600) return `about ${Math.round(seconds / 60)} min`
+  const hours = Math.floor(seconds / 3600)
+  return `about ${hours} h ${Math.round((seconds % 3600) / 60)} min`
+}
+
+/** Where the open problems have got: the stage, its count and an estimate, what the GPU work waits for. */
+function GapsProgressLine({ data }: { data: TopicGaps }) {
+  const p = data.progress
+  if (!p) return null
+  const count = p.total ? `${p.done.toLocaleString()} / ${p.total.toLocaleString()}` : p.done ? p.done.toLocaleString() : null
+  const waiting = data.waiting
+  const wait = !waiting ? null
+    : waiting.reason === 'chat' ? 'waiting for a chat to finish'
+    : waiting.reason === 'paused' ? 'held by the pause in Settings → Models and keys'
+    : `waiting for the GPU${waiting.detail ? ` (${waiting.detail})` : ''}`
+  return (
+    <Notice title={gapsInProgress(data) ? 'Reading the open problems' : 'Open problems'}>
+      <span className="grid gap-1">
+        {gapsInProgress(data) && (
+          <span>
+            {p.label}
+            {count && <span className="font-mono"> · {count}</span>}
+            {p.eta_seconds != null && <span> · {duration(p.eta_seconds)} left</span>}
+            {wait && <span className="text-fg-3"> · {wait}</span>}
+          </span>
+        )}
+        {p.note && <span className="text-fg-3">{p.note}</span>}
+      </span>
+    </Notice>
   )
 }

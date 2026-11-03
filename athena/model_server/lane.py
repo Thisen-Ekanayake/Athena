@@ -18,6 +18,9 @@ until it is resumed, so an unloaded model stays out of memory. A call already ru
 (``task_acks_late``, the broker's visibility timeout), so a pause holds one task at most ``PAUSE_HOLD`` and then raises
 ``Paused``; the task queues itself again.
 
+Background work that names its model also takes turns on the GPU (``turns``): the loaded model keeps the GPU while
+anyone has work for it, so the router swaps per turn rather than per batch.
+
 Whoever waits is listed under ``WAITING`` (one short-lived key each) for the activity page.
 """
 from __future__ import annotations
@@ -43,6 +46,7 @@ HOLD_SECONDS = 90         # a turn refreshes the flag as it streams; a warm-up h
 ASKED_WAIT = 300.0         # work someone asked for (an upload, a benchmark) waits this long at most, then runs
 PAUSE_HOLD = 45 * 60.0    # under the broker's one-hour visibility timeout
 POLL = 1.0
+MINUTE_WAIT_TTL = 90      # a minute run's wait lasts until the next run looks again
 REQUEUE_SECONDS = 60
 
 
@@ -137,30 +141,39 @@ def paused(group: str | None = None) -> dict | None:
 
 
 def yield_to_chat(max_wait: float | None = None, me: str | None = None, who: str = "background",
-                  pausable: bool = True) -> float:
-    """Wait while a chat (or a benchmark) holds the model server, unless ``me`` holds it, and while background work
-    is paused when ``pausable``; returns the seconds waited. ``who`` (a usage feature) names the waiter on the
-    activity page. Background work (``pausable``) waits out the whole chat, but raises ``Paused`` after
-    ``PAUSE_HOLD`` seconds of waiting, chat and pause together, so its task can queue itself again. Work someone
-    asked for passes ``max_wait`` (``ASKED_WAIT``) and then runs beside the chat."""
+                  pausable: bool = True, model: str | None = None) -> float:
+    """Wait while a chat (or a benchmark) holds the model server, unless ``me`` holds it, while background work
+    is paused when ``pausable``, and, given the ``model`` it is about to call, until that model has its turn on the
+    GPU (``turns``); returns the seconds waited. ``who`` (a usage feature) names the waiter on the activity page and
+    sets its priority unless a ``turns.priority`` block does. Background work (``pausable``) waits out the whole
+    chat, but raises ``Paused`` after ``PAUSE_HOLD`` seconds of waiting, all reasons together, so its task can queue
+    itself again. Work someone asked for passes ``max_wait`` (``ASKED_WAIT``) and then runs beside the chat."""
+    from athena.model_server import turns
+    gated = turns.takes_turns(model)
+    level = turns.priority_of(who)
     waited = paused_for = 0.0
     key = None
     try:
         while True:
             held = pausable and bool(paused(group_of(who)) if group_of(who) else paused())
-            if pausable and waited + paused_for >= PAUSE_HOLD and (held or chat_active()):
+            chat = chat_active() and (me is None or holder() != me)
+            blocked = turns.check(model, level, waited) if gated and not held and not chat else None
+            if pausable and waited + paused_for >= PAUSE_HOLD and (held or chat or blocked):
                 raise Paused(f"{who} waited {int(waited + paused_for)} s for background work to resume")
             if held:
-                reason = "paused"
+                reason, detail = "paused", None
                 paused_for += POLL
-            elif (max_wait is None or waited < max_wait) and chat_active() and (me is None or holder() != me):
-                reason = "chat"
-                if waited == 0:
+            elif (max_wait is None or waited < max_wait) and (chat or blocked):
+                reason, detail = ("chat", None) if chat else ("turn", blocked)
+                if waited == 0 and chat:
                     logger.info("Background model work waits for a chat")
                 waited += POLL
             else:
+                if gated:
+                    turns.used(model, level)
                 return waited + paused_for
-            key = _waiting(key, who, reason)
+            key = _waiting(key, who, reason, model=model if gated else None, priority=level if gated else None,
+                           detail=detail)
             time.sleep(POLL)
     finally:
         if key:
@@ -170,7 +183,33 @@ def yield_to_chat(max_wait: float | None = None, me: str | None = None, who: str
                 pass
 
 
-def _waiting(key: str | None, who: str, reason: str) -> str:
+def my_turn(who: str, model: str | None) -> bool:
+    """For work that runs every minute rather than waiting (the feed's embeddings): whether ``model`` may be called
+    now. Until it may, the work is listed as waiting, and keeps the time it started waiting across runs, so it ages
+    like any other waiter."""
+    from athena.model_server import turns
+    if not turns.takes_turns(model):
+        return True
+    level = turns.priority_of(who)
+    key = f"{WAITING}minute:{who}"
+    try:
+        since = json.loads(_redis().get(key) or "{}").get("since")
+    except Exception:
+        since = None
+    blocked = turns.check(model, level, time.time() - since if since else 0.0)
+    if blocked is None:
+        turns.used(model, level)
+        try:
+            _redis().delete(key)
+        except Exception:
+            pass
+        return True
+    _waiting(key, who, "turn", model=model, priority=level, detail=blocked, ttl=MINUTE_WAIT_TTL)
+    return False
+
+
+def _waiting(key: str | None, who: str, reason: str, model: str | None = None, priority: int | None = None,
+             detail: str | None = None, ttl: int = int(POLL * 5)) -> str:
     """List this waiter for a few seconds more (it refreshes every poll, so a dead process drops off)."""
     key = key or f"{WAITING}{uuid.uuid4().hex[:12]}"
     try:
@@ -178,14 +217,16 @@ def _waiting(key: str | None, who: str, reason: str) -> str:
         since = None
         if raw := r.get(key):
             since = json.loads(raw).get("since")
-        r.set(key, json.dumps({"who": who, "reason": reason, "since": since or time.time()}), ex=int(POLL * 5))
+        r.set(key, json.dumps({"who": who, "reason": reason, "since": since or time.time(), "model": model,
+                               "priority": priority, "detail": detail}), ex=ttl)
     except Exception:
         pass
     return key
 
 
 def waiting() -> list[dict]:
-    """Background work waiting now: [{who, reason (chat | paused), since}], longest first."""
+    """Background work waiting now: [{who, reason (chat | paused | turn), since, model, priority, detail}], longest
+    first."""
     try:
         r = _redis()
         keys = list(r.scan_iter(f"{WAITING}*"))

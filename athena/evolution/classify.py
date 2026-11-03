@@ -36,7 +36,8 @@ from athena.core.config_store import get_setting
 LABELS = ["addresses_limitation", "criticises", "extends_or_uses", "compares", "background"]
 LIMITATION_LABELS = {"addresses_limitation", "criticises"}
 SYSTEM_PROMPT = "You classify text from research papers. Reply with JSON only."
-THINK_TOKENS = 900  # the server caps thinking at 512 tokens (--reasoning-budget); the answer follows
+THINK_BUDGET = 512  # thinking tokens for a confirmation, sent with each request (the presets may not cap it)
+THINK_TOKENS = 900  # thinking plus the short JSON answer
 
 
 _MARK_NOTE = "The citation of the cited paper is marked [[like this]].\n"
@@ -161,12 +162,15 @@ def auth_headers(url: str | None = None) -> dict:
 
 class Classifier:
     def __init__(self, base_url: str | None = None, model: str | None = None, http: httpx.Client | None = None,
-                 local: bool | None = None, feature: str = "map_build"):
+                 local: bool | None = None, feature: str = "map_build", wait: dict | None = None):
         self.base_url = (base_url or chat_url()).rstrip("/")
         self.model = model or chat_model_name()
         self.local = is_local() if local is None else local
         self.http = http or httpx.Client(timeout=900.0, headers=auth_headers(self.base_url))
         self.feature = feature  # what its calls count as in the usage log
+        # Background use: before each call, wait for chats and the model's turn on the GPU (lane.yield_to_chat's
+        # arguments); None calls at once.
+        self.wait = wait
 
     def ask(self, prompt: str, schema: dict, name: str, think: bool = False,
             max_tokens: int | None = None) -> dict | None:
@@ -180,6 +184,15 @@ class Classifier:
         if self.local:
             # Qwen's chat template switches thinking per request; other servers may reject the field.
             payload["chat_template_kwargs"] = {"enable_thinking": think}
+            if think:
+                # The cap travels with the request: the model registry's presets dropped the hand-written
+                # reasoning-budget, so thinking ran to max_tokens and was cut off before the answer (16 of 19
+                # confirmations, 25 s each, scored as "not attributed", 2026-11-03).
+                payload["reasoning_budget_tokens"] = THINK_BUDGET
+                payload["reasoning_budget_message"] = llm.BUDGET_MESSAGE
+        if self.wait is not None:
+            from athena.model_server import lane
+            lane.yield_to_chat(**{"who": self.feature, "model": self.model} | self.wait)
         with activity.track(self.feature, self.model) as call:
             resp = self.http.post(f"{self.base_url}/v1/chat/completions", json=payload)
             resp.raise_for_status()

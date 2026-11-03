@@ -26,8 +26,8 @@ def test_a_call_is_live_then_logged_with_sizes_and_no_text(gpu_presets):
     assert activity.live() == []
     (done,) = activity.recent()
     assert done["status"] == "done" and (done["input_tokens"], done["output_tokens"]) == (1200, 300)
-    assert set(done) == {"id", "feature", "model", "kind", "user_id", "started", "server", "swapped", "seconds",
-                         "status", "error", "input_tokens", "output_tokens"}
+    assert set(done) == {"id", "feature", "model", "kind", "user_id", "started", "server", "swapped", "priority",
+                         "pid", "host", "seconds", "status", "error", "input_tokens", "output_tokens"}
     (today,) = activity.today()
     assert today["label"] == "Summaries" and today["calls"] == 1 and today["input_tokens"] == 1200
 
@@ -74,7 +74,7 @@ def test_a_pause_holds_background_work_but_not_what_people_asked_for(monkeypatch
     assert lane.paused()["by"] == "Admin"
     assert lane.yield_to_chat(who="project_index", pausable=False) == 0
     seen = []
-    monkeypatch.setattr(lane, "_waiting", lambda key, who, reason: seen.append((who, reason)) or "k")
+    monkeypatch.setattr(lane, "_waiting", lambda key, who, reason, **kw: seen.append((who, reason)) or "k")
     with pytest.raises(lane.Paused):  # past the hold the task queues itself again
         lane.yield_to_chat(who="summary")
     assert seen[0] == ("summary", "paused")
@@ -117,8 +117,8 @@ def test_waiters_are_listed_while_they_wait(monkeypatch):
     seen = []
     real = lane._waiting
 
-    def spy(key, who, reason):
-        key = real(key, who, reason)
+    def spy(key, who, reason, **kw):
+        key = real(key, who, reason, **kw)
         seen.append(lane.waiting())
         return key
     monkeypatch.setattr(lane, "_waiting", spy)
@@ -135,12 +135,14 @@ def test_minute_embedding_runs_skip_while_paused(monkeypatch):
 
 
 def test_a_map_lane_held_too_long_queues_itself_again(monkeypatch):
+    from athena.core import redis_client
     from athena.evolution import model_lane, tasks
     queued = []
+    monkeypatch.setattr(redis_client, "get_redis", lambda *a, **kw: lane._redis())
     monkeypatch.setattr(model_lane, "run_lane", lambda **kw: (_ for _ in ()).throw(lane.Paused("held")))
     monkeypatch.setattr(tasks.run_gpu_lane, "apply_async", lambda **kw: queued.append(kw))
     assert "paused" in tasks.run_gpu_lane(True, False)
-    assert queued == [{"args": [True, False], "countdown": lane.REQUEUE_SECONDS}]
+    assert queued == [{"args": [True, False, None, False], "countdown": lane.REQUEUE_SECONDS}]
 
 
 # ── unloading ────────────────────────────────────────────────────────

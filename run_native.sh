@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # run_native.sh — start Athena the "native" way: only the infrastructure
-#            (Postgres, Redis, Qdrant) runs in Docker; the API, Celery
+#            (Postgres, Redis, Qdrant, and GROBID for maps' full text) runs
+#            in Docker; the API, Celery
 #            workers, frontend and the local model server (llama-server
 #            router) run as local processes on the host.
 #
@@ -69,7 +70,7 @@ stop_all() {
   done
   terminate "${targets[@]}"
   echo ">> Stopping infra containers..."
-  docker compose -f "$INFRA_COMPOSE" stop db redis qdrant 2>/dev/null || true
+  docker compose -f "$INFRA_COMPOSE" stop db redis qdrant grobid 2>/dev/null || true
   echo "Stopped."
 }
 
@@ -109,8 +110,10 @@ for p in 8000 5173; do
 done
 
 # --- 1. infra in docker -----------------------------------------------------
-echo ">> Starting infra (Postgres, Redis, Qdrant) in Docker..."
-docker compose -f "$INFRA_COMPOSE" up -d db redis qdrant
+echo ">> Starting infra (Postgres, Redis, Qdrant, GROBID) in Docker..."
+# GROBID parses the PDFs a map's full text and open problems come from; without it a full-text request reads
+# nothing (the gaps tab says so). It takes a minute to come up, and nothing needs it before then, so no wait.
+docker compose -f "$INFRA_COMPOSE" up -d db redis qdrant grobid
 
 printf ">> Waiting for Postgres "
 for _ in $(seq 1 60); do
@@ -217,6 +220,8 @@ if [ "$(printf '%s' "${DOCS_ENABLED:-$(env_value DOCS_ENABLED)}" | tr '[:upper:]
 else
   echo "   API      : ${API_URL}        (docs off: set DOCS_ENABLED=true in .env)"
 fi
+echo
+echo "   GROBID   : http://localhost:8070  (maps' full text; up a minute after start)"
 echo
 echo "   Logs : ${RUN_DIR}/{api,worker,beat,summary,evolution,frontend,llm}.log"
 echo "   Stop : ./run_native.sh --stop"

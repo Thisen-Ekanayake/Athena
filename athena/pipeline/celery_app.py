@@ -19,6 +19,9 @@ celery_app.set_default()
 celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
+    # A worker reserves only the task it runs, so tasks waiting for it stay on the queue, where the evolution
+    # lane's backlog run sees them and steps aside (athena.evolution.model_lane._step_aside).
+    worker_prefetch_multiplier=1,
     task_routes={
         'athena.pipeline.summarisation_tasks.summarise_item_worker': {'queue': 'summary_standard'},
         'athena.pipeline.summarisation_tasks.label_cluster_worker': {'queue': 'summary_cluster'},

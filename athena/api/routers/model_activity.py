@@ -129,8 +129,10 @@ def model_activity(session: Session = Depends(get_db), user: User = Depends(auth
     live, recent = activity.live(), activity.recent()
     names = _names(session, live + recent)
     holder = lane.holder()
+    from athena.model_server import turns
+    turn = turns.turn()
     return {"servers": _servers(), "gpu": gpu.gpu(), "calls": _named(live, names),
-            "lane": {"holder": holder, "paused": lane.paused(), "groups": _groups(),
+            "lane": {"holder": holder, "paused": lane.paused(), "groups": _groups(), "turn": turn,
                      "waiting": [w | {"label": activity.label(w.get("who") or "background")} for w in lane.waiting()]},
             "queues": _queues(), "recent": _named(recent, names),
             "swaps": [s | {"cause_label": "Unloaded by an admin" if s["cause"] == "unload"

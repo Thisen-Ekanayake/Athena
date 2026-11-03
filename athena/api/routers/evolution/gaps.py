@@ -14,7 +14,7 @@ from athena.api.config import settings
 from athena.api.deps import get_db, get_redis
 from athena.core.models import User
 from athena.database import evolution as db
-from athena.evolution import ideas
+from athena.evolution import ideas, progress
 from athena.api.routers.evolution._common import _cache_key, _topic_or_404
 
 router = APIRouter()
@@ -29,12 +29,24 @@ class IdeaCheckRequest(BaseModel):
 def topic_gaps(slug: str, session: Session = Depends(get_db), r: redis_lib.Redis = Depends(get_redis)):
     topic = _topic_or_404(session, slug)
     key = _cache_key(session, topic, "gaps")
-    cached = cache_get(r, key)
-    if cached:
-        return cached
-    payload = db.topic_gaps(session, topic)
-    cache_set(r, key, payload, settings.CACHE_CLUSTERS_TTL)
-    return payload
+    payload = cache_get(r, key)
+    if not payload:
+        payload = db.topic_gaps(session, topic)
+        cache_set(r, key, payload, settings.CACHE_CLUSTERS_TTL)
+    return payload | _progress(slug)
+
+
+def _progress(slug: str) -> dict:
+    """Never cached: how far the map's open problems have got (``athena.evolution.progress``), and what its lane
+    waits for when it waits (a chat, a pause, another model's turn on the GPU)."""
+    from athena.model_server import lane
+    state = progress.get(slug)
+    waiting = None
+    if state and state.get("stage") not in ("done", None):
+        waits = [w for w in lane.waiting() if w.get("who") in ("map_build", "map_embed")]
+        if waits:
+            waiting = {k: waits[0].get(k) for k in ("reason", "detail", "since")}
+    return {"progress": state, "waiting": waiting}
 
 
 @router.post("/idea-checks", status_code=201)

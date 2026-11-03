@@ -28,20 +28,23 @@ def _step(name: str, *args, queue: str = "evolution"):
     return celery_app.signature(f"{TASKS}.{name}", args=list(args), queue=queue, immutable=True)
 
 
-def refresh_chain(slug: str, rebuild: bool = True, full_text: bool = True, reason: str = "refresh"):
-    """The Celery chain for one topic: rebuild, full text, GPU lane, then a snapshot."""
+def refresh_chain(slug: str, rebuild: bool = True, full_text: bool = True, reason: str = "refresh",
+                  asked: bool = False):
+    """The Celery chain for one topic: rebuild, full text, GPU lane, then a snapshot. ``asked``: someone started it
+    and waits for it, so its model work goes ahead of the feed's (a scheduled refresh is backlog)."""
     from celery import chain
     steps = []
     if rebuild:
-        steps.append(_step("refresh_build", slug))
+        steps.append(_step("refresh_build", slug, asked))
     if full_text:
-        steps += [_step("refresh_full_text", slug), _step("refresh_gpu_lane")]
+        steps += [_step("refresh_full_text", slug), _step("refresh_gpu_lane", slug, asked)]
     steps.append(_step("snapshot_topic", slug, reason))
     return chain(*steps)
 
 
-def queue_refresh(slug: str, rebuild: bool = True, full_text: bool = True, reason: str = "refresh") -> str:
-    return refresh_chain(slug, rebuild, full_text, reason).apply_async().id
+def queue_refresh(slug: str, rebuild: bool = True, full_text: bool = True, reason: str = "refresh",
+                  asked: bool = False) -> str:
+    return refresh_chain(slug, rebuild, full_text, reason, asked).apply_async().id
 
 
 def refresh_due_topics() -> list[str]:

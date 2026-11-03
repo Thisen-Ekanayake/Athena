@@ -66,14 +66,15 @@ def sync_citing_gaps(session: Session) -> int:
     return len(rows)
 
 
-def pending_gap_candidates(session: Session, limit: int) -> list[tuple[EvoGapStatement, str]]:
-    return session.execute(
-        select(EvoGapStatement, EvoPaper.title)
-        .join(EvoPaper, EvoGapStatement.source_paper_id == EvoPaper.id)
-        .where(EvoGapStatement.label.is_(None))
-        .order_by(EvoGapStatement.source_paper_id)
-        .limit(limit)
-    ).all()
+def pending_gap_candidates(session: Session, limit: int,
+                           papers: set[UUID] | None = None) -> list[tuple[EvoGapStatement, str]]:
+    """Unlabelled gap candidates; ``papers``: only those about these papers (one map's)."""
+    q = (select(EvoGapStatement, EvoPaper.title)
+         .join(EvoPaper, EvoGapStatement.source_paper_id == EvoPaper.id)
+         .where(EvoGapStatement.label.is_(None)))
+    if papers is not None:
+        q = q.where(EvoGapStatement.paper_id.in_(papers))
+    return session.execute(q.order_by(EvoGapStatement.source_paper_id).limit(limit)).all()
 
 
 def save_gap_labels(session: Session, labels: list[dict]) -> None:
@@ -85,14 +86,15 @@ def save_gap_labels(session: Session, labels: list[dict]) -> None:
     session.commit()
 
 
-def pending_gap_vectors(session: Session, limit: int) -> list[tuple[EvoGapStatement, int | None]]:
-    """Gap statements without a vector, with the year the stating paper appeared."""
-    return session.execute(
-        select(EvoGapStatement, EvoPaper.year)
-        .join(EvoPaper, EvoGapStatement.source_paper_id == EvoPaper.id)
-        .where(EvoGapStatement.label == "gap", EvoGapStatement.embedded_at.is_(None))
-        .limit(limit)
-    ).all()
+def pending_gap_vectors(session: Session, limit: int,
+                        papers: set[UUID] | None = None) -> list[tuple[EvoGapStatement, int | None]]:
+    """Gap statements without a vector, with the year the stating paper appeared; ``papers`` as above."""
+    q = (select(EvoGapStatement, EvoPaper.year)
+         .join(EvoPaper, EvoGapStatement.source_paper_id == EvoPaper.id)
+         .where(EvoGapStatement.label == "gap", EvoGapStatement.embedded_at.is_(None)))
+    if papers is not None:
+        q = q.where(EvoGapStatement.paper_id.in_(papers))
+    return session.execute(q.limit(limit)).all()
 
 
 def mark_gaps(session: Session, gap_ids: list[UUID], column: str) -> None:
@@ -101,14 +103,15 @@ def mark_gaps(session: Session, gap_ids: list[UUID], column: str) -> None:
     session.commit()
 
 
-def pending_loose(session: Session, limit: int) -> list[tuple[EvoGapStatement, int | None]]:
-    """Embedded gap statements whose loose links have not been searched."""
-    return session.execute(
-        select(EvoGapStatement, EvoPaper.year)
-        .join(EvoPaper, EvoGapStatement.source_paper_id == EvoPaper.id)
-        .where(EvoGapStatement.embedded_at.isnot(None), EvoGapStatement.loose_checked_at.is_(None))
-        .limit(limit)
-    ).all()
+def pending_loose(session: Session, limit: int,
+                  papers: set[UUID] | None = None) -> list[tuple[EvoGapStatement, int | None]]:
+    """Embedded gap statements whose loose links have not been searched; ``papers`` as above."""
+    q = (select(EvoGapStatement, EvoPaper.year)
+         .join(EvoPaper, EvoGapStatement.source_paper_id == EvoPaper.id)
+         .where(EvoGapStatement.embedded_at.isnot(None), EvoGapStatement.loose_checked_at.is_(None)))
+    if papers is not None:
+        q = q.where(EvoGapStatement.paper_id.in_(papers))
+    return session.execute(q.limit(limit)).all()
 
 
 def save_loose_links(session: Session, gap_id: UUID, links: list[dict]) -> None:
@@ -132,6 +135,19 @@ def topic_gap_rows(session: Session, topic: EvoTopic) -> list[dict]:
     return [{"id": g.id, "paper_id": g.paper_id, "source_paper_id": g.source_paper_id, "origin": g.origin,
              "sentence": g.sentence, "section_type": g.section_type, "year": year,
              "fix": context_label == "addresses_limitation"} for g, year, context_label in rows]
+
+
+def named_themes(session: Session, topic_id: UUID) -> list[tuple[set[UUID], str, dict]]:
+    """A topic's gap themes the 9B named, with their members: [(gap ids, label, detail)], so a rebuild can keep
+    the names (``athena.evolution.gaps.keep_names``)."""
+    themes = [t for t in session.execute(select(EvoGapTheme).where(EvoGapTheme.topic_id == topic_id)).scalars()
+              if (t.detail or {}).get("label_model")]
+    members: dict[UUID, set[UUID]] = defaultdict(set)
+    if themes:
+        for theme_id, gap_id in session.execute(select(EvoGapThemeMember.theme_id, EvoGapThemeMember.gap_id)
+                                                .where(EvoGapThemeMember.theme_id.in_([t.id for t in themes]))):
+            members[theme_id].add(gap_id)
+    return [(members[t.id], t.label, dict(t.detail)) for t in themes]
 
 
 def save_themes(topic_id: UUID, themes: list[dict]) -> None:
@@ -205,11 +221,14 @@ def topic_gaps(session: Session, topic: EvoTopic, examples: int = 3) -> dict:
             "loose_min_score": LOOSE_MIN_SCORE}
 
 
-def themes_to_label(session: Session) -> list[tuple[EvoGapTheme, str, list[str]]]:
-    """Gap themes without a 9B label, with their topic's name and up to six statements (own text first)."""
+def themes_to_label(session: Session, topic_id: UUID | None = None) -> list[tuple[EvoGapTheme, str, list[str]]]:
+    """Gap themes without a 9B label (one topic's, given one), with their topic's name and up to six statements
+    (own text first)."""
     out = []
-    themes = session.execute(select(EvoGapTheme, EvoTopic.name)
-                             .join(EvoTopic, EvoGapTheme.topic_id == EvoTopic.id)).all()
+    q = select(EvoGapTheme, EvoTopic.name).join(EvoTopic, EvoGapTheme.topic_id == EvoTopic.id)
+    if topic_id is not None:
+        q = q.where(EvoGapTheme.topic_id == topic_id)
+    themes = session.execute(q).all()
     for theme, topic_name in themes:
         if (theme.detail or {}).get("label_model"):
             continue

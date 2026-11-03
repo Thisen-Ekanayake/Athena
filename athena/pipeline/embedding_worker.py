@@ -49,8 +49,9 @@ def init_qdrant():
 def process_embedding_queue():
     """
     Pull items from 'athena:embedding_queue' and process them in batches. Skips a minute while someone chats, so
-    the router does not swap the chat model out for the embedder, and while background work is paused
-    (athena.model_server.lane); a chat or a pause that starts during the run ends it after the batch in hand.
+    the router does not swap the chat model out for the embedder, while background work is paused
+    (athena.model_server.lane), and while another model has its turn on the GPU (athena.model_server.turns); a chat,
+    a pause or the end of the embedder's turn during the run ends it after the batch in hand.
     """
     if lane.chat_active() or lane.paused("feed"):
         return
@@ -66,6 +67,9 @@ def process_embedding_queue():
     # sync's worth of arXiv papers. The deadline keeps one run from overlapping the next for long.
     deadline = time.monotonic() + DRAIN_SECONDS
     while time.monotonic() < deadline and not lane.paused("feed") and not lane.chat_active():  # a chat stops the run
+        # Only work in the queue asks for a turn: an empty queue must not keep the embedder wanted.
+        if not r.llen("athena:embedding_queue") or not lane.my_turn("feed_embed", llm.embed_model()):
+            return
         item_ids = []
         for _ in range(BATCH_SIZE):
             item_id = r.lpop("athena:embedding_queue")
