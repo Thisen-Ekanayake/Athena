@@ -51,6 +51,10 @@ the milestones, the reading order and the open problems, all on your own GPU or 
 - Hybrid search (Postgres full text + vectors) over your library, with live Semantic Scholar results.
 - Literature reviews grounded in a map or in search results; export reviews and reading lists.
 
+**Agents (MCP)**
+
+- Claude Code and other MCP clients can use Athena through its MCP server at `/mcp`: ask for a literature review, a map of a field, an answer from a map, an idea check or a chat turn, and Athena does the work with its own model and hands back the finished result. Agents also search papers, read maps and keep artifacts, lists and notes. See [Connect an agent](#connect-an-agent).
+
 **Ready for a team**
 
 - Accounts with admin and user roles; the admin creates accounts (no public sign-up).
@@ -84,7 +88,7 @@ cp .env.example .env
 # Full stack in Docker (pre-built images from GHCR; --build to build locally, --down to stop)
 ./run_docker.sh
 
-# Or native dev: infra in Docker, API / workers / frontend / model server on the host, with hot reload
+# Or native dev (Python 3.11+): infra in Docker, API / workers / frontend / model server on the host, with hot reload
 pip install -r requirements.txt -r requirements-dev.txt && playwright install chromium
 ./run_native.sh                # --stop to stop
 ```
@@ -98,6 +102,16 @@ With Docker, start the model server on the host (it needs the GPU); the containe
 ```bash
 llama-server --models-preset config/llama-router.ini --models-max 1 --port 8080
 ```
+
+### Connect an agent
+
+Make an access token in **Settings → Agents**; the page shows it once with the command to run. For Claude Code:
+
+```bash
+claude mcp add --transport http athena http://localhost:5173/mcp --header "Authorization: Bearer ath_…"
+```
+
+The agent acts as your account: what it asks for is saved where the web app shows it, and your daily allowances apply. The server answers requests addressed to localhost; behind a hostname, list it in `MCP_ALLOWED_HOSTS`. A review or map build is waited on for up to `MCP_WAIT_SECONDS` (600) with progress; after that the agent gets a job to `wait_for`. If your client gives up sooner, raise its tool timeout (Claude Code: `MCP_TOOL_TIMEOUT`, in milliseconds).
 
 ### Behind HTTPS
 
@@ -115,6 +129,7 @@ Everything is set through environment variables (`.env`, read by `athena/api/con
 | `LIMIT_*_PER_DAY`, `MONTHLY_BUDGET_USD`, `USER_MONTHLY_TOKENS` | Per-user allowances and spending caps |
 | `DOCS_ENABLED`, `DOCS_USERNAME`, `DOCS_PASSWORD` | API docs, off by default; with a password they ask for Basic Auth |
 | `FORWARDED_ALLOW_IPS` | Addresses whose `X-Forwarded-*` headers the API trusts (set in the release Compose file) |
+| `MCP_ALLOWED_HOSTS`, `MCP_WAIT_SECONDS`, `PUBLIC_URL` | The MCP server for agents: host names besides localhost, how long a tool waits, the app's address for links |
 
 See `.env.example` for the full list.
 
@@ -130,6 +145,7 @@ Two Celery pipelines, one for the feed and one for the research maps, write to P
 | `athena/pipeline/` | Celery workers: embedding, scoring, clustering, summaries, momentum |
 | `athena/evolution/` | Research maps: topic search, citation graph, milestones, gaps, full text, reviews |
 | `athena/api/` | FastAPI app, routers and auth |
+| `athena/mcp/` | MCP server for agents; its tools call the API's routes in-process with an access token |
 | `frontend/` | React 19 + TypeScript + Vite (TanStack Query, Zustand, three.js); pages and layout in [docs/ui.md](docs/ui.md) |
 | `docker/` | Dockerfiles and Compose files; images publish to GHCR on push to `main` |
 
