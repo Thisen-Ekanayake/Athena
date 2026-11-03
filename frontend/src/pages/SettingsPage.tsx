@@ -20,6 +20,7 @@ import { ScoringSettings } from '../features/settings/ScoringSettings'
 import { PersonalisationSettings } from '../features/personalisation/PersonalisationSettings'
 import { NotificationsSettings } from '../features/inbox/NotificationsSettings'
 import { UsageSettings } from '../features/usage/UsageSettings'
+import { AgentsSettings } from '../features/agents/AgentsSettings'
 import { PasswordForm } from './AuthPages'
 import { useAppStore, type Accent } from '../store/appStore'
 import { Button } from '../ui/Button'
@@ -32,8 +33,8 @@ import { Spinner } from '../ui/Spinner'
 import { cn } from '../ui/cn'
 import { inputClass } from '../ui/inputClass'
 
-// Admin tabs change Athena for everyone; Account, Notifications, Personalisation, Usage and Appearance are each
-// person's own (Usage also shows admins the whole app).
+// Admin tabs change Athena for everyone; Account, Notifications, Personalisation, Usage, Agents and Appearance are
+// each person's own (Usage also shows admins the whole app).
 const TABS = [
   { id: 'sources', label: 'Sources', admin: true },
   { id: 'keys', label: 'Models and keys', admin: true },
@@ -44,6 +45,7 @@ const TABS = [
   { id: 'notifications', label: 'Notifications', admin: false },
   { id: 'personalisation', label: 'Personalisation', admin: false },
   { id: 'usage', label: 'Usage', admin: false },
+  { id: 'agents', label: 'Agents', admin: false },
   { id: 'appearance', label: 'Appearance', admin: false },
   { id: 'clusters', label: 'Clusters', admin: true },
   { id: 'health', label: 'Health', admin: true },
@@ -107,6 +109,7 @@ export function SettingsPage() {
           {active === 'notifications' && <NotificationsSettings />}
           {active === 'personalisation' && <PersonalisationSettings />}
           {active === 'usage' && <UsageSettings />}
+          {active === 'agents' && <AgentsSettings />}
           {active === 'appearance' && <AppearanceSection />}
           {active === 'clusters' && <ClustersSection />}
           {active === 'health' && <HealthSection />}
