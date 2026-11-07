@@ -3,6 +3,7 @@ The beat schedule: every periodic task, and the hourly check of the model budget
 
 ``celery -A athena.pipeline.tasks worker -B`` runs it; athena.pipeline.tasks imports this module.
 """
+import athena.conferences.tasks
 import athena.evolution.tasks
 import athena.pipeline.clustering
 import athena.pipeline.crawl
@@ -65,6 +66,11 @@ def setup_periodic_tasks(sender, **kwargs):
     sender.add_periodic_task(3600.0, athena.pipeline.watches.check_watches.s(), name='check watches every hour')
     sender.add_periodic_task(crontab(hour=athena.pipeline.watches.DIGEST_HOUR_UTC, minute=0),
                              athena.pipeline.watches.send_digests.s(), name='inbox digests')
+    # Conferences: the ACL Anthology weekly (fetched only when it changed), citation counts that are due daily
+    sender.add_periodic_task(crontab(day_of_week=0, hour=3, minute=30), athena.conferences.tasks.sync.s(),
+                             name='sync conference proceedings weekly')
+    sender.add_periodic_task(crontab(hour=4, minute=30), athena.conferences.tasks.daily.s(),
+                             name='conference citations daily')
     # The month's model spend against its budget: admins hear at 80% and 100%
     sender.add_periodic_task(3600.0, check_model_budget.s(), name='check the model budget every hour')
 

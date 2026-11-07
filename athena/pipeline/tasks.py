@@ -14,6 +14,7 @@ import athena.pipeline.watches  # noqa: F401  (registers the watch checks and di
 import athena.pipeline.momentum  # noqa: F401  (registers the daily citation momentum)
 import athena.projects.tasks  # noqa: F401  (registers project indexing)
 import athena.pipeline.reembed  # noqa: F401  (registers the re-embed after a switch of embedding model)
+import athena.conferences.tasks  # noqa: F401  (registers the conference pipeline)
 import athena.pipeline.beat  # noqa: F401  (the periodic tasks)
 from athena.pipeline.crawl import (  # noqa: F401  (imported from here by scripts and user_sources)
     STAGING_DIR, _crawl_source_async, _preprocess_text, crawl_all_sources, crawl_source, describe_error,
