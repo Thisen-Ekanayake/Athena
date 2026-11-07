@@ -20,6 +20,9 @@ from athena.core.models.personal import (
     UserHighlight, ItemFeedback, InterestProfile, LitReview,
 )
 from athena.core.models.model_server import LlmModel, LlmBenchmark
+from athena.core.models.conferences import (
+    ConfVolume, ConfVolumeVenue, ConfTopic, ConfPaper, ConfTerm, ConfSummary,
+)
 from athena.core.models.projects import (
     Project, ProjectItem, Conversation, ConversationMap, ChatMessage, UserFile, Artifact, ArtifactVersion,
 )
@@ -90,4 +93,10 @@ __all__ = [
     "UserFile",
     "Artifact",
     "ArtifactVersion",
+    "ConfVolume",
+    "ConfVolumeVenue",
+    "ConfTopic",
+    "ConfPaper",
+    "ConfTerm",
+    "ConfSummary",
 ]
