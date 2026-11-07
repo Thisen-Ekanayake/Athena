@@ -401,3 +401,60 @@ def test_a_sync_reads_as_a_line_and_the_sources_that_did_something():
                                   {"name": "LessWrong", "state": "done", "new": 3}]})
     assert text == ("Sync (scheduled): done, 2/2 sources, 3 new items, 0 errors; started 1970-01-01 00:00 UTC, "
                     "finished 1970-01-01 00:01 UTC\n- LessWrong: done, 3 new")
+
+
+# ── conferences ──────────────────────────────────────────────────────
+
+EDITION = {
+    "venue": "acl", "name": "ACL", "year": 2026, "previous_year": 2025, "papers": 4400,
+    "by_kind": {"main": 2300, "findings": 2100},
+    "years": [{"year": 2025, "papers": 3000}, {"year": 2026, "papers": 4400}],
+    "topics": [{"id": 1, "name": "LLM agents and tool use", "papers": 600, "share": 0.15, "change": 0.042},
+               {"id": 2, "name": "Machine translation", "papers": 80, "share": 0.02, "change": -0.011},
+               {"id": 3, "name": "Speech", "papers": 0, "share": 0.0, "change": None}],
+    "awards": [{"id": "2026.acl-long.1", "title": "OctoTools", "year": 2026, "authors": ["Pan Lu"],
+                "awards": ["Best Paper Award"], "citation_count": 97, "topic": {"id": 1, "name": "LLM agents"},
+                "url": "https://aclanthology.org/2026.acl-long.1/"}],
+    "terms": {"rising": [{"term": "agentic"}, {"term": "verifiable"}], "falling": [{"term": "bert"}]},
+    "summary": {"text": "ACL 2026 moved to agents."}, "progress": {"papers": 4400, "sorted": 4000},
+}
+
+
+async def test_a_conference_edition_reads_as_text(fake):
+    fake.on("GET", "/conferences/acl", EDITION)
+    error, text = await call("conference_overview", {"venue": "acl", "kinds": ["main", "findings"]})
+    assert not error
+    assert "# ACL 2026: 4400 papers (2300 main, 2100 findings)" in text
+    assert "LLM agents and tool use: 15.0% (600) (+4.2 pts)" in text and "(−1.1 pts)" in text
+    assert "Speech" not in text  # no papers this edition
+    assert "Rising terms: agentic, verifiable" in text and "[Best Paper Award]" in text
+    assert "4000 of 4400 papers are sorted" in text and "http://athena.test/library/conferences/acl?year=2026" in text
+    assert fake.calls[-1][2] == {"year": None, "kinds": "main,findings"}
+
+
+async def test_conference_trends_follow_named_topics(fake):
+    fake.on("GET", "/conferences/all/trends", {
+        "name": "ACL family", "topics": [{"id": 1, "name": "Machine translation"}, {"id": 2, "name": "Reasoning"}],
+        "years": [{"year": 2024, "papers": 10, "sorted": 10, "topics": {"1": 5, "2": 5}},
+                  {"year": 2025, "papers": 20, "sorted": 20, "topics": {"1": 2, "2": 18}}]})
+    error, text = await call("conference_trends", {"topics": ["reason"]})
+    assert not error and "Year | papers | Reasoning" in text and "2025 | 20 | 90.0%" in text
+    error, text = await call("conference_trends", {"topics": ["cooking"]})
+    assert error and "No topic 'cooking'" in text and "Machine translation" in text
+
+
+async def test_top_conference_papers_by_topic_name(fake):
+    fake.on("GET", "/conferences", {"topics": [{"id": 7, "name": "Machine translation"}]})
+    fake.on("GET", "/conferences/emnlp/papers", {"name": "EMNLP", "total": 1, "papers": EDITION["awards"]})
+    error, text = await call("conference_papers", {"venue": "emnlp", "topic": "translation", "year": 2026})
+    assert not error and "Top papers, EMNLP 2026, Machine translation (1 in all)" in text
+    assert fake.calls[-1][2]["topic"] == 7
+
+
+async def test_comparing_venues_in_a_year(fake):
+    fake.on("GET", "/conferences/compare", {
+        "topics": [{"id": 1, "name": "Reasoning"}], "missing": ["eacl"],
+        "venues": [{"name": "ACL", "papers": 100, "sorted": 100, "topics": {"1": 30}},
+                   {"name": "EMNLP", "papers": 200, "sorted": 200, "topics": {"1": 20}}]})
+    error, text = await call("compare_conferences", {"venues": ["acl", "emnlp", "eacl"], "year": 2026})
+    assert not error and "Reasoning | 30.0% | 10.0%" in text and "No 2026 edition: eacl." in text

@@ -21,7 +21,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import PlainTextResponse
 
 from athena.api.config import settings
-from athena.mcp import admin, common, maps, mine, papers, research
+from athena.mcp import admin, common, conferences, maps, mine, papers, research
 from athena.mcp.access import RequireToken
 
 INSTRUCTIONS = """\
@@ -42,7 +42,7 @@ mcp = MCPServer(
     version="1.0.0",
 )
 
-for module in (research, papers, maps, mine, admin):
+for module in (research, papers, maps, conferences, mine, admin):
     module.register(mcp)
 
 
