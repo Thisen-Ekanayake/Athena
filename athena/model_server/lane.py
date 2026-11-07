@@ -12,8 +12,9 @@ A benchmark holds the same flag as ``benchmark``, so summaries do not swap its m
 way itself to a chat (``yield_to_chat(me="benchmark")`` waits only while someone else holds it).
 
 An admin can pause background work (Settings → Models and keys → Activity), all of it or one group (``GROUPS``):
-the feed's summaries, cluster labels and embeddings, or the maps' model work. Paused work waits at the same points
-until it is resumed, so an unloaded model stays out of memory. A call already running finishes; what people ask for
+the feed's summaries, cluster labels and embeddings, the maps' model work, or the conferences' embeddings and
+summaries. Paused work waits at the same points until it is resumed, so an unloaded model stays out of memory. A
+call already running finishes; what people ask for
 (chats, Q&A, reviews, search, project indexing) never waits. Celery redelivers a task unacknowledged for an hour
 (``task_acks_late``, the broker's visibility timeout), so a pause holds one task at most ``PAUSE_HOLD`` and then raises
 ``Paused``; the task queues itself again.
@@ -32,7 +33,7 @@ import uuid
 from loguru import logger
 
 KEY = "athena:chat_active"
-PAUSE_KEY = "athena:background_paused"            # before groups: everything; taken over by both groups
+PAUSE_KEY = "athena:background_paused"            # before groups: everything; taken over by every group
 GROUP_KEY = "athena:background_paused:{group}"
 # What a pause can hold, and which background features each group covers.
 GROUPS = {
@@ -40,6 +41,8 @@ GROUPS = {
              "features": ("summary", "cluster_label", "feed_embed")},
     "maps": {"label": "Maps", "covers": "embedding and labelling for map builds and refreshes",
              "features": ("map_build", "map_embed")},
+    "conferences": {"label": "Conferences", "covers": "embedding conference papers and writing their summaries",
+                    "features": ("conf_embed", "conf_summary")},
 }
 WAITING = "athena:lane:waiting:"
 HOLD_SECONDS = 90         # a turn refreshes the flag as it streams; a warm-up holds it this long

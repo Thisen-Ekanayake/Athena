@@ -98,17 +98,21 @@ def test_each_group_pauses_on_its_own(monkeypatch):
         embedding_worker.process_embedding_queue()  # the feed's embeddings still run
     lane.pause("feed")
     embedding_worker.process_embedding_queue()
-    assert ran == [1] and lane.paused()["by"] == "Admin"  # both groups now: everything is paused
+    assert ran == [1] and lane.paused() is None  # the conferences' work still runs
+    lane.pause("conferences")
+    assert lane.paused()["by"] == "Admin"  # every group now: everything is paused
+    with pytest.raises(lane.Paused):
+        lane.yield_to_chat(who="conf_embed")
     lane.resume("maps")
-    assert lane.pauses() == {"feed": lane.pauses()["feed"], "maps": None} and lane.yield_to_chat(who="map_build") == 0
+    assert lane.pauses()["maps"] is None and lane.yield_to_chat(who="map_build") == 0
 
 
-def test_a_pause_from_before_groups_holds_both():
+def test_a_pause_from_before_groups_holds_every_group():
     lane._redis().set(lane.PAUSE_KEY, '{"by": "Admin", "since": 1}')
-    assert lane.pauses() == {"feed": {"by": "Admin", "since": 1}, "maps": {"by": "Admin", "since": 1}}
+    assert lane.pauses() == {g: {"by": "Admin", "since": 1} for g in ("feed", "maps", "conferences")}
     assert lane._redis().get(lane.PAUSE_KEY) is None
     lane.resume()
-    assert lane.pauses() == {"feed": None, "maps": None}
+    assert lane.pauses() == {"feed": None, "maps": None, "conferences": None}
 
 
 def test_waiters_are_listed_while_they_wait(monkeypatch):
@@ -199,9 +203,11 @@ def test_pause_and_resume(client):
 def test_one_group_is_paused_and_resumed(client):
     body = client.post("/api/v1/models/activity/pause", json={"group": "maps"}).json()
     assert body["paused"] is None
-    assert {g["key"]: bool(g["paused"]) for g in body["groups"]} == {"feed": False, "maps": True}
+    assert {g["key"]: bool(g["paused"]) for g in body["groups"]} == {"feed": False, "maps": True,
+                                                                     "conferences": False}
     groups = client.get("/api/v1/models/activity").json()["lane"]["groups"]
-    assert [(g["key"], g["label"]) for g in groups] == [("feed", "Feed"), ("maps", "Maps")]
+    assert [(g["key"], g["label"]) for g in groups] == [("feed", "Feed"), ("maps", "Maps"),
+                                                        ("conferences", "Conferences")]
     assert client.post("/api/v1/models/activity/pause", json={"group": "trending"}).status_code == 422
     assert client.post("/api/v1/models/activity/resume", json={"group": "maps"}).json()["groups"][1]["paused"] is None
 

@@ -45,6 +45,8 @@ FEATURES = {
     "search": "Search",
     "chat": "Chats",
     "project_index": "Project indexing",
+    "conf_embed": "Conference embeddings",
+    "conf_summary": "Conference summaries",
 }
 
 
