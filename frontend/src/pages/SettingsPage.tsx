@@ -21,6 +21,7 @@ import { PersonalisationSettings } from '../features/personalisation/Personalisa
 import { NotificationsSettings } from '../features/inbox/NotificationsSettings'
 import { UsageSettings } from '../features/usage/UsageSettings'
 import { AgentsSettings } from '../features/agents/AgentsSettings'
+import { ConferenceSettings } from '../features/conferences/ConferenceSettings'
 import { PasswordForm } from './AuthPages'
 import { useAppStore, type Accent } from '../store/appStore'
 import { Button } from '../ui/Button'
@@ -41,6 +42,7 @@ const TABS = [
   { id: 'users', label: 'Users', admin: true },
   { id: 'sharing', label: 'Sharing', admin: true },
   { id: 'scoring', label: 'Scoring', admin: true },
+  { id: 'conferences', label: 'Conferences', admin: true },
   { id: 'account', label: 'Account', admin: false },
   { id: 'notifications', label: 'Notifications', admin: false },
   { id: 'personalisation', label: 'Personalisation', admin: false },
@@ -105,6 +107,7 @@ export function SettingsPage() {
           {active === 'users' && <UsersSection />}
           {active === 'sharing' && <SharingSettings />}
           {active === 'scoring' && <div className="grid gap-6"><ScoringSettings /><FeedMixSettings /></div>}
+          {active === 'conferences' && <ConferenceSettings />}
           {active === 'account' && <AccountSection />}
           {active === 'notifications' && <NotificationsSettings />}
           {active === 'personalisation' && <PersonalisationSettings />}

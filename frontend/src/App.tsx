@@ -37,6 +37,8 @@ const ChatPage = lazy(() => import('./pages/ChatPage').then((m) => ({ default: m
 const ChatsPage = lazy(() => import('./pages/ChatsPage').then((m) => ({ default: m.ChatsPage })))
 const ProjectPage = lazy(() => import('./pages/ProjectPage').then((m) => ({ default: m.ProjectPage })))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage').then((m) => ({ default: m.ProjectsPage })))
+const ConferencePage = lazy(() =>
+  import('./features/conferences/ConferencePage').then((m) => ({ default: m.ConferencePage })))
 
 const loading = (page: ReactNode) => <Suspense fallback={<Spinner label="Loading…" />}>{page}</Suspense>
 
@@ -71,6 +73,7 @@ function App() {
           <Route path="evolution/:slug" element={evolution} />
           <Route path="library" element={<LibraryPage />} />
           <Route path="library/:tab" element={<LibraryPage />} />
+          <Route path="library/conferences/:venue" element={loading(<ConferencePage />)} />
           {/* Saved lists became the Library's first tab. */}
           <Route path="saved" element={<Navigate to="/library" replace />} />
           <Route path="reviews/:id" element={<ReviewPage />} />

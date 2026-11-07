@@ -7,6 +7,7 @@ import { DownloadMenu } from '../components/DownloadMenu'
 import { ItemList } from '../components/items/ItemRow'
 import { NotesTab, ReadTab } from '../features/reading/LibraryTabs'
 import { ReviewsTab } from '../features/reviews/ReviewsTab'
+import { ConferencesTab } from '../features/conferences/ConferencesTab'
 import { Button } from '../ui/Button'
 import { EmptyState } from '../ui/EmptyState'
 import { Notice } from '../ui/Notice'
@@ -32,16 +33,20 @@ const TABS = [
   { id: 'notes', label: 'Notes and highlights' },
   { id: 'read', label: 'Read' },
   { id: 'reviews', label: 'Reviews' },
+  { id: 'conferences', label: 'Conferences' },
 ] as const
 type Tab = (typeof TABS)[number]['id']
 
-/** Your own reading: lists you made, your notes and highlights on papers, and what you have read. */
+/** Your own reading (lists you made, your notes and highlights on papers, what you have read, your reviews), and
+ * the conferences' proceedings, which everyone shares. */
 export function LibraryPage() {
   const { tab } = useParams<{ tab?: string }>()
   const active: Tab = TABS.some((t) => t.id === tab) ? (tab as Tab) : 'lists'
   return (
     <div className="mx-auto max-w-[1100px]">
-      <PageHeader title="Library" description="Your reading lists, your notes and highlights, what you have read, and your literature reviews. Only you see them." />
+      <PageHeader title="Library" description={active === 'conferences'
+        ? "The ACL family's conferences, year by year. Everyone sees the same ones."
+        : 'Your reading lists, your notes and highlights, what you have read, and your literature reviews. Only you see them.'} />
       <nav className="mb-5 flex gap-1 border-b border-line" aria-label="Library sections">
         {TABS.map((t) => (
           <NavLink key={t.id} to={t.id === 'lists' ? '/library' : `/library/${t.id}`} end
@@ -55,6 +60,7 @@ export function LibraryPage() {
       {active === 'notes' && <NotesTab />}
       {active === 'read' && <ReadTab />}
       {active === 'reviews' && <ReviewsTab />}
+      {active === 'conferences' && <ConferencesTab />}
     </div>
   )
 }
