@@ -46,6 +46,12 @@ the milestones, the reading order and the open problems, all on your own GPU or 
 - Citation momentum (the **Rising** page), topic clusters, AI summaries and Q&A on any paper.
 - Reading lists, read marks, notes and highlights.
 
+**Conferences**
+
+- The ACL family (ACL, EMNLP, NAACL, EACL, AACL, COLING, TACL, CL) from the ACL Anthology, every year since the 1960s, main proceedings and Findings, in Library → Conferences.
+- Each edition: its papers sorted into a fixed, editable topic list, how the topics moved since the previous edition, rising and falling terms, award winners and a written summary.
+- Topics over the years, venues side by side, and the top papers of any topic (award winners first, then citations from OpenAlex and Semantic Scholar).
+
 **Search and writing**
 
 - Hybrid search (Postgres full text + vectors) over your library, with live Semantic Scholar results.
@@ -53,7 +59,7 @@ the milestones, the reading order and the open problems, all on your own GPU or 
 
 **Agents (MCP)**
 
-- Claude Code and other MCP clients can use Athena through its MCP server at `/mcp`: ask for a literature review, a map of a field, an answer from a map, an idea check or a chat turn, and Athena does the work with its own model and hands back the finished result. Agents also search papers, read maps and keep artifacts, lists and notes. See [Connect an agent](#connect-an-agent).
+- Claude Code and other MCP clients can use Athena through its MCP server at `/mcp`: ask for a literature review, a map of a field, an answer from a map, an idea check or a chat turn, and Athena does the work with its own model and hands back the finished result. Agents also search papers, read maps and conference trends, and keep artifacts, lists and notes. See [Connect an agent](#connect-an-agent).
 
 **Ready for a team**
 
@@ -144,6 +150,7 @@ Two Celery pipelines, one for the feed and one for the research maps, write to P
 | `athena/scrapers/` | Source collectors (ArXiv, RSS, Substack, Playwright, …) |
 | `athena/pipeline/` | Celery workers: embedding, scoring, clustering, summaries, momentum |
 | `athena/evolution/` | Research maps: topic search, citation graph, milestones, gaps, full text, reviews |
+| `athena/conferences/` | Conference proceedings from the ACL Anthology: import, citations, topics, rising terms, summaries |
 | `athena/api/` | FastAPI app, routers and auth |
 | `athena/mcp/` | MCP server for agents; its tools call the API's routes in-process with an access token |
 | `frontend/` | React 19 + TypeScript + Vite (TanStack Query, Zustand, three.js); pages and layout in [docs/ui.md](docs/ui.md) |

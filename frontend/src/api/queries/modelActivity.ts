@@ -88,9 +88,10 @@ export interface PauseState {
   since: number
 }
 
-/** Background work a pause holds as one: the feed's summaries, labels and embeddings, or the maps' model work */
+/** Background work a pause holds as one: the feed's summaries, labels and embeddings, the maps' model work, or the
+ * conferences' embeddings and summaries */
 export interface PauseGroup {
-  key: 'feed' | 'maps'
+  key: 'feed' | 'maps' | 'conferences'
   label: string
   covers: string
   paused: PauseState | null

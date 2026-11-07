@@ -51,12 +51,13 @@ new accounts to the guide first.
 | `/evolution` | `features/evolution/EvolutionPage.tsx` | The research maps, and a proposal panel for building a new one from a search |
 | `/evolution/:slug` | same | One map, with tabs: Lineage map, Reading path, Open problems, Ask, People, Links, Changes. The tab and the selected paper are in the URL |
 | `/evolution/ideas` | `features/evolution/IdeaCheckPage.tsx` | Check an idea or abstract against every map |
-| `/library`, `/library/:tab` | `pages/LibraryPage.tsx` | Your lists, notes and highlights, what you have read, and your literature reviews |
+| `/library`, `/library/:tab` | `pages/LibraryPage.tsx` | Your lists, notes and highlights, what you have read, your literature reviews, and the conferences (shared) |
+| `/library/conferences/:venue` | `features/conferences/ConferencePage.tsx` | One ACL-family venue (or `all`): an edition's topics, terms, awards and top papers; topics over the years; venues side by side. `?year=`, `kinds=`, `view=`, `topic=` |
 | `/reviews/:id` | `pages/ReviewPage.tsx` | One literature review, full width |
 | `/inbox` | `pages/InboxPage.tsx` | Map updates, follows and digests from the last 60 days |
 | `/search` | `pages/SearchPage.tsx` | One search over your library (and optionally Semantic Scholar), the matching map and a literature review |
 | `/items/:id` | `pages/PaperPage.tsx` | One item as a full page |
-| `/settings/:tab` | `pages/SettingsPage.tsx` | Everyone: Account, Notifications, Personalisation, Usage, Appearance. Admins also get Sources, Models and keys, Users, Sharing, Scoring, Clusters, Health and Sync log |
+| `/settings/:tab` | `pages/SettingsPage.tsx` | Everyone: Account, Notifications, Personalisation, Usage, Appearance. Admins also get Sources, Models and keys, Users, Sharing, Scoring, Conferences, Clusters, Health and Sync log |
 | `/welcome` | `features/onboarding/WelcomePage.tsx` | The setup guide for new accounts |
 | `/share/:token` | `features/evolution/SharedMapPage.tsx` | A read-only map behind a share link, with no account needed |
 | `/login`, `/setup`, `/change-password` | `pages/AuthPages.tsx` | Sign in; create the first (admin) account; replace a temporary password |

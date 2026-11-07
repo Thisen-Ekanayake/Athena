@@ -18,7 +18,7 @@ from starlette.routing import Route
 from athena.api.routers import (
     feed, items, clusters, search, sources, sync, app_settings, saved, evolution, inbox, auth as auth_routes,
     users, watches, usage, share, momentum, personal, interests, reviews, scoring, summaries, projects, chats,
-    model_registry, model_activity, tokens,
+    model_registry, model_activity, tokens, conferences,
 )
 from athena.api import qa_api
 from athena.mcp import api as api_inprocess, server as mcp_server
@@ -128,6 +128,7 @@ def create_app() -> FastAPI:
     app.include_router(model_registry.router, dependencies=admin)
     app.include_router(saved.router, dependencies=login)
     app.include_router(evolution.router, dependencies=login)
+    app.include_router(conferences.router, dependencies=login)  # editing topics and syncing add require_admin
     app.include_router(inbox.router, dependencies=login)
     app.include_router(watches.router, dependencies=login)
     app.include_router(usage.router, dependencies=login)  # the admin views add require_admin themselves
