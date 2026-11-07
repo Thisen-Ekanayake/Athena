@@ -257,14 +257,15 @@ class OpenAlexClient:
                                                 for c in raw.get("counts_by_year") or [] if c.get("year")}
         return out
 
-    def get_works_by_doi(self, dois: list[str]) -> list[Work]:
-        """Many works by DOI, 50 per list call (DOIs are long, so fewer fit in a URL than IDs)."""
+    def get_works_by_doi(self, dois: list[str], select: str = WORK_FIELDS) -> list[Work]:
+        """Many works by DOI, 50 per list call (DOIs are long, so fewer fit in a URL than IDs). A smaller ``select``
+        leaves the other fields empty."""
         works: list[Work] = []
         unique = list(dict.fromkeys(d.lower() for d in dois if d))
         for start in range(0, len(unique), DOIS_PER_FILTER):
             chunk = unique[start:start + DOIS_PER_FILTER]
             data = self._get("/works", {"filter": "doi:" + "|".join(chunk), "per-page": DOIS_PER_FILTER,
-                                        "select": WORK_FIELDS})
+                                        "select": select})
             works += [Work.from_api(raw) for raw in data.get("results", [])]
         return works
 
