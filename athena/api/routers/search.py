@@ -21,7 +21,7 @@ from athena.core.models import ContentItem, User
 from athena.search import hybrid
 from athena.search.arxiv_live import search_arxiv
 from athena.search.local import embed_query, search_local
-from athena.search.merger import merge_results
+from athena.search.merger import interleave, merge_results, relevant_local
 from athena.search.semantic_scholar import search_semantic_scholar
 
 router = APIRouter(prefix="/api/v1", tags=["Search"])
@@ -121,15 +121,17 @@ def research_search(payload: SearchRequest, user: User = Depends(auth.active_use
     query = payload.query.strip()
     limit = payload.limit
 
-    local_papers = search_local(query, limit=limit)
-    # Live sources: Semantic Scholar (richer metadata, may be rate-limited) plus
-    # arXiv (free, key-less) as a fallback/supplement.
-    live_papers = search_semantic_scholar(query, limit=15) + search_arxiv(query, limit=15)
-    merged = merge_results(local_papers, live_papers, max_total=limit)
+    # The library's hits only when they are about the query: its meaning side always returns its nearest items.
+    local_papers = relevant_local(search_local(query, limit=limit), query)
+    # Live sources: Semantic Scholar (richer metadata, may be rate-limited) plus arXiv (free, key-less), each in
+    # its own relevance order. Library and live results are then taken in turns, titles naming the query first.
+    live_papers = interleave(search_semantic_scholar(query, limit=max(15, limit)), search_arxiv(query, limit=15))
+    merged = merge_results(local_papers, live_papers, max_total=limit, keep_order=True, query=query)
+    local_shown = sum(1 for p in merged if p.get("source") == "local")
 
     return SearchResponse(
         papers=[PaperResult(**p) for p in merged],
-        local_count=len(local_papers),
-        live_count=len(live_papers),
+        local_count=local_shown,
+        live_count=len(merged) - local_shown,
         query=query,
     )

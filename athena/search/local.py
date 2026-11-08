@@ -40,7 +40,7 @@ def _qdrant_search(vector: list[float], limit: int) -> list[tuple[str, float]]:
     return [(str(point.id), round(float(point.score), 4)) for point in response.points]
 
 
-def _item_to_dict(item: ContentItem, score: float) -> dict:
+def _item_to_dict(item: ContentItem, score: float, match: str | None = None) -> dict:
     return {
         "id": str(item.id),
         "title": item.title or "",
@@ -51,6 +51,7 @@ def _item_to_dict(item: ContentItem, score: float) -> dict:
         "citation_count": int(item.citation_count or 0),
         "score": score,
         "source": "local",
+        "match": match,
     }
 
 
@@ -74,7 +75,7 @@ def search_local(query: str, limit: int = 20) -> list[dict]:
             rows = {row.id: row for row in db.execute(
                 select(ContentItem).where(ContentItem.id.in_([r["id"] for r in results]))).scalars()} \
                 if results else {}
-            return [_item_to_dict(rows[r["id"]], r["similarity"] if r["similarity"] is not None else 0.0)
+            return [_item_to_dict(rows[r["id"]], r["similarity"] if r["similarity"] is not None else 0.0, r["match"])
                     for r in results if r["id"] in rows]
     except Exception as exc:
         logger.warning(f"search_local: search failed — {exc}")

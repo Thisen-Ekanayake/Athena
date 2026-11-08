@@ -50,9 +50,10 @@ class TestMerger:
         ]
         merged = merger.merge_results(local, live, max_total=10)
 
-        assert [p["id"] for p in merged] == ["local-A", "s2-C", "s2-B"]
+        assert [p["id"] for p in merged] == ["s2-C", "local-A", "s2-B"]   # in turns, live first
 
-    def test_max_total_respected(self):
+    def test_max_total_respected_and_the_library_does_not_fill_the_list(self):
+        """40 library items and no external one was the bug of 2026-11-07: the sources now take turns."""
         local = [_paper(f"Local {i}", source="local", paper_id=f"local-{i}") for i in range(5)]
         live = [
             _paper(f"Live {i}", source="semantic_scholar", paper_id=f"s2-{i}", citations=i)
@@ -61,8 +62,33 @@ class TestMerger:
         merged = merger.merge_results(local, live, max_total=6)
 
         assert len(merged) == 6
-        assert sum(1 for p in merged if p["source"] == "local") == 5
-        assert sum(1 for p in merged if p["source"] == "semantic_scholar") == 1
+        assert sum(1 for p in merged if p["source"] == "local") == 3
+        assert sum(1 for p in merged if p["source"] == "semantic_scholar") == 3
+
+    def test_a_title_naming_the_query_leads(self):
+        local = [_paper("Beyond Prompts: LLM-Based MT Evaluators", source="local")]
+        live = [_paper("Other MT paper", source="semantic_scholar"),
+                _paper("HalOmi: A Manually Annotated Benchmark for Multilingual Hallucination and Omission Detection",
+                       source="semantic_scholar")]
+        merged = merger.merge_results(local, live, max_total=3, keep_order=True, query="HalOmi benchmark")
+        assert merged[0]["title"].startswith("HalOmi")
+        exact = merger.merge_results(local, live + [_paper("Attention", source="arxiv")], max_total=4,
+                                     keep_order=True, query="attention")
+        assert exact[0]["title"] == "Attention"
+
+    def test_names_and_title_matches(self):
+        assert merger.names("hallucinations in NLLB-200 and HalOmi, with COMET and the BERT score") == \
+            {"nllb 200", "halomi", "comet"}
+        assert merger.title_match("No Language Left Behind", "No Language Left Behind: Scaling MT") == 2
+        assert merger.title_match("hallucination in NLLB-200", "Toxicity in NLLB-200 outputs") == 1
+        assert merger.title_match("a long question about many things in translation quality today", "Translation") \
+            == 0
+
+    def test_only_relevant_library_hits_are_kept(self):
+        hits = [{"title": "Close", "score": 0.7, "match": "meaning"},
+                {"title": "Far", "score": 0.4, "match": "meaning"},
+                {"title": "Keyword", "score": 0.0, "match": "keyword"}, {"title": "LoRA", "score": 0.3}]
+        assert [h["title"] for h in merger.relevant_local(hits, "lora")] == ["Close", "Keyword", "LoRA"]
 
     def test_punctuation_insensitive_dedupe(self):
         local = [_paper("Deep Learning: A Review", source="local", paper_id="local-1")]
@@ -204,7 +230,7 @@ class TestResearchSearchEndpoint:
         assert body["local_count"] == 1
         assert body["live_count"] == 1
         assert len(body["papers"]) == 2
-        assert body["papers"][0]["source"] == "local"
+        assert body["papers"][1]["source"] == "local"   # in turns with the live results, which lead
         assert "lit_review" not in body  # reviews are written by /reviews now
 
     def test_an_old_review_flag_is_ignored(self, client):
@@ -229,3 +255,21 @@ class TestResearchSearchEndpoint:
     def test_query_too_short_rejected(self, client):
         resp = client.post("/api/v1/search", json={"query": "ab"})
         assert resp.status_code == 422
+
+
+def test_a_subject_inside_a_question_is_not_a_pasted_title():
+    question = ("Hallucination, omission and repetition in NLLB-200 and massively multilingual neural machine "
+                "translation: detection and mitigation")
+    assert merger.title_match(question, "Massively Multilingual Neural Machine Translation") == 0
+    assert merger.title_match("Massively Multilingual Neural Machine Translation (Aharoni 2019)",
+                              "Massively Multilingual Neural Machine Translation") == 2
+
+
+def test_library_hits_by_meaning_alone_fill_at_most_a_third():
+    local = [_paper(f"Feed item {i}", source="local") | {"match": "meaning"} for i in range(6)]
+    live = [_paper(f"Live {i}", source="semantic_scholar") for i in range(6)]
+    merged = merger.merge_results(local, live, max_total=9, keep_order=True, query="hallucination omission")
+    assert sum(1 for p in merged if p["source"] == "local") == 3 and "_weak" not in merged[0]
+    named = local + [_paper("No Language Left Behind: Scaling MT", source="local") | {"match": "meaning"}]
+    first = merger.merge_results(named, live, max_total=9, keep_order=True, query="No Language Left Behind NLLB-200")
+    assert first[0]["title"].startswith("No Language Left Behind")         # a shared four-word phrase
