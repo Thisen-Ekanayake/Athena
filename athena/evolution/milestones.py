@@ -17,6 +17,8 @@ when reading (``athena.database.evolution``), so rebuilds never undo it.
 """
 from __future__ import annotations
 
+import bisect
+
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -60,6 +62,7 @@ class PaperScore:
     milestone_score: float
     is_milestone_auto: bool = False
     detail: dict = field(default_factory=dict)
+    generic: bool = False      # a general reference the topic cites, not one of its milestones
 
 
 @dataclass
@@ -72,18 +75,20 @@ class TopicScores:
 def select_milestones(scores: dict[str, PaperScore], years: dict[str, int | None],
                       config: TopicConfig) -> set[str]:
     eligible = {pid: s for pid, s in scores.items()
-                if s.kind == "method" and s.relevance > 0 and years.get(pid) is not None}
+                if s.kind == "method" and s.relevance > 0 and not s.generic and years.get(pid) is not None}
     if not eligible:
         return set()
     years_by_era = era_bounds([years[pid] for pid in eligible], config.eras, config.max_era_years)
     eras: dict[tuple[int, int], list[str]] = {}
     for pid in eligible:
         eras.setdefault(era_of(years[pid], years_by_era), []).append(pid)
+    latest = max(years[pid] for pid in eligible)
     picked = set(sorted(eligible, key=lambda pid: eligible[pid].milestone_score, reverse=True)[:config.global_top])
-    for members in eras.values():
+    for (_, end), members in eras.items():
         members.sort(key=lambda pid: eligible[pid].milestone_score, reverse=True)
-        picked.update(pid for pid in members[:config.milestones_per_era]
-                      if eligible[pid].milestone_score >= config.milestone_min_score)
+        bar = config.milestone_min_score * (config.recent_min_score_factor
+                                            if end > latest - config.recent_era_years else 1.0)
+        picked.update(pid for pid in members[:config.milestones_per_era] if eligible[pid].milestone_score >= bar)
     if config.main_path_min_score is not None:
         picked.update(pid for pid, s in eligible.items()
                       if s.on_main_path and s.milestone_score >= config.main_path_min_score)
@@ -98,6 +103,36 @@ def cap_per_year(picked: set[str], score: dict[str, float], years: dict[str, int
         by_year.setdefault(years.get(pid), []).append(pid)
     return {pid for members in by_year.values()
             for pid in sorted(members, key=lambda pid: (-score[pid], pid))[:cap]}
+
+
+def profile_fit(rel: dict[str, float], specificity: dict[str, float], membership: "Membership | None",
+                config: TopicConfig) -> tuple[dict[str, float], set[str]]:
+    """How close each on-topic paper sits to the topic's profile, and the general references among them.
+
+    Closeness grades the relevance feature: 0.5 for the on-topic paper farthest from the profile, 1 for the nearest
+    (percentile of abstract similarity), 0.75 for papers without a vector. Keyword relevance alone is 0, 0.5 or 1, so
+    every title match scored the same 0.1 (feedback 2026-11-07). A paper is generic when its citations mostly come
+    from outside the topic and it also sits below the profile threshold; a paper without a vector, when its
+    citations come from outside the topic at the keyword-only floor (Llama 3 in Sinhala NLP: 0.0003).
+    """
+    on_topic = [pid for pid, r in rel.items() if r > 0]
+    sims = membership.similarity if membership is not None else {}
+    threshold = (membership.stats or {}).get("threshold") if membership is not None else None
+    known = sorted(sims[pid] for pid in on_topic if pid in sims)
+    closeness: dict[str, float] = {}
+    if len(known) > 1:
+        for pid in on_topic:
+            below = bisect.bisect_left(known, sims[pid]) if pid in sims else None
+            closeness[pid] = 0.75 if below is None else 0.5 + 0.5 * below / (len(known) - 1)
+    profiled = bool(sims) and threshold is not None
+    generic = set()
+    for pid in on_topic:
+        if profiled and pid in sims:
+            if sims[pid] < threshold and specificity[pid] < config.milestone_min_specificity:
+                generic.add(pid)
+        elif specificity[pid] < config.milestone_min_specificity_keywords:
+            generic.add(pid)
+    return closeness, generic
 
 
 def score_topic(corpus: Corpus, config: TopicConfig, membership: "Membership | None" = None) -> TopicScores:
@@ -117,6 +152,7 @@ def score_topic(corpus: Corpus, config: TopicConfig, membership: "Membership | N
 
     citations = {pid: float(p.work.citations) for pid, p in corpus.papers.items()}
     specificity = {pid: in_deg[pid] / max(p.work.citations, in_deg[pid], 1) for pid, p in corpus.papers.items()}
+    closeness, generic = profile_fit(rel, specificity, membership, config)
     features = {
         "citations": g.cohort_scaled(citations, years),
         "in_degree": g.count_scaled({pid: float(d) for pid, d in in_deg.items()}),
@@ -133,7 +169,7 @@ def score_topic(corpus: Corpus, config: TopicConfig, membership: "Membership | N
             "in_degree": w.in_degree * features["in_degree"][pid],
             "pagerank": w.pagerank * features["pagerank"][pid],
             "flow": w.flow * features["flow"][pid],
-            "relevance": w.relevance * rel[pid],
+            "relevance": w.relevance * rel[pid] * closeness.get(pid, 1.0),
             "specificity": w.specificity * features["specificity"][pid],
         }
         scores[pid] = PaperScore(
@@ -148,6 +184,7 @@ def score_topic(corpus: Corpus, config: TopicConfig, membership: "Membership | N
             on_main_path=pid in on_main,
             milestone_score=round(sum(parts.values()), 4),
             detail={k: round(v, 4) for k, v in parts.items()},
+            generic=pid in generic,
         )
     for pid in select_milestones(scores, years, config):
         scores[pid].is_milestone_auto = True
@@ -160,5 +197,6 @@ def score_topic(corpus: Corpus, config: TopicConfig, membership: "Membership | N
         "on_topic_papers": len(on_topic),
         **(membership.stats if membership is not None else {}),
         "milestones": sum(s.is_milestone_auto for s in scores.values()),
+        "generic_references": len(generic),
     }
     return TopicScores(papers=scores, main_path=main, stats=stats)

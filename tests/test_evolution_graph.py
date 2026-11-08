@@ -185,7 +185,7 @@ def _paper(pid: str, year: int, cited_by: int, title: str | None = None, abstrac
 
 
 def test_score_topic_marks_the_central_paper_as_a_milestone():
-    papers = {"root": _paper("root", 2010, 20000)}
+    papers = {"root": _paper("root", 2010, 1000)}
     edges = set()
     for i in range(12):
         pid = f"f{i}"
@@ -198,3 +198,56 @@ def test_score_topic_marks_the_central_paper_as_a_milestone():
     assert scores.papers["root"].is_milestone_auto
     assert not scores.papers["backbone"].is_milestone_auto  # cited a lot, but off-topic
     assert scores.papers["root"].milestone_score > scores.papers["f0"].milestone_score
+
+
+def test_a_general_reference_is_not_a_milestone():
+    """Kaldi in Sinhala NLP: on topic by a keyword, but cited mostly from outside and far from the topic's profile."""
+    from athena.evolution.membership import Membership
+    papers = {"own": _paper("own", 2010, 40), "kaldi": _paper("kaldi", 2011, 5000)}
+    edges = set()
+    for i in range(12):
+        papers[f"f{i}"] = _paper(f"f{i}", 2012 + i % 4, 10)
+        edges |= {(f"f{i}", "own"), (f"f{i}", "kaldi")}
+    rel = {pid: 1.0 for pid in papers}
+    sims = {pid: 0.8 for pid in papers} | {"kaldi": 0.5}
+    near = Membership(rel, sims, {"threshold": 0.7})
+    scores = score_topic(Corpus(papers=papers, edges=edges), TopicConfig(keywords=["detect"]), near)
+    assert scores.papers["kaldi"].generic and not scores.papers["kaldi"].is_milestone_auto
+    assert scores.papers["own"].is_milestone_auto and not scores.papers["own"].generic
+    assert scores.stats["generic_references"] == 1
+    # Close to the profile, the same citations make it a milestone: the floor needs both signs.
+    close = Membership(rel, sims | {"kaldi": 0.8}, {"threshold": 0.7})
+    assert not score_topic(Corpus(papers=papers, edges=edges), TopicConfig(keywords=["detect"]),
+                           close).papers["kaldi"].generic
+
+
+def test_relevance_is_graded_by_closeness_to_the_profile():
+    from athena.evolution.membership import Membership
+    papers = {f"p{i}": _paper(f"p{i}", 2015, 10) for i in range(3)}
+    sims = {"p0": 0.6, "p1": 0.7, "p2": 0.9}
+    scores = score_topic(Corpus(papers=papers, edges=set()), TopicConfig(keywords=["detect"]),
+                         Membership({pid: 1.0 for pid in papers}, sims, {"threshold": 0.5}))
+    assert [scores.papers[p].detail["relevance"] for p in ("p0", "p1", "p2")] == [0.05, 0.075, 0.1]
+
+
+class TestRecentEras:
+    def test_a_recent_era_takes_picks_below_the_usual_bar(self):
+        scores = {"old": _score(0.5), "new": _score(0.5)}
+        years = {"old": 2005, "new": 2025}
+        config = TopicConfig(global_top=0, milestone_min_score=0.55, eras=2, max_era_years=6)
+        assert select_milestones(scores, years, config) == {"new"}   # 0.5 >= 0.55 * 0.85
+
+
+def test_a_paper_without_a_vector_falls_back_to_the_specificity_floor():
+    """Llama 3 in Sinhala NLP: no abstract vector, 0.0003 of its citations from the topic."""
+    from athena.evolution.membership import Membership
+    papers = {"own": _paper("own", 2023, 40), "llama": _paper("llama", 2024, 50000)}
+    edges = set()
+    for i in range(12):
+        papers[f"f{i}"] = _paper(f"f{i}", 2024 + i % 2, 10)
+        edges |= {(f"f{i}", "own"), (f"f{i}", "llama")}
+    sims = {pid: 0.8 for pid in papers if pid != "llama"}
+    scores = score_topic(Corpus(papers=papers, edges=edges), TopicConfig(keywords=["detect"]),
+                         Membership({pid: 1.0 for pid in papers}, sims, {"threshold": 0.7}))
+    assert scores.papers["llama"].generic and not scores.papers["llama"].is_milestone_auto
+    assert scores.papers["llama"].detail["relevance"] == 0.075   # middling closeness without a vector
