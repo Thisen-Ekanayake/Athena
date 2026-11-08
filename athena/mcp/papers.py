@@ -35,9 +35,10 @@ def item_line(i: dict, n: int | None = None) -> str:
 def register(mcp: MCPServer) -> None:
     @common.tool(mcp, READ)
     async def find_papers(ctx: Context, query: str, limit: int = 15) -> str:
-        """Search for research papers everywhere Athena looks: its own library first, then Semantic Scholar and
-        arXiv, merged and deduplicated. Returns titles, years, authors, links and abstracts. Papers with an Athena id
-        can be opened with get_paper, saved to lists and added to projects."""
+        """Search for research papers everywhere Athena looks: its own library (only papers close to the query),
+        Semantic Scholar and arXiv, taken in turns by relevance and deduplicated; a title naming the query or a name
+        in it ("HalOmi", "NLLB-200") comes first. Returns titles, years, authors, links and abstracts. Papers with an
+        Athena id can be opened with get_paper, saved to lists and added to projects."""
         found = await common.post(ctx, "/search", {"query": query, "limit": max(1, min(limit, 50))})
         papers = found.get("papers") or []
         if not papers:

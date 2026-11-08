@@ -458,3 +458,18 @@ async def test_comparing_venues_in_a_year(fake):
                    {"name": "EMNLP", "papers": 200, "sorted": 200, "topics": {"1": 20}}]})
     error, text = await call("compare_conferences", {"venues": ["acl", "emnlp", "eacl"], "year": 2026})
     assert not error and "Reasoning | 30.0% | 10.0%" in text and "No 2026 edition: eacl." in text
+
+
+def test_a_review_prints_its_title_once_and_a_timeline_is_compact():
+    from athena.mcp import maps, research
+    r = {"id": "r1", "title": "NLLB failures", "model": "qwen", "cited": 2, "topic": None,
+         "markdown": "# NLLB failures\n\n*Written by AI.*\n\n## Review\n\nText [1]."}
+    text = research.review_text(r)
+    assert text.count("# NLLB failures") == 1 and text.index("Written by Athena") < text.index("*Written by AI.*")
+    assert "build_map" in text
+    node = {"id": "x", "title": "No Language Left Behind", "year": 2022, "named_method": "NLLB", "on_main_path": True,
+            "milestone_score": 0.8, "score_detail": {"relevance": 0.1}, "cited_by_count": 900}
+    data = {"years": [{"year": 2022, "papers": [node]}], "without_full_text": [node] * 20}
+    out = maps.timeline_text("MT", data)
+    assert "2022: NLLB: No Language Left Behind (2022), main path" in out
+    assert "score_detail" not in out and "and 5 more" in out

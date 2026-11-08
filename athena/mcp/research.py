@@ -6,11 +6,12 @@ same route, saved where the web app shows it. The agent passes the result on; it
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from athena.mcp import common, lookup
 from athena.mcp.api import ApiError
@@ -25,12 +26,15 @@ TASK = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint
 
 def review_text(r: dict) -> str:
     grounded = (f"grounded in the map {r['topic']['name']} ({r['topic']['slug']})" if r.get("topic")
-                else "written from search results' abstracts (no map covers this topic)")
+                else "written from search results' abstracts (no map covers this topic; build_map would give one "
+                     "grounded in full text and citation history)")
     page = common.link(f"/reviews/{r['id']}")
-    head = (f"# {r.get('title')}\n\nWritten by Athena ({r.get('model') or 'its model'}), {grounded}; "
-            f"{r.get('cited', 0)} sources cited. Saved to the Reviews page: {page}\n"
-            f"Review id: {r['id']} (my_reviews exports it as BibTeX)\n")
-    return head + "\n" + (r.get("markdown") or "")
+    head = (f"Written by Athena ({r.get('model') or 'its model'}), {grounded}; {r.get('cited', 0)} sources cited. "
+            f"Saved to the Reviews page: {page}\nReview id: {r['id']} (my_reviews exports it as BibTeX)\n")
+    markdown = r.get("markdown") or ""
+    if not markdown.startswith("# "):   # the review carries its own title
+        markdown = f"# {r.get('title')}\n\n{markdown}"
+    return markdown.replace("\n\n", f"\n\n{head}\n", 1) if markdown.count("\n\n") else head + markdown
 
 
 async def review_check(ctx: Context, review_id: str):
@@ -137,12 +141,14 @@ def chat_text(chat_id: str, message: dict, notices: list[str]) -> str:
 
 def register(mcp: MCPServer) -> None:
     @common.tool(mcp, TASK)
-    async def literature_review(ctx: Context, query: str | None = None, map: str | None = None) -> str:
+    async def literature_review(ctx: Context, query: Annotated[str | None, Field(max_length=300)] = None,
+                                map: str | None = None) -> str:
         """Have Athena write a literature review, with its own model, and return the finished review (Markdown with
-        numbered citations and references). Give a topic as `query`, or name a research map as `map`. Athena grounds
-        it in a map that covers the topic when there is one, else in search results' abstracts. Takes minutes:
-        progress is reported. Present the review as Athena wrote it; do not research or rewrite it yourself unless
-        the user asks."""
+        numbered citations and references). Give a topic or question as `query` (at most 300 characters), or name a
+        research map as `map`. Athena grounds it in a map that covers most of the question when there is one, else
+        in the abstracts of the papers it finds most relevant; with too few relevant papers it says so instead of
+        writing a full review. Takes minutes: progress is reported. Present the review as Athena wrote it; do not
+        research or rewrite it yourself unless the user asks."""
         if not query and not map:
             raise ToolError("Give a topic (query) or a map")
         body = {"query": query} if query else {}
