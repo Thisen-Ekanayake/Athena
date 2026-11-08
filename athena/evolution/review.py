@@ -16,8 +16,16 @@ A **map** review is grounded in a built map:
 4. Citations to numbers a section was not given are removed. All citations are then renumbered by first
    appearance, and the reference list holds only the papers cited.
 
-An **abstracts** review is the fallback when no map matches the query: one call over the search results'
-abstracts (the library, Semantic Scholar and arXiv), checked and referenced the same way, and labelled as such.
+An **abstracts** review is the fallback when no map covers the query: one call over the abstracts of the papers
+``athena.evolution.review_search`` finds (planned searches, ranked by relevance to the question, one snowball hop,
+a relevance floor), checked and referenced the same way, and labelled as such. With too few relevant papers it says
+so, lists what it did find and suggests building a map, rather than writing a full review from off-topic papers.
+
+A review asked as a question keeps it: the question is its title, a map review gets a section answering it from
+the map's papers, and both say which parts of the question nothing they read covers.
+
+Every written section then goes through ``athena.evolution.verify``: citations whose source does not support the
+sentence are removed (feedback 2026-11-07).
 """
 from __future__ import annotations
 
@@ -41,9 +49,13 @@ PASSAGE_CHARS = 900
 SECTION_TOKENS = 700
 OVERVIEW_TOKENS = 450
 ABSTRACTS_TOKENS = 1300
-ABSTRACT_PAPERS = 15
-LIBRARY_PAPERS = 8           # of those, at most this many from the library, so the live sources get a say
-MIN_ABSTRACT_PAPERS = 5      # fewer and the review would be about whatever happened to match
+THIN_TOKENS = 500
+QUESTION_TOKENS = 600
+ABSTRACT_PAPERS = 20
+MIN_ABSTRACT_PAPERS = 5      # fewer relevant papers and the review says so instead of writing the full template
+QUESTION_PASSAGES = 10       # passages and abstracts for a map review's answer to the question
+TITLE_WORDS = 12             # a longer question is shortened for the title
+MAX_PUBLISHED_GAP = 3        # years between a first-seen date and the record's own, beyond which the record is wrong
 STALE_MINUTES = 15           # a running review with no progress for this long has lost its worker
 
 # The second sentence came from the first live review: the 9B called Lester et al.'s prompt tuning "Prefix-tuning",
@@ -57,6 +69,7 @@ SYSTEM = ("You write sections of a literature review for researchers who are new
 STATUS_WORDS = {"persisting": "persisting: papers keep raising it", "new": "new: raised only recently",
                 "addressed": "addressed: later papers take it on", "quiet": "quiet: no longer raised"}
 CITATION = re.compile(r"\[(\d+(?:\s*[,–-]\s*\d+)*)\]")
+MOTIVATION_SECTIONS = {"intro", "abstract", "related_work"}   # as athena.database.evolution.gaps
 
 
 # ── sources and citations ────────────────────────────────────────────
@@ -73,10 +86,12 @@ class Paper:
     arxiv_id: str | None = None
     url: str | None = None
     name: str | None = None   # what citing papers call it ("LoRA")
+    published_year: int | None = None   # the record's own year, when the map dates the paper earlier (first seen)
 
     def label(self) -> str:
         name = f"{self.name}: " if self.name and self.name.lower() not in self.title.lower() else ""
-        return f"{name}{self.title} ({self.year or 'n.d.'})"
+        when = f"{self.year}; published {self.published_year}" if self.published_year else self.year or "n.d."
+        return f"{name}{self.title} ({when})"
 
 
 class Registry:
@@ -139,12 +154,24 @@ def reference(n: int, p: Paper) -> str:
     authors = p.authors[:3]
     names = ", ".join(authors) + (" et al." if len(p.authors) > 3 else "") if authors else ""
     link = p.url or (f"https://doi.org/{p.doi}" if p.doi else "")
-    bits = [f"{names} ({p.year or 'n.d.'})." if names else f"({p.year or 'n.d.'}).", f"*{p.title}*."]
+    year = p.published_year or p.year or "n.d."   # a reference gives the year it was published
+    bits = [f"{names} ({year})." if names else f"({year}).", f"*{p.title}*."]
     if p.venue:
         bits.append(f"{p.venue}.")
     if link:
         bits.append(link)
     return f"[{n}] " + " ".join(bits)
+
+
+def short_title(query: str) -> str:
+    """A question as a title: whole when short, else its first clause, else its first words."""
+    query = " ".join(query.split())
+    if len(query.split()) <= TITLE_WORDS:
+        return query
+    head = re.split(r"[:;(?]", query)[0].strip(" ,.")
+    if 2 <= len(head.split()) <= TITLE_WORDS:
+        return head
+    return " ".join(query.split()[:TITLE_WORDS - 2]).rstrip(",;:") + "…"
 
 
 # ── the outline (map reviews) ────────────────────────────────────────
@@ -167,7 +194,20 @@ class Section:
 def _evo_paper(p, name: str | None = None) -> Paper:
     from athena.database.evolution import _paper_url
     return Paper(key=f"evo:{p.id}", title=p.title, year=p.year, authors=list(p.authors or []), venue=p.venue,
-                 doi=p.doi, arxiv_id=p.arxiv_id, url=_paper_url(p), name=name)
+                 doi=p.doi, arxiv_id=p.arxiv_id, url=_paper_url(p), name=name, published_year=published_year(p))
+
+
+def published_year(p) -> int | None:
+    """The year to cite a map paper by, when the map dates it earlier than its record.
+
+    A map dates papers by first appearance: a year with no arXiv ID can be pulled back to when citers first cite it
+    (``corpus._repair_year``), so a TALLIP article of 2021 shows as 2019. A reference gives the record's year then,
+    unless the two are far apart: OpenAlex dated Kaldi (2011) from a repository copy of 2024.
+    """
+    year, record = getattr(p, "year", None), getattr(p, "openalex_year", None)
+    if getattr(p, "year_source", None) == "citers" and year and record and 0 < record - year <= MAX_PUBLISHED_GAP:
+        return record
+    return None
 
 
 def outline(session, topic, registry: Registry) -> list[Section]:
@@ -179,6 +219,11 @@ def outline(session, topic, registry: Registry) -> list[Section]:
     timeline = db.topic_timeline(session, topic)
     milestones = [p for year in timeline["years"] for p in year["papers"]]
     papers = {p.id: p for _, p in rows}
+    # An era without milestones (recent years, whose papers have few citers yet) is told from its best on-topic
+    # papers, so the history reaches the present (feedback 2026-11-07: a map's milestones stopped at 2022).
+    ranked = sorted(((tp, p) for tp, p in rows if (getattr(tp, "score_detail", None) or {}).get("relevance", 0) > 0
+                     and getattr(tp, "kind", "method") in ("method", "dataset")),
+                    key=lambda r: -(getattr(r[0], "milestone_score", 0) or 0))
 
     def cite(node: dict) -> int:
         return registry.number(_evo_paper(papers[UUID(node["id"])], node.get("named_method")))
@@ -192,14 +237,23 @@ def outline(session, topic, registry: Registry) -> list[Section]:
     for start, end in eras[-MAX_ERAS:]:
         picks = sorted((m for m in milestones if m["year"] and start <= m["year"] <= end),
                        key=lambda m: -m["milestone_score"])[:ERA_MILESTONES]
+        kind = "milestones"
+        if not picks:
+            picks = [{"id": str(p.id), "title": p.title, "year": p.year,
+                      "named_method": getattr(tp, "named_method", None),
+                      "milestone_score": getattr(tp, "milestone_score", 0) or 0}
+                     for tp, p in ranked if p.year and start <= p.year <= end][:ERA_MILESTONES]
+            kind = "most important papers (none is a milestone yet)"
         if not picks:
             continue
-        names = ", ".join(m.get("named_method") or m["title"] for m in sorted(picks, key=lambda m: m["year"]))
+        picks.sort(key=lambda m: (m["year"], -m["milestone_score"]))   # told in order of year
+        names = ", ".join(f"{m.get('named_method') or m['title']} ({m['year']})" for m in picks)
         sections.append(Section(
             f"era-{start}", f"{start}–{end}" if start != end else str(start), level=3,
-            task=(f"Section: how {topic.name} developed in {start}–{end}. Its milestones: {names}.\nWrite 2–3 "
-                  "paragraphs (about 250 words): the problems these papers took on, what each milestone introduced, "
-                  "and how it built on or departed from earlier work."),
+            task=(f"Section: how {topic.name} developed in {start}–{end}. Its {kind}, in order of year: {names}.\n"
+                  "Write 2–3 paragraphs (about 250 words): the problems these papers took on, what each introduced, "
+                  "and how it built on or departed from earlier work. Keep to the order of years: a paper can build "
+                  "only on work from its own year or earlier, never on a later one."),
             evidence=[abstract(m) for m in picks], papers=[UUID(m["id"]) for m in picks],
             question=f"What did {names} introduce, and how do they work?"))
 
@@ -227,9 +281,12 @@ def outline(session, topic, registry: Registry) -> list[Section]:
                 who = ex.get("stated_by") or ex.get("paper")
                 if who and UUID(who["id"]) in papers:
                     n = cite(who)
+                    where = (", in its introduction, as motivation" if ex.get("section_type") in MOTIVATION_SECTIONS
+                             else f", in its {ex['section_type'].replace('_', ' ')} section"
+                             if ex.get("section_type") not in (None, "other") else "")
                     evidence.append((n, f"open problem “{t['label']}” ({STATUS_WORDS.get(t['status'], t['status'])}; "
-                                        f"raised {years}), as {_evo_paper(papers[UUID(who['id'])]).label()} puts it",
-                                     ex["sentence"][:PASSAGE_CHARS]))
+                                        f"raised {years}), as {_evo_paper(papers[UUID(who['id'])]).label()} puts it"
+                                        f"{where}", ex["sentence"][:PASSAGE_CHARS]))
             for fix in t.get("fixed_by", [])[:2]:
                 if UUID(fix["id"]) in papers:
                     p = papers[UUID(fix["id"])]
@@ -241,7 +298,8 @@ def outline(session, topic, registry: Registry) -> list[Section]:
             task=(f"Section: the open problems of {topic.name}. The themes and their status: {listed}.\nWrite about "
                   "300 words: for each theme, what the problem is, how long it has been raised, and whether later "
                   "papers take it on. Keep each theme's status as given; do not call a problem solved unless a "
-                  "source says so."),
+                  "source says so. A problem a paper raises only in its introduction, to motivate itself, is weaker "
+                  "evidence than one stated as a limitation: say so when a theme rests on such statements."),
             evidence=evidence))
 
     path = db.reading_path(session, topic, None, READING_STEPS)
@@ -296,22 +354,54 @@ def section_messages(topic_name: str, section: Section) -> list[dict]:
                                         "claim with its source number."}]
 
 
-def overview_messages(topic_name: str, written: list[Section]) -> list[dict]:
+def overview_messages(topic_name: str, written: list[Section], query: str | None = None) -> list[dict]:
     body = "\n\n".join(f"{s.title}\n{s.markdown}" for s in written if s.markdown)
+    asked = (f"The reader asked: {query}\nOpen with what the review found on that question, including what the map "
+             "does not cover, then " if query else "Cover ")
     return [{"role": "system", "content": SYSTEM},
             {"role": "user", "content": f"Field: {topic_name}\n\nThe sections of the review so far:\n\n{body}\n\n"
-                                        "Write the review's opening overview: 1–2 paragraphs (about 150 words) on how "
-                                        "the field developed, its main approaches and what remains open. Use only "
-                                        "claims made in the sections above, keeping their citation numbers."}]
+                                        "Write the review's opening overview: 1–2 paragraphs (about 150 words). "
+                                        f"{asked}how the field developed, its main approaches and what remains open. "
+                                        "Use only claims made in the sections above, keeping their citation "
+                                        "numbers."}]
 
 
-def abstracts_messages(query: str, papers: list[tuple[int, Paper, str]]) -> list[dict]:
+def question_messages(topic_name: str, query: str, section: Section, uncovered: list[str]) -> list[dict]:
+    listed = "\n\n".join(f"[{n}] {label}\n{text}" for n, label, text in section.evidence)
+    missing = (f"\nParts of the question none of the map's papers cover: {'; '.join(uncovered)}. Say so plainly, "
+               "and do not fill them in from general knowledge." if uncovered else "")
+    return [{"role": "system", "content": SYSTEM},
+            {"role": "user", "content": f"Field: {topic_name}\n\nSources (the map's papers closest to the question):"
+                                        f"\n\n{listed or '(none)'}\n\nThe reader's question: {query}\n\nWrite 2–3 "
+                                        "paragraphs (about 300 words) answering it from these sources only: what "
+                                        f"they show, and where they stop short of the question.{missing}\nCite each "
+                                        "claim with its source number."}]
+
+
+def abstracts_messages(query: str, papers: list[tuple[int, Paper, str]], uncovered: list[str] | None = None
+                       ) -> list[dict]:
+    listed = "\n\n".join(f"[{n}] {p.label()}\n{abstract}" for n, p, abstract in papers)
+    missing = (f"\nParts of the topic none of these sources address: {'; '.join(uncovered)}. In Open questions, say "
+               "plainly that the search found nothing on them; do not fill them in from general knowledge."
+               if uncovered else "")
+    return [{"role": "system", "content": SYSTEM},
+            {"role": "user", "content": f"Topic: {query}\n\nSources (abstracts only, the most relevant first):\n\n"
+                                        f"{listed}\n\nWrite a short literature review of the topic in Markdown with "
+                                        "these sections, each a level-2 heading: ## Overview, ## Main themes, "
+                                        "## Notable findings, ## Open questions. About 600 words. Write about the "
+                                        "topic, not about each source in turn, and leave out what a source says about "
+                                        "other subjects. Open questions are problems the sources state about this "
+                                        "topic, not the limitations of a side method a source happens to use."
+                                        f"{missing}\nCite each claim with its source number."}]
+
+
+def thin_messages(query: str, papers: list[tuple[int, Paper, str]]) -> list[dict]:
     listed = "\n\n".join(f"[{n}] {p.label()}\n{abstract}" for n, p, abstract in papers)
     return [{"role": "system", "content": SYSTEM},
-            {"role": "user", "content": f"Topic: {query}\n\nSources (abstracts only):\n\n{listed}\n\nWrite a short "
-                                        "literature review in Markdown with these sections, each a level-2 heading: "
-                                        "## Overview, ## Main themes, ## Notable findings, ## Open questions. About "
-                                        "600 words. Cite each claim with its source number."}]
+            {"role": "user", "content": f"Topic: {query}\n\nThe only sources a search found on this topic "
+                                        f"(abstracts):\n\n{listed}\n\nIn one short paragraph per source (about 60 "
+                                        "words each), say what it contributes to the topic. Do not write a general "
+                                        "review: the sources are too few. Cite each claim with its source number."}]
 
 
 def _clean(text: str) -> str:
@@ -326,6 +416,7 @@ class Result:
     sources: list[dict]
     markdown: str
     removed: int
+    unsupported: int = 0
 
 
 def finish(title: str, preface: str, sections: list[Section], registry: Registry) -> Result:
@@ -335,7 +426,8 @@ def finish(title: str, preface: str, sections: list[Section], registry: Registry
         s.markdown = text
     cited = sorted(mapping.items(), key=lambda kv: kv[1])
     sources = [{"n": new, "key": registry.papers[old].key, "title": registry.papers[old].title,
-                "year": registry.papers[old].year, "authors": registry.papers[old].authors,
+                "year": registry.papers[old].published_year or registry.papers[old].year,
+                "authors": registry.papers[old].authors,
                 "venue": registry.papers[old].venue, "doi": registry.papers[old].doi,
                 "arxiv_id": registry.papers[old].arxiv_id, "url": registry.papers[old].url,
                 "name": registry.papers[old].name} for old, new in cited if old in registry.papers]
@@ -350,62 +442,176 @@ def finish(title: str, preface: str, sections: list[Section], registry: Registry
                             for s in sections], sources=sources, markdown="\n\n".join(parts), removed=0)
 
 
-def write_map_review(session, topic, chat: Chat, save: Callable[[dict], None], retrieve=None) -> Result:
-    """Outline, evidence, one call per section, the overview, then citations checked and renumbered."""
+def _evidence(sections: list[Section]) -> dict[int, str]:
+    """Each source's text across ``sections``: its abstract and the passages given for it."""
+    out: dict[int, list[str]] = {}
+    for s in sections:
+        for n, label, text in s.evidence:
+            if text and text not in out.setdefault(n, []):
+                out[n].append(text)
+    return {n: "\n…\n".join(texts) for n, texts in out.items()}
+
+
+def _checked(text: str, evidence: dict[int, str], chat: Chat, counts: dict) -> str:
+    from athena.evolution import verify
+    text, found = verify.verify(text, evidence, chat)
+    for key, value in found.items():
+        counts[key] = counts.get(key, 0) + value
+    return text
+
+
+def _verified_note(counts: dict) -> str:
+    if not counts.get("checked"):
+        return ""
+    removed = f"; {counts['no']} it did not support were removed" if counts.get("no") else ""
+    return f" Each citation was checked against its source ({counts['checked']} checked{removed})."
+
+
+def write_map_review(session, topic, chat: Chat, save: Callable[[dict], None], retrieve=None,
+                     query: str | None = None, coverage=None) -> Result:
+    """Outline, evidence, one call per section (the question's first when there is one), the overview, then
+    citations checked against their sources and renumbered.
+
+    ``coverage`` (``athena.evolution.coverage.Coverage``) says which parts of ``query`` the map covers.
+    """
+    from athena.evolution import ask
     registry = Registry()
     sections = outline(session, topic, registry)
+    asked = query if query and query.strip().lower() not in {topic.name.lower(), topic.slug.replace("-", " ")} \
+        else None
+    uncovered = list(coverage.uncovered) if (asked and coverage is not None) else []
+    if asked:
+        sections.insert(1, Section("question", "Your question", task="question", question=asked))
     writable = [s for s in sections if s.by_model and s.key != "overview"]
-    total = len(writable) + 2
+    total = len(writable) + 3
     save({"progress": {"step": 1, "of": total, "label": "Reading the papers"}})
     passages = gather(session, topic, sections, registry, retrieve)
+    if asked:
+        try:
+            hits = (retrieve or ask.retrieve)(session, topic, asked, None, chunk_limit=QUESTION_PASSAGES, per_paper=2,
+                                              with_abstracts=True)
+        except ask.AskUnavailable as exc:
+            logger.warning(f"Review {topic.slug}: no passages for the question: {exc}")
+            hits = []
+        _add_hits(session, sections[1], hits, registry)
     logger.info(f"Review {topic.slug}: {passages} passages for {len(writable)} sections")
-    removed = 0
+    removed, counts = 0, {}
     for i, section in enumerate(writable, start=2):
         save({"progress": {"step": i, "of": total, "label": f"Writing {section.title}"}})
-        text, *_ = chat(section_messages(topic.name, section), SECTION_TOKENS)
+        messages = question_messages(topic.name, asked, section, uncovered) if section.key == "question" \
+            else section_messages(topic.name, section)
+        text, *_ = chat(messages, QUESTION_TOKENS if section.key == "question" else SECTION_TOKENS)
         section.markdown, dropped = check_citations(_clean(text), {n for n, _, _ in section.evidence})
         removed += dropped
+        section.markdown = _checked(section.markdown, _evidence([section]), chat, counts)
         save({"sections": _partial(sections)})
-    save({"progress": {"step": total, "of": total, "label": "Writing the overview"}})
+    save({"progress": {"step": total - 1, "of": total, "label": "Writing the overview"}})
     overview = sections[0]
-    text, *_ = chat(overview_messages(topic.name, writable), OVERVIEW_TOKENS)
+    text, *_ = chat(overview_messages(topic.name, writable, asked), OVERVIEW_TOKENS)
     allowed = {n for s in writable for m in CITATION.finditer(s.markdown) for n in _numbers(m.group(1))}
     overview.markdown, dropped = check_citations(_clean(text), allowed)
     removed += dropped
+    save({"progress": {"step": total, "of": total, "label": "Checking the citations"}})
+    overview.markdown = _checked(overview.markdown, _evidence(writable), chat, counts)
     built = topic.built_at.date().isoformat() if topic.built_at else "an earlier build"
+    scope = ""
+    if asked and coverage is not None:
+        scope = (f" The map covers {len(coverage.covered)} of the {len(coverage.parts)} parts of the question"
+                 + (f"; it has nothing on: {'; '.join(uncovered)}." if uncovered else "."))
     preface = (f"Written by AI from the research map “{topic.name}” (built {built}): its milestones, open problems "
-               "and the papers' own text. Check claims against the papers before relying on them.")
-    result = finish(f"{topic.name}: a literature review", preface, sections, registry)
-    result.removed = removed
+               f"and the papers' own text.{scope}{_verified_note(counts)} Check claims against the papers before "
+               "relying on them.")
+    title = short_title(asked) if asked else f"{topic.name}: a literature review"
+    result = finish(title, preface, sections, registry)
+    result.removed, result.unsupported = removed, counts.get("no", 0)
     if removed:
         logger.info(f"Review {topic.slug}: removed {removed} citations to sources a section was not given")
     return result
 
 
-def write_abstracts_review(query: str, papers: list[dict], chat: Chat, save: Callable[[dict], None]) -> Result:
-    """One call over search results' abstracts, checked and referenced like a map review."""
+def _add_hits(session, section: Section, hits, registry: Registry) -> None:
+    from athena.core.models import EvoPaper
+    from athena.evolution import ask
+    for hit in hits:
+        paper = session.get(EvoPaper, UUID(hit.paper_id))
+        if paper is None:
+            continue
+        n = registry.number(_evo_paper(paper, hit.named_method))
+        where = "Abstract" if getattr(hit, "abstract_only", False) else \
+            f"{ask.SECTION_LABELS.get(hit.section_type, 'Body')}: {hit.heading}"
+        section.evidence.append((n, f"{_evo_paper(paper, hit.named_method).label()}, {where}",
+                                 hit.text[:PASSAGE_CHARS]))
+
+
+def _search_paper(p: dict) -> Paper:
+    return Paper(key=f"search:{p.get('id') or p['title']}", title=p["title"], year=p.get("year"),
+                 authors=list(p.get("authors") or []), venue=p.get("venue"), doi=p.get("doi"),
+                 arxiv_id=p.get("arxiv_id"), url=p.get("url"))
+
+
+def write_abstracts_review(query: str, papers: list[dict], chat: Chat, save: Callable[[dict], None],
+                           found=None, note: str = "") -> Result:
+    """A review from the relevant papers' abstracts, checked and referenced like a map review.
+
+    ``papers`` are the sources, most relevant first; ``found`` (``review_search.Found``) says how they were found
+    and which parts of the question none of them covers. With fewer than MIN_ABSTRACT_PAPERS the review says so
+    and only describes what it found.
+    """
     registry = Registry()
     numbered = []
     for p in papers[:ABSTRACT_PAPERS]:
         if not p.get("abstract"):
             continue
-        paper = Paper(key=f"search:{p.get('id') or p['title']}", title=p["title"], year=p.get("year"),
-                      authors=list(p.get("authors") or []), url=p.get("url"))
+        paper = _search_paper(p)
         numbered.append((registry.number(paper), paper, p["abstract"][:ABSTRACT_CHARS]))
-    save({"progress": {"step": 1, "of": 1, "label": "Writing from the abstracts"}})
+    searched = found.searched if found is not None else len(papers)
+    uncovered = found.uncovered if found is not None else []
+    if not searched:
+        raise ValueError("The search found no papers with abstracts (Semantic Scholar may be rate-limiting). Try "
+                         "again in a few minutes, or build a map of the topic.")
+    how = (f"{searched} papers found by searching Semantic Scholar, arXiv and Athena's library ({len(found.queries)} "
+           "searches, then the references and citers of the best papers)" if found is not None
+           else f"{searched} search results")
+    map_hint = ("No research map covers this question. Building one (Maps → New map, or build_map for agents) gives "
+                "a review grounded in the papers' full text and citation history.")
+    missing = f" Nothing found on: {'; '.join(uncovered)}." if uncovered else ""
+    counts: dict = {}
     if len(numbered) < MIN_ABSTRACT_PAPERS:
-        raise ValueError(f"Only {len(numbered)} papers with abstracts matched the query (Semantic Scholar may be "
-                         "rate-limiting). Try again in a few minutes, use a broader query, or build a map of the "
-                         "topic.")
-    text, *_ = chat(abstracts_messages(query, numbered), ABSTRACTS_TOKENS)
+        save({"progress": {"step": 1, "of": 2, "label": "Describing the few relevant papers"}})
+        sections = [Section("found", "What the search found", level=2)]
+        if numbered:
+            text, *_ = chat(thin_messages(query, numbered), THIN_TOKENS)
+            body, removed = check_citations(_clean(text), {n for n, _, _ in numbered})
+            save({"progress": {"step": 2, "of": 2, "label": "Checking the citations"}})
+            sections[0].markdown = _checked(body, {n: a for n, _, a in numbered}, chat, counts)
+        else:
+            body, removed = "", 0
+            sections[0].markdown = "No paper the search found is about this topic."
+        if uncovered:
+            sections.append(Section("missing", "Not covered", level=2,
+                                    markdown="\n".join(f"- {c}" for c in uncovered)))
+        sections.append(Section("next", "Next step", level=2, markdown=(
+            "Too few relevant papers for a review: the core literature is probably missing from this search, not "
+            "absent from the field. Build a research map of the topic (it collects papers by citation, not by "
+            "keyword), or try the field's own names for it.")))
+        preface = (f"{note}Of {how}, only {len(numbered)} are about this topic: too few to write a review from."
+                   f"{missing} {map_hint}")
+        result = finish(short_title(query), preface, sections, registry)
+        result.removed, result.unsupported = removed, counts.get("no", 0)
+        return result
+
+    save({"progress": {"step": 1, "of": 2, "label": "Writing from the abstracts"}})
+    text, *_ = chat(abstracts_messages(query, numbered, uncovered), ABSTRACTS_TOKENS)
     body, removed = check_citations(re.sub(r"<think>.*?</think>", "", text or "", flags=re.S).strip(),
                                     {n for n, _, _ in numbered})
+    save({"progress": {"step": 2, "of": 2, "label": "Checking the citations"}})
+    body = _checked(body, {n: a for n, _, a in numbered}, chat, counts)
     section = Section("review", "Review", level=2, markdown=re.sub(r"^#{1,2} ", "### ", body, flags=re.M))
-    preface = (f"Written by AI from the abstracts of {len(numbered)} search results: no research map covers this "
-               "query, so it does not read the papers' full text or trace their history. Check claims against the "
-               "papers.")
-    result = finish(f"{query}: a literature review", preface, [section], registry)
-    result.removed = removed
+    preface = (f"{note}Written by AI from the abstracts of the {len(numbered)} most relevant of {how}. It does not "
+               f"read the papers' full text or trace their history.{missing}{_verified_note(counts)} {map_hint} "
+               "Check claims against the papers.")
+    result = finish(short_title(query), preface, [section], registry)
+    result.removed, result.unsupported = removed, counts.get("no", 0)
     return result
 
 
@@ -437,22 +643,37 @@ def model_chat(user_id, model_used: dict) -> Chat:
     return chat
 
 
-def search_papers(query: str) -> list[dict]:
-    """Papers with abstracts for an abstracts review: up to LIBRARY_PAPERS from the library, then Semantic Scholar
-    and arXiv. Only papers with an abstract count: the library's best matches are often blog posts without one, and
-    letting them fill the list (as the research search's merge does) left a review with two sources."""
-    from athena.search.arxiv_live import search_arxiv
-    from athena.search.local import search_local
-    from athena.search.merger import merge_results
-    from athena.search.semantic_scholar import search_semantic_scholar
-    library = [p for p in search_local(query, limit=20) if p.get("abstract")][:LIBRARY_PAPERS]
-    live = [p for p in search_semantic_scholar(query, limit=15) + search_arxiv(query, limit=15)
-            if p.get("abstract")]
-    return merge_results(library, live, max_total=ABSTRACT_PAPERS)
+def find_sources(query: str, chat: Chat, user_id=None, save: Callable[[dict], None] | None = None, embed=None,
+                 plan=None):
+    """The abstracts review's papers (``athena.evolution.review_search``), with its progress shown."""
+    from athena.evolution import review_search
+
+    def progress(label: str) -> None:
+        if save is not None:
+            save({"progress": {"step": 0, "of": 2, "label": label}})
+    return review_search.find_sources(query, chat, embed or review_search.model_embed(user_id),
+                                      limit=ABSTRACT_PAPERS, progress=progress, plan=plan)
 
 
-def run(review_id, chat: Chat | None = None, retrieve=None, papers=None) -> dict:
-    """Write a saved review, recording progress as it goes. Returns its status."""
+def map_covers(session, topic, query: str, chat: Chat, save: Callable[[dict], None]):
+    """The review's plan, whether ``query`` is about the map's field (False when its subject does not name the map
+    or the model says it is about another subject; None when the model could not say), and which of its parts the
+    map's papers cover."""
+    from athena.evolution import coverage, review_search
+    save({"progress": {"step": 0, "of": 2, "label": f"Checking what the map “{topic.name}” covers"}})
+    plan = review_search.make_plan(query, chat)
+    named = coverage.names_map(plan.subject, topic)
+    field = coverage.about_field(topic, query, chat) if named else False
+    logger.info(f"Review: subject {plan.subject!r} names {topic.slug}: {named}; about its field: {field}")
+    return plan, field, coverage.check(session, topic, query, chat, plan.concepts)
+
+
+def run(review_id, chat: Chat | None = None, retrieve=None, papers=None, embed=None, coverage=None) -> dict:
+    """Write a saved review, recording progress as it goes. Returns its status.
+
+    Tests pass ``papers`` (an abstracts review's sources, skipping the search), ``retrieve`` and ``coverage`` (a map
+    review's passages and how much of the question the map covers) and ``embed``.
+    """
     from athena.core.models import EvoTopic, LitReview
     from athena.database.db import SessionLocal
 
@@ -472,15 +693,40 @@ def run(review_id, chat: Chat | None = None, retrieve=None, papers=None) -> dict
 
         save({"status": "running", "progress": {"step": 0, "of": 1, "label": "Starting"}})
         try:
+            plan, note, field = None, "", None
             if review.mode == "map":
+                from athena.evolution.coverage import MIN_SHARE
                 topic = session.get(EvoTopic, review.topic_id) if review.topic_id else None
                 if topic is None or topic.built_at is None:
                     raise ValueError("The map is gone or not built")
-                result = write_map_review(session, topic, chat, save, retrieve)
-                review.built_at = topic.built_at
-            else:
-                result = write_abstracts_review(review.query or "", papers if papers is not None
-                                                else search_papers(review.query or ""), chat, save)
+                if review.query and coverage is None:
+                    try:
+                        plan, field, coverage = map_covers(session, topic, review.query, chat, save)
+                    except Exception as exc:  # the review is still written, without the note on what it covers
+                        logger.warning(f"Review {review_id}: map coverage not checked: {exc}")
+                if coverage is not None:
+                    logger.info(f"Review {review_id}: {topic.slug}: about its field {field}; covers "
+                                f"{coverage.share:.0%} of the question ({coverage.method}): {coverage.parts}")
+                # The model's answer decides; without one, the share of the parts the map covers.
+                elsewhere = field is False or (field is None and coverage is not None and coverage.share < MIN_SHARE)
+                if review.query and elsewhere:
+                    # The query only named the map: write from search results, and say why.
+                    why = ("the question is about another subject that only mentions its field (“"
+                           f"{plan.subject if plan else review.query}”)" if field is False
+                           else f"its papers cover only {len(coverage.covered)} of the question's "
+                                f"{len(coverage.parts)} parts")
+                    note = (f"The research map “{topic.name}” matched the question, but {why}, so this review is "
+                            "written from a literature search instead. ")
+                    save({"mode": "abstracts", "topic_id": None})
+                else:
+                    result = write_map_review(session, topic, chat, save, retrieve, query=review.query,
+                                              coverage=coverage)
+                    review.built_at = topic.built_at
+            if review.mode == "abstracts" and papers is not None:
+                result = write_abstracts_review(review.query or "", papers, chat, save, note=note)
+            elif review.mode == "abstracts":
+                found = find_sources(review.query or "", chat, review.user_id, save, embed, plan)
+                result = write_abstracts_review(review.query or "", found.sources, chat, save, found, note=note)
         except Exception as exc:
             logger.warning(f"Review {review_id} failed: {exc}")
             session.rollback()
@@ -492,7 +738,7 @@ def run(review_id, chat: Chat | None = None, retrieve=None, papers=None) -> dict
               "finished_at": datetime.now(timezone.utc), "model": used.get("model"),
               "input_tokens": used.get("in", 0), "output_tokens": used.get("out", 0),
               "progress": {"step": 1, "of": 1, "label": "Done"}})
-        return {"status": "done", "citations_removed": result.removed}
+        return {"status": "done", "citations_removed": result.removed, "citations_unsupported": result.unsupported}
 
 
 def is_stale(review, now: datetime | None = None) -> bool:
