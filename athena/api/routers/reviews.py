@@ -1,7 +1,7 @@
 """
 Literature reviews (ROADMAP S1): written in the background, saved per user (athena.evolution.review).
 
-POST   /api/v1/reviews                     — start one: {query} or {topic_slug}; grounded in a map when one matches
+POST   /api/v1/reviews                     — start one: {query} or {topic_slug}; grounded in a map that covers it
 GET    /api/v1/reviews                     — yours, newest first
 GET    /api/v1/reviews/{id}                — one review; polled while it is written
 DELETE /api/v1/reviews/{id}
@@ -70,7 +70,13 @@ def _own(session: Session, review_id: UUID, user: User) -> LitReview:
 
 
 def _map_for(session: Session, body: ReviewRequest) -> EvoTopic | None:
-    """The built map a review is grounded in: the one asked for, else the one the query matches, else none."""
+    """The built map a review is grounded in: the one asked for, else the one the query proposes, else none.
+
+    A map the query proposes (by a name or alias, or by its papers' content) is only a candidate: "NLLB-200
+    hallucination … (e.g. Sinhala ZWJ loss)" names the Sinhala NLP map, which has nothing on hallucination. The
+    worker checks with the model which parts of the query the map covers, and writes from search results instead
+    when it covers too little (athena.evolution.coverage, review.run).
+    """
     from athena.database import evolution as db
     from athena.evolution.search import find_topic_by_content
     if body.topic_slug:
@@ -98,7 +104,8 @@ def start_review(body: ReviewRequest, session: Session = Depends(get_db), r: red
         raise HTTPException(status_code=409, detail="A review of yours is still being written; wait for it to finish")
     auth.use(r, user, "lit_review")
     review = LitReview(user_id=user.id, topic_id=topic.id if topic else None, query=body.query,
-                       title=f"{topic.name if topic else body.query}: a literature review",
+                       title=reviews.short_title(body.query) if body.query
+                       else f"{topic.name}: a literature review",
                        mode="map" if topic else "abstracts", status="queued",
                        progress={"step": 0, "of": 1, "label": "Waiting for the worker",
                                  "at": datetime.now(timezone.utc).isoformat()})

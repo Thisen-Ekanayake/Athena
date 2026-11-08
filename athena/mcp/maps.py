@@ -46,6 +46,24 @@ def reading_text(name: str, data: dict) -> str:
     return "\n".join(lines)
 
 
+def timeline_text(name: str, data: dict, shown: int = 15) -> str:
+    """Milestones by year, one line each, then the notable papers without open full text by name only. The route's
+    JSON (every node with its scores and counters, twice) ran to ~30k tokens (feedback 2026-11-07)."""
+    years = data.get("years") or []
+    lines = [f"Timeline of {name}: {sum(len(y.get('papers') or []) for y in years)} milestones in {len(years)} years "
+             "(ids work with map_paper)."]
+    for y in years:
+        papers = y.get("papers") or []
+        lines.append(f"{y.get('year')}: " + "; ".join(
+            f"{_name(p)}{', main path' if p.get('on_main_path') else ''}" for p in papers))
+    missing = data.get("without_full_text") or []
+    if missing:
+        names = ", ".join(common.clip(p.get("named_method") or p.get("title"), 50) for p in missing[:shown])
+        more = f" and {len(missing) - shown} more" if len(missing) > shown else ""
+        lines.append(f"\nNotable papers whose full text is not open ({len(missing)}): {names}{more}.")
+    return "\n".join(lines)
+
+
 def _name(n: dict) -> str:
     label, title = n.get("named_method") or "", n.get("title") or ""
     named = label and not title.lower().startswith(label.lower())
@@ -141,6 +159,8 @@ def register(mcp: MCPServer) -> None:
             return gaps_text(topic["name"], data)
         if view == "reading_path":
             return reading_text(topic["name"], data)
+        if view == "timeline":
+            return timeline_text(topic["name"], data)
         return f"{view.replace('_', ' ').capitalize()} of {topic['name']}:\n" + common.compact(data, width=220)
 
     @common.tool(mcp, READ)

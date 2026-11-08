@@ -20,6 +20,9 @@ from athena.database.evolution.topics import (
     topic_summary,
 )
 
+# Sections where a paper motivates itself rather than states what it could not do.
+MOTIVATION_SECTIONS = {"intro", "abstract", "related_work"}
+
 
 def gap_export_rows(session: Session, topic: EvoTopic) -> list[dict]:
     """Every statement in the topic's gap themes, with its theme, for the CSV export."""
@@ -193,8 +196,11 @@ def topic_gaps(session: Session, topic: EvoTopic, examples: int = 3) -> dict:
     out = []
     for t in themes:
         gs = members.get(t.id, [])
-        # Examples: own statements first (the paper on its own gap), then the most recent.
-        picks = sorted(gs, key=lambda g: (g.origin != "own", -(rows[g.source_paper_id][1].year or 0)
+        # Examples: what papers say in their limitations, future work or conclusions before what an introduction says
+        # to motivate itself ("Sinhala lacks resources"), then own statements (the paper on its own gap), then the
+        # most recent.
+        picks = sorted(gs, key=lambda g: (g.section_type in MOTIVATION_SECTIONS, g.origin != "own",
+                                          -(rows[g.source_paper_id][1].year or 0)
                                           if g.source_paper_id in rows else 0))[:examples]
         candidates: dict[UUID, float] = {}
         for g in gs:

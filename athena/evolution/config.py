@@ -65,6 +65,16 @@ class TopicConfig:
     milestones_per_era: int = 3
     global_top: int = 12               # the highest-scoring papers are milestones whatever their era's quota
     milestone_min_score: float = 0.55  # no era pick below this, so sparse eras are not padded
+    # Recent eras' papers have had little time to be cited inside the topic, so their in-degree, PageRank and flow
+    # are low: an era ending in the corpus's last this-many years takes picks down to this share of the bar.
+    recent_era_years: int = 3
+    recent_min_score_factor: float = 0.85
+    # A paper far from the topic's profile (abstract similarity below its on-topic papers' 10th percentile) whose
+    # citations mostly come from outside the topic is a general reference, not a milestone: Kaldi and a 1997 TTS
+    # textbook in Sinhala NLP (specificity 0.002, 0.004), Canny edge detection in object detection.
+    milestone_min_specificity: float = 0.02
+    # With keywords only (no abstract vectors), specificity alone decides, at this lower floor.
+    milestone_min_specificity_keywords: float = 0.005
     max_milestones_per_year: int = 3   # after every rule above; a person's pin still adds one
     # Main-path papers at or above this score are milestones too. None: the main path is display only.
     # Membership is a yes/no that favoured mid-tier papers on long paths; the flow weight replaces it.

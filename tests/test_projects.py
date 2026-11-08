@@ -593,7 +593,8 @@ def test_off_topic_library_hits_are_left_out(monkeypatch):
     monkeypatch.setattr(arxiv_live, "search_arxiv", lambda q, limit: [])
     ctx = tools.Context(user_id=uuid4(), project_id=None, conversation_id=uuid4(), message_id=None)
     text, info = tools.execute(ctx, "search_papers", {"query": "HelaBERT"})
-    assert [r["title"] for r in info["results"]] == ["Sinhala NER", "HelaBERT for Sinhala"]
+    # the title naming the query first (athena.search.merger.title_match)
+    assert [r["title"] for r in info["results"]] == ["HelaBERT for Sinhala", "Sinhala NER"]
 
 
 def _registry_row(name: str, vision: bool) -> dict:
