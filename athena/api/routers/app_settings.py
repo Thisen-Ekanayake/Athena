@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from athena.api.deps import get_db, get_redis
-from athena.core import llm
+from athena.core import failures, llm
 from athena.core.config_store import get_setting
 from athena.core.models import AppSetting
 from athena.model_server import activity
@@ -182,7 +182,8 @@ def _timed(call) -> dict:
         detail = call()
         return {"ok": True, "latency_ms": int((time.time() - start) * 1000), **detail}
     except Exception as exc:
-        return {"ok": False, "latency_ms": int((time.time() - start) * 1000), "error": str(exc)[:300]}
+        logger.warning(f"Connection test failed: {exc!r}")
+        return {"ok": False, "latency_ms": int((time.time() - start) * 1000), "error": failures.describe(exc)}
 
 
 @router.post("/models/test")

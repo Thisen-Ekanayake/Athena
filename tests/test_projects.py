@@ -472,7 +472,8 @@ def test_a_failed_model_is_saved_as_failed(env, monkeypatch):
     got = events(admin.post(f"/api/v1/chats/{c['id']}/messages", json={"content": "Hello there"}))
     assert any(e["type"] == "error" for e in got)
     done = next(e for e in got if e["type"] == "done")["message"]
-    assert done["status"] == "failed" and "connection refused" in done["error"]
+    # the page is told the kind of failure; the exception's own text stays in the log
+    assert done["status"] == "failed" and done["error"] == "The model did not answer: could not connect"
     assert admin.get(f"/api/v1/chats/{c['id']}").json()["title"] == "Hello there"
 
 

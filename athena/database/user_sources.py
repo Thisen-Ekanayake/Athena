@@ -10,7 +10,7 @@ from loguru import logger
 
 import feedparser
 
-from athena.core import safe_http
+from athena.core import failures, safe_http
 from athena.core.models import SourceType
 
 
@@ -95,11 +95,12 @@ def preview_source(url: str, name: Optional[str] = None) -> dict:
         # API and SCRAPE sources can't be cheaply previewed; we still let the
         # user add them — the first crawl runs in the background once confirmed.
     except Exception as e:
+        logger.warning(f"Preview of the source {url} failed: {e!r}")
         return {
             "source_type": source_type.value,
             "source_name": source_name,
             "sample_items": [],
-            "error": str(e),
+            "error": failures.describe(e),  # the kind of failure; its text stays in the log
         }
 
     return {

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from athena.api import auth
 from athena.api.cache import cache_invalidate
 from athena.api.deps import get_db, get_redis
+from athena.core import failures
 from athena.core.models import User
 from athena.database import evolution as db
 from athena.database import watches as watch_db
@@ -128,7 +129,8 @@ def create_proposal(body: ProposalRequest, r: redis_lib.Redis = Depends(get_redi
     except OpenAlexBudgetError as exc:
         raise HTTPException(status_code=429, detail=str(exc))
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"OpenAlex did not answer: {exc}")
+        logger.warning(f"Map proposal: OpenAlex failed: {exc!r}")
+        raise HTTPException(status_code=502, detail=f"OpenAlex did not answer: {failures.describe(exc)}")
     if proposal["candidates"] and chat_available():
         proposal["refine"] = {"status": "pending", "deadline": time.time() + proposals.REFINE_WAIT_SECONDS}
         proposals.save(r, proposal)

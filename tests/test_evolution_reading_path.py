@@ -112,7 +112,7 @@ class TestNotes:
         assert written == 0 and saved == [""]
 
     def test_a_failure_is_remembered_and_the_lock_released(self):
-        written, saved, _, r = self._run(RuntimeError("no model server"))
+        written, saved, _, r = self._run(ConnectionError("refused by 127.0.0.1:8080"))
         assert written == 0 and saved == []
-        assert "no model server" in notes.last_failure(r, "object-detection")
+        assert notes.last_failure(r, "object-detection") == "could not connect"  # the kind, not the text
         assert not r.exists("evo:notes:object-detection")

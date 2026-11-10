@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections import defaultdict
 from uuid import UUID
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -171,7 +172,7 @@ def verdict_prompt(idea: str, papers: list[dict], themes: list[dict]) -> str:
 
 
 def check_idea(session: Session, idea: str, verdict: bool = True, user_id=None) -> dict:
-    from athena.core import llm
+    from athena.core import failures, llm
     from athena.evolution import vectors
     from athena.evolution.search import embed_query
 
@@ -190,5 +191,6 @@ def check_idea(session: Session, idea: str, verdict: bool = True, user_id=None) 
             result["verdict"] = answer
             result["usage"] = usage
         except Exception as exc:  # the search results still stand without the model's reading of them
-            result["verdict_error"] = str(exc)[:300]
+            logger.warning(f"Idea check: no verdict: {exc!r}")
+            result["verdict_error"] = failures.describe(exc)
     return result

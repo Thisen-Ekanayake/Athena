@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 
 import redis as redis_lib
 from fastapi import APIRouter, Depends, HTTPException, Query
+from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -31,6 +32,7 @@ from athena.api import auth
 from athena.api.cache import cache_get, cache_set
 from athena.api.deps import get_db, get_redis
 from athena.conferences import embed, items, tasks, topics as T, venues as V
+from athena.core import failures
 from athena.core.models import ConfPaper, ConfTopic, User
 from athena.database import conferences as db
 
@@ -193,7 +195,8 @@ def start_sync(force: bool = False, _: User = Depends(auth.require_admin)):
     try:
         tasks.sync.delay(force, True)
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"No worker to sync with: {exc}")
+        logger.warning(f"Conference sync not queued: {exc!r}")
+        raise HTTPException(status_code=503, detail=f"No worker to sync with: {failures.describe(exc)}")
     tasks.set_status(stage="queued", error=None)
     return {"queued": True}
 

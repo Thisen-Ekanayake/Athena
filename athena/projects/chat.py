@@ -32,6 +32,8 @@ from uuid import UUID
 
 from loguru import logger
 
+from athena.core import failures
+
 ANSWER_TOKENS = 4096        # the answer and any document written through a tool call
 MIN_PROMPT_TOKENS = 3000    # thinking is cut back before the prompt gets smaller than this
 MAX_STEPS = 4               # model calls that may use tools; one more answers without them
@@ -421,8 +423,8 @@ async def run(turn: Turn, retrieve, tool_runner, save, client=None):
                 messages.append({"role": "tool", "tool_call_id": step_info["id"], "content": result})
         status = "done"
     except Exception as exc:
-        logger.warning(f"Chat {turn.conversation_id}: the model failed: {exc}")
-        status, error = "failed", f"The model did not answer: {str(exc)[:300]}"
+        logger.warning(f"Chat {turn.conversation_id}: the model failed: {exc!r}")
+        status, error = "failed", f"The model did not answer: {failures.describe(exc)}"
         if model_call:
             activity.finish(model_call, exc)
         yield {"type": "error", "message": error}

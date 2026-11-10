@@ -27,13 +27,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
+from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from athena.api import auth
 from athena.api.deps import get_db
 from athena.api.routers import model_activity
-from athena.core import llm
+from athena.core import failures, llm
 from athena.core.models import User
 from athena.database import model_registry as db
 from athena.model_server import bench, files, gguf, gpu, loading, presets, registry, stats
@@ -389,8 +390,9 @@ def _make_embedder(session: Session, m, user: User) -> None:
         client = OpenAI(base_url=llm.embed_base_url(), api_key=llm.embed_api_key(), timeout=600.0, max_retries=0)
         dims = len(client.embeddings.create(input=["Does this model answer?"], model=m.name).data[0].embedding)
     except Exception as exc:
+        logger.warning(f"Embedder {m.name} did not answer: {exc!r}")
         raise HTTPException(status_code=502, detail=f"{m.name} did not answer at {llm.embed_base_url()}: "
-                                                    f"{str(exc)[:200]}")
+                                                    f"{failures.describe(exc)}")
     if dims < llm.EMBED_DIM:
         raise HTTPException(status_code=422, detail=f"{m.name} returns {dims} dimensions; Athena stores "
                                                     f"{llm.EMBED_DIM}")

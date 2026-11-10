@@ -14,6 +14,8 @@ from uuid import UUID
 
 from loguru import logger
 
+from athena.core import failures
+
 SYSTEM = "You write short, factual notes about research papers for newcomers to a field. Reply with JSON only."
 SCHEMA = {"type": "object", "properties": {"abstract_matches": {"type": "boolean"},
                                            "why": {"type": "string", "maxLength": 360}},
@@ -115,8 +117,8 @@ def write_notes(slug: str, paper_ids: list[UUID], r) -> int:
                 written += bool(text)
         r.delete(_failed_key(slug))
     except Exception as exc:  # the model server is down, or the database went away
-        logger.warning(f"Reading path {slug}: notes not written: {exc}")
-        r.set(_failed_key(slug), str(exc)[:300], ex=FAILED_SECONDS)
+        logger.warning(f"Reading path {slug}: notes not written: {exc!r}")
+        r.set(_failed_key(slug), failures.describe(exc), ex=FAILED_SECONDS)
     finally:
         r.delete(_lock_key(slug))
     logger.info(f"Reading path {slug}: wrote {written} notes")

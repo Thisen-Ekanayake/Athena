@@ -17,7 +17,7 @@ from athena.api import auth
 from athena.api.deps import get_db, get_redis
 from athena.core.models import User
 from athena.database import evolution as db
-from athena.core import llm, usage
+from athena.core import failures, llm, usage
 from athena.evolution import ask
 from athena.model_server import activity
 from athena.api.routers.evolution._common import _built_topic_or_409, _topic_or_404
@@ -80,8 +80,8 @@ async def ask_map(slug: str, body: AskRequest, session: Session = Depends(get_db
             activity.finish(call)
         except Exception as exc:  # the model server went away mid-answer
             activity.finish(call, exc)
-            logger.warning(f"Ask {slug}: the answer failed: {exc}")
-            yield _sse({"error": f"The model did not answer: {str(exc)[:200]}"})
+            logger.warning(f"Ask {slug}: the answer failed: {exc!r}")
+            yield _sse({"error": f"The model did not answer: {failures.describe(exc)}"})
         finally:
             activity.finish(call, GeneratorExit())  # the page went away mid-answer; a no-op otherwise
         answer = "".join(parts)
