@@ -4,6 +4,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -109,6 +110,15 @@ class TestSetupAndLogin:
                                                   "password": "short"}).status_code == 422
         assert c.post("/api/v1/auth/setup", json={"email": "not-an-email", "display_name": "A",
                                                   "password": "long enough"}).status_code == 422
+
+    def test_an_email_is_a_name_and_dotted_labels(self, db):
+        assert auth.normalise_email("  First.Last@Sub.Example.org ") == "first.last@sub.example.org"
+        for bad in ("a@b", "a@b..c", "a@.b.c", "a@b.c.", "a b@c.d", "a@b@c.d", "@b.c"):
+            with pytest.raises(HTTPException):
+                auth.normalise_email(bad)
+        # dots repeated after the @ used to be matched again from every dot; now the whole address is read once
+        with pytest.raises(HTTPException):
+            auth.normalise_email("a@" + "!." * 50_000 + " ")
 
     def test_login_logout_and_the_cookie(self, db):
         setup_admin(client())

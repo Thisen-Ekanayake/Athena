@@ -165,6 +165,12 @@ class _Buffered:
             self.buf, self.pos = b"", 0
 
 
+# A size in a file name (9B, 0.5b, 135M) and a quantisation label at its end (-Q4_K_M, .q8_0, _f16). Every repeat
+# has a bound, so a long run of digits or of "_q0" in a name cannot make the search re-read it once per start.
+_SIZE = re.compile(r"(?i)(?<!\d)(\d{1,4}(?:\.\d{1,3})?)[bm](?![a-z])")
+_QUANT_END = re.compile(r"(?i)[-_.](i?q\d[_a-z0-9]{0,24}|bf16|f16|f32)$")
+
+
 def _quant(header: dict, filename: str) -> str | None:
     if (ft := header.get("general.file_type")) in FILE_TYPES:
         return FILE_TYPES[ft]
@@ -175,7 +181,7 @@ def _quant(header: dict, filename: str) -> str | None:
 def _size_label(header: dict, size: int, quant: str | None, filename: str) -> str | None:
     if label := header.get("general.size_label"):
         return str(label)
-    m = re.search(r"(?i)(\d+(?:\.\d+)?)[bm](?![a-z])", filename)
+    m = _SIZE.search(filename)
     if m:
         return m.group(0).upper()
     if quant in BITS:
@@ -239,6 +245,6 @@ def suggested_name(info: dict) -> str:
     stem = os.path.splitext(info["filename"])[0]
     if info.get("quant"):
         stem = re.sub(rf"[-_.]?{re.escape(info['quant'])}$", "", stem, flags=re.I)
-    stem = re.sub(r"[-_.](i?q\d[_a-z0-9]*|bf16|f16|f32)$", "", stem, flags=re.I)
+    stem = _QUANT_END.sub("", stem)
     name = re.sub(r"[^a-z0-9.\-]+", "-", stem.lower()).strip("-.")
     return name[:60] or "model"

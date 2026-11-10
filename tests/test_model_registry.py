@@ -95,6 +95,27 @@ def test_other_files_are_refused(tmp_path):
         gguf.describe(str(tmp_path / "x.gguf"))
 
 
+@pytest.mark.parametrize("filename, size, name", [
+    ("llama-2-7b.Q4_K_M.gguf", "7B", "llama-2-7b"),
+    ("Qwen2.5-0.5B-Instruct-Q8_0.gguf", "0.5B", "qwen2.5-0.5b-instruct"),
+    ("SmolLM2-135M-Instruct-f16.gguf", "135M", "smollm2-135m-instruct"),
+    ("Phi-3.5-mini-instruct-IQ3_XXS.gguf", None, "phi-3.5-mini-instruct"),
+    ("bge-m3-q8_0.gguf", None, "bge-m3"),
+])
+def test_a_file_name_gives_the_size_and_a_preset_name(filename, size, name):
+    """For headers with no size label; the quantisation label at the end is not part of the name."""
+    assert gguf._size_label({}, 0, None, filename) == size
+    assert gguf.suggested_name({"filename": filename, "quant": gguf._quant({}, filename)}) == name
+
+
+def test_long_runs_in_a_file_name_are_read_once():
+    """A name of nothing but digits, or of repeated quantisation labels, used to be searched again from every
+    character; the patterns now bound each repeat."""
+    assert gguf._size_label({}, 0, None, "0" * 200_000) is None
+    hostile = "-q0" + "_q0" * 60_000 + "!"
+    assert gguf.suggested_name({"filename": hostile + ".gguf", "quant": None}).startswith("q0-q0")
+
+
 # ── presets ──────────────────────────────────────────────────────────
 
 

@@ -41,7 +41,8 @@ COOKIE = "athena_session"
 SESSION_DAYS = 30
 TOUCH_EVERY = timedelta(hours=1)  # the rolling expiry is pushed back at most hourly, not on every request
 MIN_PASSWORD = 8
-EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# name@label.label: the labels hold no dot, so every address matches one way only (no backtracking over the dots)
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+$")
 PASSWORD_CHANGE_REQUIRED = "password_change_required"
 TOKEN_PREFIX = "ath_"
 AGENT = "athena.agent"  # ASGI scope key: a call the MCP server makes in-process with an agent's token
