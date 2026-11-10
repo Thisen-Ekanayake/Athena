@@ -507,6 +507,37 @@ def test_another_embedder_becomes_the_default_and_everything_is_embedded_again(a
     assert api.patch(f"/api/v1/models/{old['id']}", json={"enabled": False}).status_code == 200  # no longer in use
 
 
+def test_hidden_folders_and_paths_that_climb_out_are_not_opened(api, tmp_path, monkeypatch):
+    """The dialog never lists a hidden folder, so a request for one did not come from it."""
+    hidden = tmp_path / "elsewhere" / ".secret"
+    (hidden / "inner").mkdir(parents=True)
+    model = write_gguf(hidden / "h.gguf", qwen_header())
+    browse = "/api/v1/models/browse"
+    for path in (hidden, hidden / "inner"):
+        refused = api.get(browse, params={"path": str(path)})
+        assert refused.status_code == 403 and "Hidden" in refused.json()["detail"]
+    assert api.post("/api/v1/models/inspect", json={"path": str(model)}).status_code == 404
+    assert api.get(browse, params={"path": f"{tmp_path}/elsewhere/../../../../../etc"}).status_code == 403
+    assert "h.gguf" not in str(api.get(browse, params={"path": str(tmp_path / "elsewhere")}).json()["entries"])
+    # Named in MODEL_DIRS the folder is a place, and opens like any other
+    monkeypatch.setattr(files, "roots", lambda: [str(registry.REPO / "models"), str(hidden)])
+    listed = api.get(browse, params={"path": str(hidden)}).json()
+    assert [e["name"] for e in listed["entries"]] == ["inner", "h.gguf"]
+    assert api.post("/api/v1/models/inspect", json={"path": str(model)}).json()["info"]["path"] == str(model)
+
+
+def test_a_projector_link_out_of_bounds_is_not_opened(api, tmp_path, monkeypatch):
+    """Projectors beside a model are found by name. One that is a link to a file Athena does not read (anything
+    but a .gguf the picker may open) is left out without being opened."""
+    models = tmp_path / "models"
+    (models / "mmproj-link.gguf").symlink_to("/etc/hostname")
+    opened, describe = [], gguf.describe
+    monkeypatch.setattr(gguf, "describe", lambda path, **kw: opened.append(path) or describe(path, **kw))
+    found = files.projectors_for(str(models / "Qwen3.5-9B-Q4_K_M.gguf"), {"name": "Qwen3.5-9B"})
+    assert [p["filename"] for p in found] == ["mmproj-F16.gguf"]
+    assert opened == [str(models / "mmproj-F16.gguf")]
+
+
 def test_incomplete_files_are_refused(api, tmp_path):
     cut = write_gguf(tmp_path / "models" / "cut-Q4_K_M.gguf", qwen_header(), tensors=[("w", [256, 64], 12, 0)],
                      padding=100)

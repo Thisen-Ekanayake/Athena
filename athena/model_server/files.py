@@ -1,12 +1,17 @@
 """
 Finding model files on this machine for the admin's picker, the way a file dialog does.
 
-Any folder can be opened except the system ones (SYSTEM); only folders and .gguf files are listed, hidden ones
-left out, and a model split into parts (``-00001-of-00003.gguf``) shows once, as its first part with the size of
-all of them, which is what llama.cpp loads. The places to start from are ``models/`` in the repository, the
-folders registered models live in (their symlinks' targets too), the llama.cpp download cache, any folder in
-MODEL_DIRS (separated by commas), the home folder and the whole disk. Only a .gguf file outside the system
-folders is ever read, and only its GGUF header.
+The places to start from are ``models/`` in the repository, the folders registered models live in (their
+symlinks' targets too), the llama.cpp download cache, any folder in MODEL_DIRS (separated by commas), the home
+folder and the whole disk. Only folders and .gguf files are listed, hidden ones left out, and a model split into
+parts (``-00001-of-00003.gguf``) shows once, as its first part with the size of all of them, which is what
+llama.cpp loads.
+
+``allowed`` is the one check every path from a request goes through, and what it returns (the path with symlinks
+resolved) is the only thing that is opened. A path is taken when it is inside one of the places, outside the
+system folders (SYSTEM), and has no hidden folder below its place: the dialog never lists those, so a request
+naming ``~/.ssh`` did not come from it. A model kept in a hidden folder is reached by naming that folder in
+MODEL_DIRS, which makes it a place. Only a .gguf file is ever read (``checked``), and only its GGUF header.
 """
 from __future__ import annotations
 
@@ -61,12 +66,30 @@ def _system(rp: str) -> bool:
     return any(rp == s or rp.startswith(s + "/") for s in SYSTEM)
 
 
-def checked(path: str) -> str:
-    """``path`` resolved (symlinks too), if it is a .gguf file outside the system folders; use what this returns,
-    not ``path``, so the file read is the one that was checked."""
+def allowed(path: str, tops: list[dict] | None = None) -> str:
+    """``path`` with symlinks resolved, if the picker may open it; PermissionError says why not. ``tops`` is
+    ``places()`` when the caller has it already."""
     rp = os.path.realpath(os.path.expanduser(path))
-    if _system(rp) or not rp.lower().endswith(".gguf"):
-        raise PermissionError("Pick a .gguf file outside the system folders")
+    if _system(rp):
+        raise PermissionError("System folders hold no models")
+    # The deepest place the path is in decides: ~/.cache/llama.cpp is a place, though .cache under Home is hidden
+    for root in sorted((p["path"] for p in (tops or places())), key=len, reverse=True):
+        if rp == root:
+            return root
+        inside = root.rstrip("/") + "/"
+        if rp.startswith(inside):
+            if any(part.startswith(".") for part in rp[len(inside):].split("/")):
+                raise PermissionError("Hidden folders are not opened; name the folder in MODEL_DIRS to use it")
+            return rp
+    raise PermissionError("That is outside the places models are picked from")
+
+
+def checked(path: str) -> str:
+    """``path`` resolved, if it is a .gguf file the picker may open; use what this returns, not ``path``, so the
+    file read is the one that was checked."""
+    rp = allowed(path)
+    if not rp.lower().endswith(".gguf"):
+        raise PermissionError("Pick a .gguf file")
     return rp
 
 
@@ -78,9 +101,7 @@ def browse(path: str | None) -> dict:
     """{path, parent, places, entries: [{name, path, kind: dir | model | mmproj, size_bytes, parts}]}; with no
     path, the first place."""
     tops = places()
-    rp = os.path.realpath(os.path.expanduser(path or tops[0]["path"]))
-    if _system(rp):
-        raise PermissionError("System folders hold no models")
+    rp = allowed(path or tops[0]["path"], tops)
     if not os.path.isdir(rp):
         raise FileNotFoundError(rp)
     dirs, files = [], []
@@ -137,7 +158,7 @@ def projectors_for(path: str, info: dict) -> list[dict]:
         if _kind(e.name) != "mmproj":
             continue
         try:
-            d = gguf.describe(e.path)
+            d = gguf.describe(checked(e.path))  # a link is read where it points, and only if that may be opened
         except (OSError, gguf.NotGGUF):
             continue
         if d["kind"] == "mmproj":

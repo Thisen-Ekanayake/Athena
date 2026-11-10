@@ -81,7 +81,7 @@ def _describe(path: str, kind: str = "model") -> dict:
     except PermissionError:
         path = None
     if path is None or not os.path.isfile(path):
-        raise HTTPException(status_code=404, detail="No .gguf file there (system folders are never read)")
+        raise HTTPException(status_code=404, detail="No .gguf file there (system and hidden folders are never read)")
     try:
         info = gguf.describe(path, check=kind == "model")
     except (OSError, gguf.NotGGUF) as exc:
