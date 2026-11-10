@@ -3,12 +3,12 @@ Generic Substack RSS Harvester.
 Substack blogs publish RSS feeds at: https://<blog>.substack.com/feed
 This scraper accepts any Substack URL and constructs the RSS feed URL automatically.
 """
-import httpx
 import feedparser
 import html
 from typing import List, Any
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from athena.core import safe_http
 from athena.scrapers.base import BaseScraper
 from athena.core.schemas import ContentItemCreate
 from athena.core.models import ContentCategory
@@ -36,9 +36,9 @@ class SubstackScraper(BaseScraper):
     async def fetch(self, url: str) -> List[Any]:
         feed_url = detect_substack_feed(url)
         logger.info(f"Fetching Substack RSS: {feed_url}")
-        async with httpx.AsyncClient() as client:
+        async with safe_http.async_client(timeout=30.0) as client:
             try:
-                response = await client.get(feed_url, follow_redirects=True, timeout=30.0)
+                response = await client.get(feed_url)
                 response.raise_for_status()
                 feed = feedparser.parse(response.text)
                 return [(entry, url) for entry in feed.entries]

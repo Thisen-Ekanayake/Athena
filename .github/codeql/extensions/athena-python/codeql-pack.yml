@@ -1,0 +1,9 @@
+# What CodeQL (code scanning, default setup) is told about Athena's own validators. Default setup reads every
+# model pack under .github/codeql/extensions.
+name: thisen-ekanayake/athena-python
+version: 0.0.1
+library: true
+extensionTargets:
+  codeql/python-all: "*"
+dataExtensions:
+  - "*.model.yml"

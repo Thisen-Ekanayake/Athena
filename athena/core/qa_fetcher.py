@@ -1,6 +1,5 @@
 import os
 import re
-import httpx
 import tempfile
 from pathlib import Path
 from bs4 import BeautifulSoup
@@ -9,6 +8,7 @@ from datetime import datetime
 from typing import Optional
 from loguru import logger
 
+from athena.core import safe_http
 from athena.core.models import ContentItem
 
 
@@ -32,8 +32,8 @@ def file_age_days(path: Path) -> float:
 async def try_direct_fetch(url: str) -> Optional[FetchResult]:
     logger.info(f"Trying direct HTTP fetch for {url}")
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, follow_redirects=True)
+        async with safe_http.async_client(timeout=15.0) as client:
+            resp = await client.get(url)
             if resp.status_code != 200:
                 return None
             soup = BeautifulSoup(resp.text, 'html.parser')
@@ -61,10 +61,11 @@ async def try_playwright_fetch(url: str) -> Optional[FetchResult]:
                     "(KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
                 ),
             )
+            await safe_http.guard_browser(context)  # no page or script reaches this machine or its network
             page = await context.new_page()
             # Some sites (openai.com) answer through a bot check and a redirect, and their page often isn't
             # "loaded" within the time a goto allows: go on once the response starts, and read whatever arrived.
-            await page.goto(url, wait_until="commit", timeout=30000)
+            await safe_http.goto(page, url, wait_until="commit", timeout=30000)
             try:
                 await page.wait_for_load_state("domcontentloaded", timeout=15000)
             except Exception:
@@ -88,8 +89,8 @@ async def try_playwright_fetch(url: str) -> Optional[FetchResult]:
 async def try_pdf_fetch(url: str) -> Optional[FetchResult]:
     logger.info(f"Trying PDF fetch for {url}")
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url, follow_redirects=True)
+        async with safe_http.async_client(timeout=15.0) as client:
+            resp = await client.get(url)
             if resp.status_code != 200:
                 return None
 

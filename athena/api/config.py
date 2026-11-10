@@ -33,6 +33,11 @@ class Settings:
     MCP_ALLOWED_HOSTS: list[str] = [h.strip() for h in os.getenv("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
     MCP_WAIT_SECONDS: int = int(os.getenv("MCP_WAIT_SECONDS", "600"))
 
+    # Sources, feed links and article pages are only fetched from public addresses (athena/core/safe_http.py). Hosts
+    # on the private network that may be fetched anyway, e.g. an RSS bridge on this machine: host names, addresses
+    # or CIDR ranges, comma-separated. Environment only, so the web app cannot widen it.
+    FETCH_ALLOW_HOSTS: list[str] = [h.strip() for h in os.getenv("FETCH_ALLOW_HOSTS", "").split(",") if h.strip()]
+
     # Swagger / ReDoc and the OpenAPI schema: off unless switched on; DOCS_PASSWORD puts them behind Basic Auth
     DOCS_ENABLED: bool = os.getenv("DOCS_ENABLED", "false").lower() == "true"
     DOCS_USERNAME: str = os.getenv("DOCS_USERNAME", "athena")
