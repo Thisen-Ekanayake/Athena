@@ -28,7 +28,7 @@ GET  /api/v1/evolution/topics/{slug}/people                  — key authors and
                                                                each milestone
 GET  /api/v1/evolution/items/{item_id}                       — a feed item's place in the maps, and the
                                                                milestones it cites
-GET  /api/v1/evolution/new-papers?days=30&topic=             — recent feed papers that cite map milestones
+GET  /api/v1/evolution/new-papers?days=30&topic=&limit=      — recent feed papers that cite map milestones
 POST /api/v1/evolution/idea-checks                           — check an idea against every map: closest papers,
                                                                gap themes it touches, a short verdict
 GET|DELETE /api/v1/evolution/idea-checks[/{id}]              — the user's saved checks
