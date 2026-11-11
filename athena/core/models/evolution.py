@@ -67,7 +67,8 @@ class EvoPaper(Base):
     full_text_status = Column(String, default="unavailable")  # unavailable | available | parsed | failed
     abstract_embedded_at = Column(DateTime(timezone=True), nullable=True)  # Tier 1: in Qdrant's paper_abstracts
     merged_ids = Column(ARRAY(String), default=[])   # duplicate OpenAlex records folded into this one
-    content_item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=True)
+    # Indexed: opening a feed item asks which map paper it is
+    content_item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=True, index=True)
     # The name citing papers give it, read from Semantic Scholar's citing sentences ({name, users, citers,
     # fetched_at}; name is null when none stands out). A milestone-score feature: see athena.evolution.method_names.
     cited_name = Column(JSONB, nullable=True)
@@ -201,7 +202,8 @@ class EvoCitationContext(Base):
     label = Column(String, nullable=True)            # Task B label; null until classified
     attributed = Column(Boolean, nullable=True)      # asked only for limitation labels
     model = Column(String, nullable=True)
-    labelled_at = Column(DateTime(timezone=True), nullable=True)
+    # Indexed: every map page's cache key reads the latest label time and the row count (labels_version)
+    labelled_at = Column(DateTime(timezone=True), nullable=True, index=True)
 
 
 class EvoGapStatement(Base):

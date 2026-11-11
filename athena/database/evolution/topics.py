@@ -261,8 +261,9 @@ def save_topic_build(slug: str, corpus: "Corpus", scores: "TopicScores") -> None
 
 def labels_version(session: Session) -> str:
     """Changes whenever full text, labels or gap themes change, which happens without a topic rebuild."""
-    count, last = session.execute(select(func.count(EvoCitationContext.id),
-                                         func.max(EvoCitationContext.labelled_at))).one()
+    # Both come from the index on labelled_at alone; counting ids read the whole table on every map request
+    count, last = session.execute(select(func.count(), func.max(EvoCitationContext.labelled_at))
+                                  .select_from(EvoCitationContext)).one()
     themes = session.execute(select(func.max(EvoGapTheme.built_at))).scalar()
     stamp = lambda t: int(t.timestamp()) if t else 0  # noqa: E731
     return f"{count}-{stamp(last)}-{stamp(themes)}"

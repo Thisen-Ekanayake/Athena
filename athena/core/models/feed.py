@@ -69,12 +69,19 @@ class Source(Base):
 
 class ContentItem(Base):
     __tablename__ = "content_items"
+    # What the feed orders and filters by (revision 0020). Postgres reads them backwards for "newest first" and
+    # "highest score first", and answers the score order (id and source of every item) from the index alone.
+    __table_args__ = (
+        Index("ix_content_items_score", "score", "id", "source_id"),
+        Index("ix_content_items_source", "source_id", "published_at"),
+        Index("ix_content_items_cluster", "cluster_id", "score"),
+    )
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     source_id = Column(PG_UUID(as_uuid=True), ForeignKey("sources.id"), nullable=False)
     title = Column(String, nullable=False)
     url = Column(String, unique=True, nullable=False)
-    published_at = Column(DateTime(timezone=True), nullable=False)
+    published_at = Column(DateTime(timezone=True), nullable=False, index=True)
     fetched_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     authors = Column(ARRAY(String).with_variant(JSON(), "sqlite"), default=[])  # JSON in the SQLite tests
     abstract = Column(String, nullable=True)
@@ -151,6 +158,8 @@ class Cluster(Base):
 
 class ItemLink(Base):
     __tablename__ = "item_links"
+    # An item's related items, the closest last: every feed page counts them and every item page lists them
+    __table_args__ = (Index("ix_item_links_source", "source_item_id", "similarity_score"),)
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     source_item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
@@ -163,6 +172,7 @@ class ItemLink(Base):
 class ContentScore(Base):
     """Per-item sub-score breakdown for scoring transparency."""
     __tablename__ = "content_scores"
+    __table_args__ = (Index("ix_content_scores_item", "item_id", "computed_at"),)  # an item's scores, the latest last
 
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
     item_id = Column(PG_UUID(as_uuid=True), ForeignKey("content_items.id"), nullable=False)
