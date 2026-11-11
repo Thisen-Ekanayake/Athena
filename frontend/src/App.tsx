@@ -1,18 +1,10 @@
 import { lazy, Suspense, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from './components/layout/AppShell'
-import { ClusterPage } from './pages/ClusterPage'
-import { ClustersPage } from './pages/ClustersPage'
 import { FeedPage } from './pages/FeedPage'
 import { HomePage } from './pages/HomePage'
 import { PaperPage } from './pages/PaperPage'
-import { ReviewPage } from './pages/ReviewPage'
 import { ChangePasswordPage, LoginPage, RequireAuth, SetupPage } from './pages/AuthPages'
-import { InboxPage } from './pages/InboxPage'
-import { LibraryPage } from './pages/LibraryPage'
-import { SearchPage } from './pages/SearchPage'
-import { SettingsPage } from './pages/SettingsPage'
-import { RisingPage } from './pages/RisingPage'
 import { Spinner } from './ui/Spinner'
 
 // Lazy so the graph library (cytoscape) only loads on the Evolution page.
@@ -39,6 +31,16 @@ const ProjectPage = lazy(() => import('./pages/ProjectPage').then((m) => ({ defa
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage').then((m) => ({ default: m.ProjectsPage })))
 const ConferencePage = lazy(() =>
   import('./features/conferences/ConferencePage').then((m) => ({ default: m.ConferencePage })))
+// Home, the feed and a paper open with the app; every other page arrives when it is first visited, so signing in
+// does not download the settings forms, the library or the review reader.
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+const LibraryPage = lazy(() => import('./pages/LibraryPage').then((m) => ({ default: m.LibraryPage })))
+const ReviewPage = lazy(() => import('./pages/ReviewPage').then((m) => ({ default: m.ReviewPage })))
+const SearchPage = lazy(() => import('./pages/SearchPage').then((m) => ({ default: m.SearchPage })))
+const InboxPage = lazy(() => import('./pages/InboxPage').then((m) => ({ default: m.InboxPage })))
+const RisingPage = lazy(() => import('./pages/RisingPage').then((m) => ({ default: m.RisingPage })))
+const ClustersPage = lazy(() => import('./pages/ClustersPage').then((m) => ({ default: m.ClustersPage })))
+const ClusterPage = lazy(() => import('./pages/ClusterPage').then((m) => ({ default: m.ClusterPage })))
 
 const loading = (page: ReactNode) => <Suspense fallback={<Spinner label="Loading…" />}>{page}</Suspense>
 
@@ -63,32 +65,32 @@ function App() {
           <Route index element={<HomePage />} />
           <Route path="feed" element={<FeedPage />} />
           <Route path="sources/:sourceId" element={<FeedPage />} />
-          <Route path="rising" element={<RisingPage />} />
+          <Route path="rising" element={loading(<RisingPage />)} />
           {/* Trending became Rising: citation momentum is the one "rising" measure. */}
           <Route path="trending" element={<Navigate to="/rising" replace />} />
-          <Route path="clusters" element={<ClustersPage />} />
-          <Route path="clusters/:id" element={<ClusterPage />} />
+          <Route path="clusters" element={loading(<ClustersPage />)} />
+          <Route path="clusters/:id" element={loading(<ClusterPage />)} />
           <Route path="evolution" element={evolution} />
           <Route path="evolution/ideas" element={<Suspense fallback={<Spinner label="Loading…" />}><IdeaCheckPage /></Suspense>} />
           <Route path="evolution/:slug" element={evolution} />
-          <Route path="library" element={<LibraryPage />} />
-          <Route path="library/:tab" element={<LibraryPage />} />
+          <Route path="library" element={loading(<LibraryPage />)} />
+          <Route path="library/:tab" element={loading(<LibraryPage />)} />
           <Route path="library/conferences/:venue" element={loading(<ConferencePage />)} />
           {/* Saved lists became the Library's first tab. */}
           <Route path="saved" element={<Navigate to="/library" replace />} />
-          <Route path="reviews/:id" element={<ReviewPage />} />
+          <Route path="reviews/:id" element={loading(<ReviewPage />)} />
           <Route path="projects" element={loading(<ProjectsPage />)} />
           <Route path="projects/:id" element={loading(<ProjectPage />)} />
           <Route path="chats" element={loading(<ChatsPage />)} />
           <Route path="chats/new" element={loading(<ChatPage />)} />
           <Route path="chats/:id" element={loading(<ChatPage />)} />
-          <Route path="inbox" element={<InboxPage />} />
-          <Route path="search" element={<SearchPage />} />
+          <Route path="inbox" element={loading(<InboxPage />)} />
+          <Route path="search" element={loading(<SearchPage />)} />
           {/* Research search and the literature review now live on the search page. */}
           <Route path="research" element={<Navigate to="/search" replace />} />
           <Route path="items/:id" element={<PaperPage />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="settings/:tab" element={<SettingsPage />} />
+          <Route path="settings" element={loading(<SettingsPage />)} />
+          <Route path="settings/:tab" element={loading(<SettingsPage />)} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
