@@ -158,6 +158,9 @@ def topic_timeline(session: Session, topic: EvoTopic, notable: int = 40) -> dict
     }
 
 
+_CITING_IN_QUERY = 2000  # citing papers named in the query up to this many; beyond it they are checked in Python
+
+
 def topic_links(session: Session, topic: EvoTopic, limit: int = 40) -> dict:
     """How this map connects to the others: papers they share, and milestones one borrows from the other."""
     overrides = _overrides(session, topic.id)
@@ -172,14 +175,18 @@ def topic_links(session: Session, topic: EvoTopic, limit: int = 40) -> dict:
         EvoMilestoneOverride.topic_id.in_(list(topics)))).scalars()}
     elsewhere: dict[UUID, list[dict]] = defaultdict(list)  # paper -> its places in other maps
     milestones_elsewhere: dict[UUID, dict] = {}            # other maps' milestones, any paper
-    for tp in session.execute(select(EvoTopicPaper).where(EvoTopicPaper.topic_id.in_(list(topics)))).scalars():
-        is_ms = effective_milestone(tp.is_milestone_auto, pins.get((tp.topic_id, tp.paper_id)))
-        if tp.paper_id in rows:
-            elsewhere[tp.paper_id].append({"topic": topics[tp.topic_id].slug, "topic_name": topics[tp.topic_id].name,
-                                           "milestone": is_ms})
+    topic_of: dict[UUID, set[UUID]] = defaultdict(set)     # the other maps' papers that are not in this one
+    # The other maps' rows are every paper of every other map: three columns of them, not the whole rows
+    for tid, pid, auto in session.execute(
+            select(EvoTopicPaper.topic_id, EvoTopicPaper.paper_id, EvoTopicPaper.is_milestone_auto)
+            .where(EvoTopicPaper.topic_id.in_(list(topics)))):
+        is_ms = effective_milestone(auto, pins.get((tid, pid)))
+        if pid in rows:
+            elsewhere[pid].append({"topic": topics[tid].slug, "topic_name": topics[tid].name, "milestone": is_ms})
+        else:
+            topic_of[pid].add(tid)
         if is_ms:
-            milestones_elsewhere.setdefault(tp.paper_id, {"topic": topics[tp.topic_id].slug,
-                                                          "topic_name": topics[tp.topic_id].name})
+            milestones_elsewhere.setdefault(pid, {"topic": topics[tid].slug, "topic_name": topics[tid].name})
     names = method_names(session, {pid: rows[pid][1].title for pid in elsewhere})
 
     def mini(pid: UUID, title: str | None = None, year: int | None = None, name: str | None = None) -> dict:
@@ -194,28 +201,29 @@ def topic_links(session: Session, topic: EvoTopic, limit: int = 40) -> dict:
 
     shared = sorted(elsewhere, key=shared_rank, reverse=True)
 
+    def citations(citing_side, cited_side) -> list[tuple[UUID, UUID]]:
+        """(citing, cited) pairs from ``citing_side`` to ``cited_side``. The cited papers are milestones, so a few;
+        the citing side can be every paper of every other map, and then it is checked here instead of being
+        sent to the database as a list of thousands of ids."""
+        query = select(EvoCitation.citing_id, EvoCitation.cited_id).where(EvoCitation.cited_id.in_(list(cited_side)))
+        if len(citing_side) <= _CITING_IN_QUERY:
+            query = query.where(EvoCitation.citing_id.in_(list(citing_side)))
+        return [(citing, cited) for citing, cited in session.execute(query) if citing in citing_side]
+
     def counted(citing_side: set[UUID], cited_side: dict[UUID, dict], exclude: set[UUID]) -> list[tuple[UUID, int]]:
         counts: dict[UUID, int] = defaultdict(int)
         if not citing_side or not cited_side:
             return []
-        for citing, cited in session.execute(select(EvoCitation.citing_id, EvoCitation.cited_id).where(
-                EvoCitation.citing_id.in_(list(citing_side)), EvoCitation.cited_id.in_(list(cited_side)))):
+        for citing, cited in citations(citing_side, cited_side):
             if cited not in exclude:
                 counts[cited] += 1
         return sorted(counts.items(), key=lambda kv: -kv[1])[:15]
 
     borrowed_ids = counted(on_topic, milestones_elsewhere, set(rows))
-    other_papers = {pid for pid in session.execute(select(EvoTopicPaper.paper_id).where(
-        EvoTopicPaper.topic_id.in_(list(topics)))).scalars()} - set(rows)
-    lent_ids = counted(other_papers, {pid: {} for pid in here_milestone}, set())
+    lent_ids = counted(topic_of.keys(), {pid: {} for pid in here_milestone}, set())
     lent_by: dict[UUID, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     if lent_ids:
-        topic_of = defaultdict(set)
-        for pid, tid in session.execute(select(EvoTopicPaper.paper_id, EvoTopicPaper.topic_id).where(
-                EvoTopicPaper.topic_id.in_(list(topics)), EvoTopicPaper.paper_id.in_(list(other_papers)))):
-            topic_of[pid].add(tid)
-        for citing, cited in session.execute(select(EvoCitation.citing_id, EvoCitation.cited_id).where(
-                EvoCitation.citing_id.in_(list(other_papers)), EvoCitation.cited_id.in_([p for p, _ in lent_ids]))):
+        for citing, cited in citations(topic_of.keys(), [p for p, _ in lent_ids]):
             for tid in topic_of[citing]:
                 lent_by[cited][topics[tid].name] += 1
     info = {p.id: p for p in session.execute(select(EvoPaper).where(
