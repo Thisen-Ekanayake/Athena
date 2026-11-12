@@ -100,7 +100,7 @@ services:
       - web
 
   db:
-    image: postgres:14
+    image: postgres:18
     restart: unless-stopped
     environment:
       POSTGRES_USER: athena
