@@ -198,7 +198,7 @@ def test_the_tarball_is_read_without_git(tmp_path, monkeypatch):
             tar.addfile(info, io.BytesIO(data))
 
     def handler(request):
-        if "api.github.com" in str(request.url):
+        if request.url.host == "api.github.com":
             return httpx.Response(200, text="abc123")
         return httpx.Response(200, content=buf.getvalue())
 

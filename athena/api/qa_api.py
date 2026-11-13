@@ -12,7 +12,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from athena.core import llm, usage
+from loguru import logger
+
+from athena.core import failures, llm, usage
 from athena.model_server import activity
 from athena.core.models import ContentItem, QAFetchCache, User
 from athena.core.qa_fetcher import fetch_article_content
@@ -205,7 +207,9 @@ async def ask_question(item_id: UUID, req: QARequest, db: Session = Depends(get_
 
             except Exception as e:
                 activity.finish(call, e)
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                logger.warning(f"Q&A on {item_id}: the answer failed: {e!r}")
+                answer_error = f"The model did not answer: {failures.describe(e)}"
+                yield f"data: {json.dumps({'error': answer_error})}\n\n"
             finally:
                 activity.finish(call, GeneratorExit())  # stopped mid-answer; a no-op otherwise
                 r.decr("qa_active_streams")

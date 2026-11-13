@@ -21,8 +21,7 @@ def test_preprocess_blocklist():
 def test_preprocess_url_normalization():
     text = "Check out https://www.google.com/search?q=test for more info."
     result = preprocess(text)
-    assert "google.com" in result
-    assert "https://" not in result
+    assert result.endswith("Body: Check out google.com for more info.")  # the host alone: no scheme, path or query
 
 
 def test_preprocess_whitespace():

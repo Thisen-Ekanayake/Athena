@@ -95,6 +95,27 @@ def test_other_files_are_refused(tmp_path):
         gguf.describe(str(tmp_path / "x.gguf"))
 
 
+@pytest.mark.parametrize("filename, size, name", [
+    ("llama-2-7b.Q4_K_M.gguf", "7B", "llama-2-7b"),
+    ("Qwen2.5-0.5B-Instruct-Q8_0.gguf", "0.5B", "qwen2.5-0.5b-instruct"),
+    ("SmolLM2-135M-Instruct-f16.gguf", "135M", "smollm2-135m-instruct"),
+    ("Phi-3.5-mini-instruct-IQ3_XXS.gguf", None, "phi-3.5-mini-instruct"),
+    ("bge-m3-q8_0.gguf", None, "bge-m3"),
+])
+def test_a_file_name_gives_the_size_and_a_preset_name(filename, size, name):
+    """For headers with no size label; the quantisation label at the end is not part of the name."""
+    assert gguf._size_label({}, 0, None, filename) == size
+    assert gguf.suggested_name({"filename": filename, "quant": gguf._quant({}, filename)}) == name
+
+
+def test_long_runs_in_a_file_name_are_read_once():
+    """A name of nothing but digits, or of repeated quantisation labels, used to be searched again from every
+    character; the patterns now bound each repeat."""
+    assert gguf._size_label({}, 0, None, "0" * 200_000) is None
+    hostile = "-q0" + "_q0" * 60_000 + "!"
+    assert gguf.suggested_name({"filename": hostile + ".gguf", "quant": None}).startswith("q0-q0")
+
+
 # ── presets ──────────────────────────────────────────────────────────
 
 
@@ -484,6 +505,37 @@ def test_another_embedder_becomes_the_default_and_everything_is_embedded_again(a
     old = next(m for m in api.get("/api/v1/models").json()["models"] if m["name"] == "qwen3-embedding-8b")
     assert not old["is_default"]
     assert api.patch(f"/api/v1/models/{old['id']}", json={"enabled": False}).status_code == 200  # no longer in use
+
+
+def test_hidden_folders_and_paths_that_climb_out_are_not_opened(api, tmp_path, monkeypatch):
+    """The dialog never lists a hidden folder, so a request for one did not come from it."""
+    hidden = tmp_path / "elsewhere" / ".secret"
+    (hidden / "inner").mkdir(parents=True)
+    model = write_gguf(hidden / "h.gguf", qwen_header())
+    browse = "/api/v1/models/browse"
+    for path in (hidden, hidden / "inner"):
+        refused = api.get(browse, params={"path": str(path)})
+        assert refused.status_code == 403 and "Hidden" in refused.json()["detail"]
+    assert api.post("/api/v1/models/inspect", json={"path": str(model)}).status_code == 404
+    assert api.get(browse, params={"path": f"{tmp_path}/elsewhere/../../../../../etc"}).status_code == 403
+    assert "h.gguf" not in str(api.get(browse, params={"path": str(tmp_path / "elsewhere")}).json()["entries"])
+    # Named in MODEL_DIRS the folder is a place, and opens like any other
+    monkeypatch.setattr(files, "roots", lambda: [str(registry.REPO / "models"), str(hidden)])
+    listed = api.get(browse, params={"path": str(hidden)}).json()
+    assert [e["name"] for e in listed["entries"]] == ["inner", "h.gguf"]
+    assert api.post("/api/v1/models/inspect", json={"path": str(model)}).json()["info"]["path"] == str(model)
+
+
+def test_a_projector_link_out_of_bounds_is_not_opened(api, tmp_path, monkeypatch):
+    """Projectors beside a model are found by name. One that is a link to a file Athena does not read (anything
+    but a .gguf the picker may open) is left out without being opened."""
+    models = tmp_path / "models"
+    (models / "mmproj-link.gguf").symlink_to("/etc/hostname")
+    opened, describe = [], gguf.describe
+    monkeypatch.setattr(gguf, "describe", lambda path, **kw: opened.append(path) or describe(path, **kw))
+    found = files.projectors_for(str(models / "Qwen3.5-9B-Q4_K_M.gguf"), {"name": "Qwen3.5-9B"})
+    assert [p["filename"] for p in found] == ["mmproj-F16.gguf"]
+    assert opened == [str(models / "mmproj-F16.gguf")]
 
 
 def test_incomplete_files_are_refused(api, tmp_path):

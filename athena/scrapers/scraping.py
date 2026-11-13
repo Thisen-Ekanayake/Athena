@@ -7,7 +7,6 @@ from urllib.parse import urljoin, urlparse
 import time
 import warnings
 import feedparser
-import httpx
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from loguru import logger
@@ -16,6 +15,7 @@ with warnings.catch_warnings():  # newspaper4k warns without nltk, which only Ar
     warnings.filterwarnings("ignore", message="nltk is not installed")
     from newspaper import Article
 
+from athena.core import safe_http
 from athena.scrapers.base import BaseScraper
 from athena.core.schemas import ContentItemCreate
 from athena.core.models import ContentCategory
@@ -106,6 +106,8 @@ def page_meta(page_html: str) -> dict:
     return {"title": html.unescape(title) if title else None, "published_at": published, "authors": authors}
 
 
+_FEED_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; Athena/1.0)"}
+
 # Common feed locations to probe when a source URL is an HTML page, not a feed.
 _FEED_FALLBACK_PATHS = (
     "/rss/", "/rss", "/feed/", "/feed",
@@ -138,11 +140,8 @@ class PlaywrightScraper(BaseScraper):
         candidates: List[str] = []
 
         try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
-                resp = await client.get(
-                    url,
-                    headers={"User-Agent": "Mozilla/5.0 (compatible; Athena/1.0)"},
-                )
+            async with safe_http.async_client(timeout=15.0, headers=_FEED_HEADERS) as client:
+                resp = await client.get(url)
             soup = BeautifulSoup(resp.text, "html.parser")
             for link in soup.find_all("link", rel="alternate"):
                 ltype = (link.get("type") or "").lower()
@@ -159,12 +158,21 @@ class PlaywrightScraper(BaseScraper):
             if cand in seen:
                 continue
             seen.add(cand)
-            try:
-                if feedparser.parse(cand).entries:
-                    return cand
-            except Exception:
-                continue
+            if (await self._feed(cand)).entries:
+                return cand
         return None
+
+    async def _feed(self, url: str):
+        """The feed at ``url``, parsed; an empty one when it cannot be fetched. The fetch goes through safe_http
+        (feedparser, given an address, would fetch it itself, private addresses and file paths included)."""
+        try:
+            async with safe_http.async_client(timeout=30.0, headers=_FEED_HEADERS) as client:
+                resp = await client.get(url)
+            return feedparser.parse(resp.content, response_headers={
+                "content-type": resp.headers.get("content-type", ""), "content-location": str(resp.url)})
+        except Exception as e:
+            logger.debug(f"No feed at {url}: {e!r}")
+            return feedparser.parse(b"")
 
     async def fetch(self, url: str) -> List[dict]:
         """
@@ -175,14 +183,14 @@ class PlaywrightScraper(BaseScraper):
         """
         raw_items = []
         logger.info(f"Fetching feed for Playwright: {url}")
-        feed = feedparser.parse(url)
+        feed = await self._feed(url)
 
         if not feed.entries:
             # The source URL is an HTML page, not a feed — try to discover one.
             discovered = await self._discover_feed(url)
             if discovered:
                 logger.info(f"Discovered feed for {url}: {discovered}")
-                feed = feedparser.parse(discovered)
+                feed = await self._feed(discovered)
 
         articles: Optional[List[dict]] = None
         if feed.entries:
@@ -206,6 +214,7 @@ class PlaywrightScraper(BaseScraper):
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(user_agent=USER_AGENT)
+            await safe_http.guard_browser(context)  # no page or script reaches this machine or its network
             page = await context.new_page()
 
             # Verify playwright is usable
@@ -240,7 +249,7 @@ class PlaywrightScraper(BaseScraper):
                 try:
                     logger.info(f"Extracting HTML via Playwright: {link}")
                     try:
-                        await page.goto(link, wait_until="domcontentloaded", timeout=30000)
+                        await safe_http.goto(page, link, wait_until="domcontentloaded", timeout=30000)
                         await page.wait_for_timeout(2000)
                         page_html = await page.content()
                     except Exception as goto_err:
@@ -267,7 +276,7 @@ class PlaywrightScraper(BaseScraper):
     async def _listing_links(self, page, url: str) -> List[str]:
         """Article links on a listing page: same site, under the page's own path (/news -> /news/<slug>)."""
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await safe_http.goto(page, url, wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(3000)  # listings are often filled in by script
         except Exception as e:
             logger.warning(f"Could not load the listing page {url}: {e!r}")

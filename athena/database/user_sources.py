@@ -9,8 +9,8 @@ from typing import Optional
 from loguru import logger
 
 import feedparser
-import httpx
 
+from athena.core import failures, safe_http
 from athena.core.models import SourceType
 
 
@@ -21,20 +21,20 @@ def detect_source_type(url: str) -> SourceType:
     1. Try fetching as RSS/Atom
     2. Check known API patterns
     3. Default to SCRAPE (Playwright)
+
+    The address is fetched through athena.core.safe_http: one on Athena's own machine or network is never asked.
     """
     url = url.strip()
 
-    # 2. Known API patterns
-    if 'arxiv.org' in url:
+    # 2. Known API patterns, by host: a path or query that merely mentions arxiv.org is not arXiv
+    if safe_http.host_is(url, "arxiv.org", "semanticscholar.org"):
         return SourceType.API
-    if 'semanticscholar.org' in url:
-        return SourceType.API
-    if 'lesswrong.com' in url or 'alignmentforum.org' in url:
+    if safe_http.host_is(url, "lesswrong.com", "alignmentforum.org"):
         return SourceType.SCRAPE  # Will use GraphQL API in scraper factory
 
     # 1. Try fetching as RSS
     try:
-        with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+        with safe_http.client(timeout=10.0) as client:
             resp = client.get(url)
             content_type = resp.headers.get('Content-Type', '')
             if 'xml' in content_type or 'rss' in content_type or 'atom' in content_type:
@@ -95,11 +95,12 @@ def preview_source(url: str, name: Optional[str] = None) -> dict:
         # API and SCRAPE sources can't be cheaply previewed; we still let the
         # user add them — the first crawl runs in the background once confirmed.
     except Exception as e:
+        logger.warning(f"Preview of the source {url} failed: {e!r}")
         return {
             "source_type": source_type.value,
             "source_name": source_name,
             "sample_items": [],
-            "error": str(e),
+            "error": failures.describe(e),  # the kind of failure; its text stays in the log
         }
 
     return {

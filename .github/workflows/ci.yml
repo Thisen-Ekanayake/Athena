@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Every job only checks the code out and runs it: the token never needs to write.
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint

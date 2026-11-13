@@ -16,9 +16,18 @@ from athena.api.schemas import (
     SourceResponse, SourceCreateRequest, SourceUpdateRequest,
     SourceToggleResponse,
 )
+from athena.core import safe_http
 from athena.core.models import Source
 
 router = APIRouter(prefix="/api/v1", tags=["Sources"])
+
+
+def _fetchable(url: str) -> str:
+    """The source address, if Athena may fetch it: http(s) and not on its own machine or network."""
+    try:
+        return safe_http.check_url(url)
+    except safe_http.Blocked as exc:
+        raise HTTPException(status_code=400, detail=f"This address cannot be a source: {exc}")
 
 
 def _to_response(s: Source) -> SourceResponse:
@@ -79,7 +88,8 @@ def add_source(
     )
 
     # Step 1: Preview / auto-detect (no DB write).
-    preview = preview_source(request.url, request.name)
+    url = _fetchable(request.url)
+    preview = preview_source(url, request.name)
 
     if preview.get("error"):
         raise HTTPException(
@@ -93,7 +103,7 @@ def add_source(
 
     # Step 2: Persist the source and queue its first crawl.
     result = add_user_source(
-        url=request.url,
+        url=url,
         name=request.name,
         category=request.category,
     )
@@ -146,6 +156,7 @@ def update_source(
             raise HTTPException(status_code=400, detail="URL cannot be empty")
 
         if new_url != source.url:
+            new_url = _fetchable(new_url)
             clash = db.execute(
                 select(Source).where(
                     Source.url == new_url, Source.id != source_uuid

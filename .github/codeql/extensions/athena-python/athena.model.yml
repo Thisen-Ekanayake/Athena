@@ -1,0 +1,10 @@
+# athena.core.safe_http.check_url(url) returns the address only when it is http(s) and its host resolves to public
+# addresses alone; it raises otherwise. CodeQL cannot see that from the code (it knows no "is this a public
+# address" check), so the result is declared a barrier for request forgery here. The clients in the same module
+# apply the rule again where the connection is made.
+extensions:
+  - addsTo:
+      pack: codeql/python-all
+      extensible: barrierModel
+    data:
+      - ["athena", "Member[core].Member[safe_http].Member[check_url].ReturnValue", "request-forgery"]
