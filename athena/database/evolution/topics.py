@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -127,17 +127,28 @@ def _topic_rows(session: Session, topic_id) -> list[tuple[EvoTopicPaper, EvoPape
     ).all()
 
 
+def paper_counts(session: Session) -> dict[UUID, tuple[int, int]]:
+    """{topic id: (papers, milestones)} for every map, counted by the database. The milestone rule is
+    ``effective_milestone`` written as SQL: a pin counts, an unpin does not, otherwise the automatic pick."""
+    pin = EvoMilestoneOverride
+    milestone = case((pin.action == "pin", 1), (pin.action == "unpin", 0),
+                     (EvoTopicPaper.is_milestone_auto.is_(True), 1), else_=0)
+    rows = session.execute(
+        select(EvoTopicPaper.topic_id, func.count(), func.sum(milestone))
+        .outerjoin(pin, and_(pin.topic_id == EvoTopicPaper.topic_id, pin.paper_id == EvoTopicPaper.paper_id))
+        .group_by(EvoTopicPaper.topic_id)).all()
+    return {topic_id: (papers, int(milestones or 0)) for topic_id, papers, milestones in rows}
+
+
 def list_topics(session: Session) -> list[dict]:
-    out = []
+    """Every map with its paper and milestone counts. The counts come from one grouped query: loading each map's
+    papers to count them (abstracts, authors and all) took over a second with 18 maps."""
     changes = latest_changes(session)
+    counts = paper_counts(session)
+    out = []
     for topic in session.execute(select(EvoTopic).order_by(EvoTopic.name)).scalars():
-        rows = _topic_rows(session, topic.id)
-        overrides = _overrides(session, topic.id)
-        milestones = sum(
-            effective_milestone(tp.is_milestone_auto, overrides[p.id].action if p.id in overrides else None)
-            for tp, p in rows
-        )
-        out.append(topic_summary(topic) | {"paper_count": len(rows), "milestone_count": milestones,
+        papers, milestones = counts.get(topic.id, (0, 0))
+        out.append(topic_summary(topic) | {"paper_count": papers, "milestone_count": milestones,
                                            "last_change": changes.get(topic.slug)})
     return out
 
@@ -250,8 +261,9 @@ def save_topic_build(slug: str, corpus: "Corpus", scores: "TopicScores") -> None
 
 def labels_version(session: Session) -> str:
     """Changes whenever full text, labels or gap themes change, which happens without a topic rebuild."""
-    count, last = session.execute(select(func.count(EvoCitationContext.id),
-                                         func.max(EvoCitationContext.labelled_at))).one()
+    # Both come from the index on labelled_at alone; counting ids read the whole table on every map request
+    count, last = session.execute(select(func.count(), func.max(EvoCitationContext.labelled_at))
+                                  .select_from(EvoCitationContext)).one()
     themes = session.execute(select(func.max(EvoGapTheme.built_at))).scalar()
     stamp = lambda t: int(t.timestamp()) if t else 0  # noqa: E731
     return f"{count}-{stamp(last)}-{stamp(themes)}"

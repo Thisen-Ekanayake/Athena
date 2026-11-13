@@ -12,7 +12,7 @@ interface NewInMapsProps {
 
 /** Recent feed papers that cite a map's milestones. Renders nothing when there are none. */
 export function NewInMaps({ topic, limit = 6 }: NewInMapsProps) {
-  const { data } = useNewMapPapers(topic)
+  const { data } = useNewMapPapers(topic, limit)
   const open = usePanelStore((s) => s.open)
   if (!data?.length) return null
   return (

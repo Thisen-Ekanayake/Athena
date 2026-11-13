@@ -169,7 +169,9 @@ def test_new_papers_for_one_map(client):
     c, _ = client
     with patch(f"{ROUTER_DB}.new_feed_papers", return_value=[]) as read:
         assert c.get("/api/v1/evolution/new-papers", params={"days": 14, "topic": "peft"}).json() == []
-    assert read.call_args.args[1:] == (14, "peft")
+        assert read.call_args.args[1:] == (14, "peft", None)   # every paper unless a page asks for its first few
+        c.get("/api/v1/evolution/new-papers", params={"topic": "peft", "limit": 5})
+    assert read.call_args.args[1:] == (30, "peft", 5)
 
 
 # ── E2 idea checks ─────────────────────────────────────────────────────

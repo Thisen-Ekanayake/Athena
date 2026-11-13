@@ -54,10 +54,11 @@ export const useFeedItemEvolution = (itemId: string) =>
     staleTime: 5 * 60 * 1000,
   })
 
-export const useNewMapPapers = (topic?: string, days = 30) =>
+/** The first ``limit`` recent feed papers citing milestones; the server sends only those (a month of them is over a thousand). */
+export const useNewMapPapers = (topic?: string, limit = 6, days = 30) =>
   useQuery({
-    queryKey: ['evolution', 'new-papers', topic ?? 'all', days],
+    queryKey: ['evolution', 'new-papers', topic ?? 'all', days, limit],
     queryFn: async () =>
-      (await apiClient.get<NewMapPaper[]>('/evolution/new-papers', { params: { days, topic } })).data,
+      (await apiClient.get<NewMapPaper[]>('/evolution/new-papers', { params: { days, topic, limit } })).data,
     staleTime: 5 * 60 * 1000,
   })

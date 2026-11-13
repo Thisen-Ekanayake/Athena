@@ -22,6 +22,8 @@ def feed_item_place(item_id: UUID, session: Session = Depends(get_db)):
 
 @router.get("/new-papers")
 def new_papers(days: int = Query(30, ge=1, le=120), topic: str | None = Query(None, max_length=200),
+               limit: int | None = Query(None, ge=1, le=500, description="Only the first this many; all when unset"),
                session: Session = Depends(get_db)):
-    """Feed papers from the last ``days`` days that cite milestones, those citing the most first."""
-    return db.new_feed_papers(session, days, topic)
+    """Feed papers from the last ``days`` days that cite milestones, those citing the most first. The pages show
+    the first few, so they ask for ``limit``: a month of them is over a thousand papers, most of a megabyte."""
+    return db.new_feed_papers(session, days, topic, limit)

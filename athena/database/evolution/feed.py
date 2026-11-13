@@ -80,13 +80,17 @@ def feed_place(session: Session, item_id: UUID) -> dict | None:
             "checked_at": state.get("checked_at")}
 
 
-def new_feed_papers(session: Session, days: int = 30, topic: str | None = None) -> list[dict]:
-    """Recent feed papers that cite milestones, the ones citing the most first."""
+def new_feed_papers(session: Session, days: int = 30, topic: str | None = None,
+                    limit: int | None = None) -> list[dict]:
+    """Recent feed papers that cite milestones, the ones citing the most first; the first ``limit`` when given."""
     from athena.core.models import ContentItem
     since = datetime.now(timezone.utc) - timedelta(days=days)
     out = []
-    for item in session.execute(select(ContentItem).where(ContentItem.published_at >= since,
-                                                          ContentItem.extra_data.has_key("evolution"))).scalars():
+    # Only the columns the list shows: whole items bring their summaries, takeaways and authors along
+    for item in session.execute(
+            select(ContentItem.id, ContentItem.title, ContentItem.url, ContentItem.published_at, ContentItem.score,
+                   ContentItem.extra_data)
+            .where(ContentItem.published_at >= since, ContentItem.extra_data.has_key("evolution"))):
         cites = [c for c in ((item.extra_data or {}).get("evolution") or {}).get("cites", [])
                  if topic is None or c["topic"] == topic]
         if cites:
@@ -94,4 +98,4 @@ def new_feed_papers(session: Session, days: int = 30, topic: str | None = None) 
                         "published_at": item.published_at.isoformat(), "score": item.score, "cites": cites})
     out.sort(key=lambda x: x["published_at"], reverse=True)
     out.sort(key=lambda x: len(x["cites"]), reverse=True)  # stable: newest first among equals
-    return out
+    return out[:limit] if limit else out
